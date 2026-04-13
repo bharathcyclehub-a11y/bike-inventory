@@ -1,0 +1,379 @@
+export type Role =
+  | "ADMIN"
+  | "SUPERVISOR"
+  | "MANAGER"
+  | "INWARDS_CLERK"
+  | "OUTWARDS_CLERK";
+
+export type TransactionType = "INWARD" | "OUTWARD" | "TRANSFER" | "ADJUSTMENT";
+
+export type ProductStatus = "ACTIVE" | "INACTIVE" | "DISCONTINUED";
+
+export type ProductCondition =
+  | "NEW"
+  | "REFURBISHED_EXCELLENT"
+  | "REFURBISHED_GOOD"
+  | "REFURBISHED_FAIR"
+  | "DAMAGED";
+
+export type ProductType =
+  | "BICYCLE"
+  | "SPARE_PART"
+  | "ACCESSORY"
+  | "BOX_PIECE"
+  | "WIP"
+  | "FINISHED_GOOD";
+
+export type SerialStatus =
+  | "IN_STOCK"
+  | "SOLD"
+  | "RETURNED"
+  | "DAMAGED"
+  | "RGP_OUT"
+  | "TRANSFERRED";
+
+export type BarcodeFormat = "CODE128" | "QR" | "EAN13";
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: Role;
+  accessCode: string;
+  isActive: boolean;
+}
+
+export interface Category {
+  id: string;
+  name: string;
+  description?: string;
+  parentId?: string;
+  movingLevel: string;
+  reorderLevel: number;
+}
+
+export interface Brand {
+  id: string;
+  name: string;
+  contactName?: string;
+  contactPhone?: string;
+  whatsappNumber?: string;
+  cdTermsDays?: number;
+  cdPercentage?: number;
+}
+
+export interface Bin {
+  id: string;
+  code: string;
+  name: string;
+  location: string;
+  zone?: string;
+  capacity?: number;
+  isActive: boolean;
+}
+
+export interface Product {
+  id: string;
+  sku: string;
+  name: string;
+  description?: string;
+  categoryId: string;
+  category?: Category;
+  brandId: string;
+  brand?: Brand;
+  type: ProductType;
+  status: ProductStatus;
+  condition: ProductCondition;
+  costPrice: number;
+  sellingPrice: number;
+  mrp: number;
+  gstRate: number;
+  hsnCode?: string;
+  currentStock: number;
+  minStock: number;
+  maxStock: number;
+  reorderLevel: number;
+  reorderQty: number;
+  size?: string;
+  color?: string;
+  imageUrls: string[];
+  tags: string[];
+  binId?: string;
+  bin?: Bin;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SerialItem {
+  id: string;
+  serialCode: string;
+  productId: string;
+  product?: Product;
+  status: SerialStatus;
+  condition: ProductCondition;
+  binId?: string;
+  bin?: Bin;
+  batchNo?: string;
+  invoiceNo?: string;
+  receivedAt: string;
+  soldAt?: string;
+  customerName?: string;
+  saleInvoiceNo?: string;
+  barcodeData?: string;
+  barcodeFormat: BarcodeFormat;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InventoryTransaction {
+  id: string;
+  type: TransactionType;
+  productId: string;
+  product?: Product;
+  quantity: number;
+  previousStock: number;
+  newStock: number;
+  referenceNo?: string;
+  notes?: string;
+  userId: string;
+  user?: User;
+  isRgp: boolean;
+  rgpReturnDate?: string;
+  rgpReturned: boolean;
+  createdAt: string;
+}
+
+export interface StockCount {
+  id: string;
+  title: string;
+  assignedToId: string;
+  assignedTo?: User;
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETED";
+  dueDate: string;
+  completedAt?: string;
+  notes?: string;
+}
+
+export interface DashboardStat {
+  label: string;
+  value: string | number;
+  icon: string;
+  trend?: {
+    direction: "up" | "down" | "neutral";
+    value: string;
+  };
+  color?: string;
+}
+
+export interface InwardFormInput {
+  productSearch: string;
+  productId: string;
+  quantity: number;
+  referenceNo: string;
+  binId: string;
+  notes: string;
+  isRgp: boolean;
+  rgpReturnDate?: string;
+  serialTracking: boolean;
+}
+
+export interface OutwardFormInput {
+  productSearch: string;
+  productId: string;
+  quantity: number;
+  customerName: string;
+  referenceNo: string;
+  notes: string;
+  serialCodes?: string[];
+}
+
+export type FilterChip =
+  | "ALL"
+  | "BICYCLES"
+  | "SPARES"
+  | "ACCESSORIES"
+  | "LOW_STOCK";
+
+export type POStatus = "DRAFT" | "PENDING_APPROVAL" | "APPROVED" | "SENT_TO_VENDOR" | "PARTIALLY_RECEIVED" | "RECEIVED" | "CANCELLED";
+export type BillStatus = "PENDING" | "PARTIALLY_PAID" | "PAID" | "OVERDUE" | "DISPUTED";
+export type PaymentMode = "CASH" | "CHEQUE" | "NEFT" | "RTGS" | "UPI" | "CREDIT_ADJUSTMENT";
+export type ExpenseCategory = "DELIVERY" | "TRANSPORT" | "SHOP_MAINTENANCE" | "UTILITIES" | "SALARY_ADVANCE" | "FOOD_TEA" | "STATIONERY" | "MISCELLANEOUS";
+
+export interface Vendor {
+  id: string;
+  name: string;
+  code: string;
+  gstin?: string;
+  pan?: string;
+  addressLine1?: string;
+  addressLine2?: string;
+  city?: string;
+  state?: string;
+  pincode?: string;
+  phone?: string;
+  email?: string;
+  whatsappNumber?: string;
+  paymentTermDays: number;
+  creditLimit: number;
+  cdTermsDays?: number;
+  cdPercentage?: number;
+  isActive: boolean;
+  notes?: string;
+  contacts?: VendorContact[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface VendorContact {
+  id: string;
+  vendorId: string;
+  name: string;
+  designation?: string;
+  phone?: string;
+  email?: string;
+  whatsapp?: string;
+  isPrimary: boolean;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  poNumber: string;
+  vendorId: string;
+  vendor?: Vendor;
+  status: POStatus;
+  subtotal: number;
+  gstTotal: number;
+  grandTotal: number;
+  orderDate: string;
+  expectedDate?: string;
+  approvedById?: string;
+  approvedAt?: string;
+  createdById: string;
+  notes?: string;
+  deliveryAddress?: string;
+  items?: PurchaseOrderItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  purchaseOrderId: string;
+  productId: string;
+  product?: Product;
+  quantity: number;
+  receivedQty: number;
+  unitPrice: number;
+  gstRate: number;
+  amount: number;
+}
+
+export interface VendorBill {
+  id: string;
+  vendorId: string;
+  vendor?: Vendor;
+  purchaseOrderId?: string;
+  billNo: string;
+  billDate: string;
+  dueDate: string;
+  amount: number;
+  paidAmount: number;
+  status: BillStatus;
+  lastFollowedUp?: string;
+  nextFollowUpDate?: string;
+  followUpNotes?: string;
+  notes?: string;
+  payments?: VendorPayment[];
+  createdAt: string;
+}
+
+export interface VendorPayment {
+  id: string;
+  vendorId: string;
+  vendor?: Vendor;
+  billId?: string;
+  amount: number;
+  paymentMode: PaymentMode;
+  paymentDate: string;
+  referenceNo?: string;
+  notes?: string;
+  creditId?: string;
+  recordedById: string;
+  createdAt: string;
+}
+
+export interface VendorCredit {
+  id: string;
+  vendorId: string;
+  vendor?: Vendor;
+  creditNoteNo: string;
+  amount: number;
+  usedAmount: number;
+  reason?: string;
+  creditDate: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface Expense {
+  id: string;
+  date: string;
+  amount: number;
+  category: ExpenseCategory;
+  description: string;
+  paidBy: string;
+  paymentMode: PaymentMode;
+  referenceNo?: string;
+  receiptUrl?: string;
+  notes?: string;
+  recordedById: string;
+  createdAt: string;
+}
+
+export interface VendorFormInput {
+  name: string;
+  code: string;
+  gstin: string;
+  pan: string;
+  addressLine1: string;
+  city: string;
+  state: string;
+  pincode: string;
+  phone: string;
+  email: string;
+  whatsappNumber: string;
+  paymentTermDays: number;
+  creditLimit: number;
+  cdTermsDays: number;
+  cdPercentage: number;
+}
+
+export interface POFormInput {
+  vendorId: string;
+  expectedDate: string;
+  deliveryAddress: string;
+  notes: string;
+  items: { productId: string; quantity: number; unitPrice: number; gstRate: number }[];
+}
+
+export interface ExpenseFormInput {
+  date: string;
+  amount: number;
+  category: ExpenseCategory;
+  description: string;
+  paidBy: string;
+  paymentMode: PaymentMode;
+  referenceNo: string;
+  notes: string;
+}
+
+export interface PaymentFormInput {
+  vendorId: string;
+  billId: string;
+  amount: number;
+  paymentMode: PaymentMode;
+  paymentDate: string;
+  referenceNo: string;
+  notes: string;
+}

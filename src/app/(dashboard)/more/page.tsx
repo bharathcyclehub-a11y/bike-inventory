@@ -1,0 +1,171 @@
+"use client";
+
+import { useSession, signOut } from "next-auth/react";
+import {
+  User,
+  Settings,
+  BarChart3,
+  Warehouse,
+  QrCode,
+  ClipboardCheck,
+  LogOut,
+  ChevronRight,
+  MessageSquare,
+  Building2,
+  ShoppingCart,
+  FileText,
+  CreditCard,
+  Receipt,
+  Users,
+  Cloud,
+  Brain,
+} from "lucide-react";
+import Link from "next/link";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import type { Role } from "@/types";
+
+const menuItems = [
+  {
+    label: "Vendors",
+    icon: Building2,
+    href: "/vendors",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+  },
+  {
+    label: "Purchase Orders",
+    icon: ShoppingCart,
+    href: "/purchase-orders",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+  },
+  {
+    label: "Bills & Payments",
+    icon: FileText,
+    href: "/bills",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+  },
+  {
+    label: "Record Payment",
+    icon: CreditCard,
+    href: "/payments/new",
+    roles: ["ADMIN", "MANAGER"] as Role[],
+  },
+  {
+    label: "Expenses",
+    icon: Receipt,
+    href: "/expenses",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+  },
+  {
+    label: "Stock Audit",
+    icon: ClipboardCheck,
+    href: "/stock-audit",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+  },
+  {
+    label: "Bins & Locations",
+    icon: Warehouse,
+    href: "/more/bins",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK"] as Role[],
+  },
+  {
+    label: "Barcode Scanner",
+    icon: QrCode,
+    href: "/scanner",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"] as Role[],
+  },
+  {
+    label: "Team Management",
+    icon: Users,
+    href: "/team",
+    roles: ["ADMIN", "SUPERVISOR"] as Role[],
+  },
+  {
+    label: "AI Insights",
+    icon: Brain,
+    href: "/ai",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+  },
+  {
+    label: "Reports",
+    icon: BarChart3,
+    href: "/reports",
+    roles: ["ADMIN", "SUPERVISOR"] as Role[],
+  },
+  {
+    label: "Team Chat",
+    icon: MessageSquare,
+    href: "/more/chat",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"] as Role[],
+  },
+  {
+    label: "Zoho Books Sync",
+    icon: Cloud,
+    href: "/more/zoho",
+    roles: ["ADMIN"] as Role[],
+  },
+  {
+    label: "Settings",
+    icon: Settings,
+    href: "/more/settings",
+    roles: ["ADMIN"] as Role[],
+  },
+];
+
+export default function MorePage() {
+  const { data: session } = useSession();
+  const user = session?.user as { name?: string; role?: string; userId?: string } | undefined;
+  const role = (user?.role || "INWARDS_CLERK") as Role;
+
+  const visibleItems = menuItems.filter((item) => item.roles.includes(role));
+
+  return (
+    <div>
+      {/* User Card */}
+      <Card className="mb-4">
+        <CardContent className="p-4 flex items-center gap-3">
+          <div className="h-12 w-12 rounded-full bg-slate-200 flex items-center justify-center">
+            <User className="h-6 w-6 text-slate-500" />
+          </div>
+          <div className="flex-1">
+            <p className="text-base font-semibold text-slate-900">
+              {user?.name || "User"}
+            </p>
+            <Badge variant="info">{role.replaceAll("_", " ")}</Badge>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Menu Items */}
+      <div className="space-y-1">
+        {visibleItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Link key={item.href} href={item.href}>
+              <div className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-100 transition-colors">
+                <Icon className="h-5 w-5 text-slate-500" />
+                <span className="flex-1 text-sm font-medium text-slate-700">
+                  {item.label}
+                </span>
+                <ChevronRight className="h-4 w-4 text-slate-400" />
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+
+      {/* Sign Out */}
+      <button
+        onClick={() => signOut({ callbackUrl: "/login" })}
+        className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-red-50 transition-colors w-full mt-4"
+      >
+        <LogOut className="h-5 w-5 text-red-500" />
+        <span className="text-sm font-medium text-red-600">Sign Out</span>
+      </button>
+
+      <p className="text-xs text-slate-300 text-center mt-8">
+        Bike Inventory v0.8.0 | Final
+      </p>
+    </div>
+  );
+}

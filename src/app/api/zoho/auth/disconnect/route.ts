@@ -1,0 +1,36 @@
+export const dynamic = "force-dynamic";
+
+import { prisma } from "@/lib/db";
+import { successResponse, errorResponse } from "@/lib/api-utils";
+import { requireAuth, AuthError } from "@/lib/auth-helpers";
+
+export async function POST() {
+  try {
+    await requireAuth(["ADMIN"]);
+
+    // Revoke token on Zoho's side before clearing locally
+    const config = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
+    if (config?.refreshToken) {
+      try {
+        await fetch(`https://accounts.zoho.in/oauth/v2/token/revoke?token=${config.refreshToken}`, {
+          method: "POST",
+        });
+      } catch { /* best-effort revoke */ }
+    }
+
+    await prisma.zohoConfig.update({
+      where: { id: "singleton" },
+      data: {
+        isConnected: false,
+        accessToken: null,
+        refreshToken: null,
+        accessTokenExpiresAt: null,
+      },
+    });
+
+    return successResponse({ disconnected: true });
+  } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    return errorResponse(error instanceof Error ? error.message : "Failed to disconnect", 500);
+  }
+}

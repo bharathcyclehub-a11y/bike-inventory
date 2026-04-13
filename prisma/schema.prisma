@@ -1,0 +1,523 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  SUPERVISOR
+  MANAGER
+  INWARDS_CLERK
+  OUTWARDS_CLERK
+}
+
+enum TransactionType {
+  INWARD
+  OUTWARD
+  TRANSFER
+  ADJUSTMENT
+}
+
+enum SerialStatus {
+  IN_STOCK
+  SOLD
+  RETURNED
+  DAMAGED
+  RGP_OUT
+  TRANSFERRED
+}
+
+enum POStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SENT_TO_VENDOR
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+
+enum BillStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  DISPUTED
+}
+
+enum PaymentMode {
+  CASH
+  CHEQUE
+  NEFT
+  RTGS
+  UPI
+  CREDIT_ADJUSTMENT
+}
+
+enum ExpenseCategory {
+  DELIVERY
+  TRANSPORT
+  SHOP_MAINTENANCE
+  UTILITIES
+  SALARY_ADVANCE
+  FOOD_TEA
+  STATIONERY
+  MISCELLANEOUS
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  DISCONTINUED
+}
+
+enum ProductCondition {
+  NEW
+  REFURBISHED_EXCELLENT
+  REFURBISHED_GOOD
+  REFURBISHED_FAIR
+  DAMAGED
+}
+
+enum ProductType {
+  BICYCLE
+  SPARE_PART
+  ACCESSORY
+  BOX_PIECE
+  WIP
+  FINISHED_GOOD
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String
+  email         String    @unique
+  password      String
+  role          Role
+  accessCode    String    @unique
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  transactions  InventoryTransaction[]
+  stockCounts   StockCount[]
+
+  createdPOs       PurchaseOrder[]  @relation("POCreatedBy")
+  approvedPOs      PurchaseOrder[]  @relation("POApprovedBy")
+  recordedPayments VendorPayment[]  @relation("PaymentRecordedBy")
+  recordedExpenses Expense[]        @relation("ExpenseRecordedBy")
+}
+
+model Category {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  description   String?
+  parentId      String?
+  parent        Category? @relation("CategoryTree", fields: [parentId], references: [id])
+  children      Category[] @relation("CategoryTree")
+  movingLevel   String    @default("NORMAL") // FAST, NORMAL, SLOW
+  reorderLevel  Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  products      Product[]
+}
+
+model Brand {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  contactName   String?
+  contactPhone  String?
+  whatsappNumber String?
+  cdTermsDays   Int?      // Cash Discount terms in days
+  cdPercentage  Float?    // Cash Discount percentage
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  products      Product[]
+}
+
+model Product {
+  id            String         @id @default(cuid())
+  sku           String         @unique
+  name          String
+  description   String?
+  categoryId    String
+  category      Category       @relation(fields: [categoryId], references: [id])
+  brandId       String
+  brand         Brand          @relation(fields: [brandId], references: [id])
+  type          ProductType    @default(SPARE_PART)
+  status        ProductStatus  @default(ACTIVE)
+  condition     ProductCondition @default(NEW)
+
+  // Pricing
+  costPrice     Float          @default(0)
+  sellingPrice  Float          @default(0)
+  mrp           Float          @default(0)
+  gstRate       Float          @default(18)
+  hsnCode       String?
+
+  // Stock
+  currentStock  Int            @default(0)
+  minStock      Int            @default(0)
+  maxStock      Int            @default(0)
+  reorderLevel  Int            @default(0)
+  reorderQty    Int            @default(0)
+
+  // Bicycle specific
+  size          String?        // For bicycles: 16", 20", 24", 26", etc.
+  color         String?
+  imageUrls     String[]       // Array of image URLs
+  tags          String[]       // Condition tags, custom tags
+
+  binId         String?
+  bin           Bin?           @relation(fields: [binId], references: [id])
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  transactions  InventoryTransaction[]
+  stockCounts   StockCountItem[]
+  serialItems   SerialItem[]
+  purchaseOrderItems PurchaseOrderItem[]
+}
+
+model SerialItem {
+  id            String        @id @default(cuid())
+  serialCode    String        @unique  // Format: {SKU}-{sequence} e.g. "HRO-MTB26-0001"
+  productId     String
+  product       Product       @relation(fields: [productId], references: [id])
+  status        SerialStatus  @default(IN_STOCK)
+  condition     ProductCondition @default(NEW)
+
+  // Location
+  binId         String?
+  bin           Bin?          @relation(fields: [binId], references: [id])
+
+  // Tracking
+  batchNo       String?       // Inward batch reference
+  invoiceNo     String?       // Purchase invoice
+  receivedAt    DateTime      @default(now())
+  soldAt        DateTime?
+  customerName  String?
+  saleInvoiceNo String?
+
+  // Barcode
+  barcodeData   String?       // Encoded barcode string (= serialCode by default)
+  barcodeFormat String        @default("CODE128") // CODE128, QR, EAN13
+
+  notes         String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  transactionItems SerialTransactionItem[]
+
+  @@index([productId])
+  @@index([status])
+  @@index([binId])
+}
+
+model SerialTransactionItem {
+  id              String              @id @default(cuid())
+  serialItemId    String
+  serialItem      SerialItem          @relation(fields: [serialItemId], references: [id])
+  transactionId   String
+  transaction     InventoryTransaction @relation(fields: [transactionId], references: [id])
+  createdAt       DateTime            @default(now())
+
+  @@index([serialItemId])
+  @@index([transactionId])
+}
+
+model Bin {
+  id            String    @id @default(cuid())
+  code          String    @unique  // e.g., "A-01-03" (Aisle-Rack-Shelf)
+  name          String
+  location      String    // "Store" or "Warehouse"
+  zone          String?   // Zone within location
+  capacity      Int?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  products      Product[]
+  serialItems   SerialItem[]
+}
+
+model InventoryTransaction {
+  id            String           @id @default(cuid())
+  type          TransactionType
+  productId     String
+  product       Product          @relation(fields: [productId], references: [id])
+  quantity      Int
+  previousStock Int
+  newStock      Int
+
+  // Reference
+  referenceNo   String?          // PO number, Invoice number, etc.
+  notes         String?
+
+  // Who
+  userId        String
+  user          User             @relation(fields: [userId], references: [id])
+
+  // RGP (Returnable Gate Pass)
+  isRgp         Boolean          @default(false)
+  rgpReturnDate DateTime?
+  rgpReturned   Boolean          @default(false)
+
+  createdAt     DateTime         @default(now())
+
+  serialItems   SerialTransactionItem[]
+
+  @@index([productId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model StockCount {
+  id            String           @id @default(cuid())
+  title         String           // "Weekly Audit - Week 15"
+  assignedToId  String
+  assignedTo    User             @relation(fields: [assignedToId], references: [id])
+  status        String           @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED
+  dueDate       DateTime
+  completedAt   DateTime?
+  notes         String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  items         StockCountItem[]
+}
+
+model StockCountItem {
+  id            String     @id @default(cuid())
+  stockCountId  String
+  stockCount    StockCount @relation(fields: [stockCountId], references: [id])
+  productId     String
+  product       Product    @relation(fields: [productId], references: [id])
+  systemQty     Int
+  countedQty    Int?
+  variance      Int?
+  notes         String?
+  countedAt     DateTime?
+}
+
+model Vendor {
+  id              String          @id @default(cuid())
+  name            String          @unique
+  code            String          @unique
+  gstin           String?
+  pan             String?
+  addressLine1    String?
+  addressLine2    String?
+  city            String?
+  state           String?
+  pincode         String?
+  phone           String?
+  email           String?
+  whatsappNumber  String?
+  paymentTermDays Int             @default(30)
+  creditLimit     Float           @default(0)
+  cdTermsDays     Int?
+  cdPercentage    Float?
+  isActive        Boolean         @default(true)
+  notes           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  contacts        VendorContact[]
+  purchaseOrders  PurchaseOrder[]
+  bills           VendorBill[]
+  payments        VendorPayment[]
+  credits         VendorCredit[]
+
+  @@index([name])
+}
+
+model VendorContact {
+  id          String   @id @default(cuid())
+  vendorId    String
+  vendor      Vendor   @relation(fields: [vendorId], references: [id])
+  name        String
+  designation String?
+  phone       String?
+  email       String?
+  whatsapp    String?
+  isPrimary   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([vendorId])
+}
+
+model PurchaseOrder {
+  id              String              @id @default(cuid())
+  poNumber        String              @unique
+  vendorId        String
+  vendor          Vendor              @relation(fields: [vendorId], references: [id])
+  status          POStatus            @default(DRAFT)
+  subtotal        Float               @default(0)
+  gstTotal        Float               @default(0)
+  grandTotal      Float               @default(0)
+  orderDate       DateTime            @default(now())
+  expectedDate    DateTime?
+  approvedById    String?
+  approvedBy      User?               @relation("POApprovedBy", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  createdById     String
+  createdBy       User                @relation("POCreatedBy", fields: [createdById], references: [id])
+  notes           String?
+  deliveryAddress String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  items           PurchaseOrderItem[]
+  bills           VendorBill[]
+
+  @@index([vendorId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model PurchaseOrderItem {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id])
+  quantity        Int
+  receivedQty     Int           @default(0)
+  unitPrice       Float
+  gstRate         Float         @default(18)
+  amount          Float
+  createdAt       DateTime      @default(now())
+
+  @@index([purchaseOrderId])
+  @@index([productId])
+}
+
+model VendorBill {
+  id               String         @id @default(cuid())
+  vendorId         String
+  vendor           Vendor         @relation(fields: [vendorId], references: [id])
+  purchaseOrderId  String?
+  purchaseOrder    PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  billNo           String
+  billDate         DateTime
+  dueDate          DateTime
+  amount           Float
+  paidAmount       Float          @default(0)
+  status           BillStatus     @default(PENDING)
+  lastFollowedUp   DateTime?
+  nextFollowUpDate DateTime?
+  followUpNotes    String?
+  notes            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  payments         VendorPayment[]
+
+  @@unique([vendorId, billNo])
+  @@index([vendorId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model VendorPayment {
+  id            String        @id @default(cuid())
+  vendorId      String
+  vendor        Vendor        @relation(fields: [vendorId], references: [id])
+  billId        String?
+  bill          VendorBill?   @relation(fields: [billId], references: [id])
+  amount        Float
+  paymentMode   PaymentMode
+  paymentDate   DateTime
+  referenceNo   String?
+  notes         String?
+  creditId      String?
+  credit        VendorCredit? @relation(fields: [creditId], references: [id])
+  recordedById  String
+  recordedBy    User          @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  createdAt     DateTime      @default(now())
+
+  @@index([vendorId])
+  @@index([billId])
+  @@index([paymentDate])
+}
+
+model VendorCredit {
+  id            String          @id @default(cuid())
+  vendorId      String
+  vendor        Vendor          @relation(fields: [vendorId], references: [id])
+  creditNoteNo  String
+  amount        Float
+  usedAmount    Float           @default(0)
+  reason        String?
+  creditDate    DateTime
+  notes         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  payments      VendorPayment[]
+
+  @@unique([vendorId, creditNoteNo])
+  @@index([vendorId])
+}
+
+model Expense {
+  id            String          @id @default(cuid())
+  date          DateTime
+  amount        Float
+  category      ExpenseCategory
+  description   String
+  paidBy        String
+  paymentMode   PaymentMode
+  referenceNo   String?
+  receiptUrl    String?
+  notes         String?
+  recordedById  String
+  recordedBy    User            @relation("ExpenseRecordedBy", fields: [recordedById], references: [id])
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([date])
+  @@index([category])
+  @@index([recordedById])
+}
+
+model ZohoConfig {
+  id                   String    @id @default("singleton")
+  clientId             String?
+  clientSecret         String?
+  refreshToken         String?
+  accessToken          String?
+  accessTokenExpiresAt DateTime?
+  organizationId       String?
+  organizationName     String?
+  isConnected          Boolean   @default(false)
+  lastSyncAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+
+model SyncLog {
+  id          String   @id @default(cuid())
+  syncType    String   // items, contacts, invoices, bills, all
+  status      String   // running, success, partial, failed
+  totalItems  Int      @default(0)
+  synced      Int      @default(0)
+  failed      Int      @default(0)
+  errors      String?  // JSON array of error messages
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  triggeredBy String?  // userId
+
+  @@index([syncType])
+  @@index([startedAt])
+}
