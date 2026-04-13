@@ -7,7 +7,7 @@ import {
   ArrowDownCircle,
   ArrowUpCircle,
   Package,
-  IndianRupee,
+  MoreHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types";
@@ -21,7 +21,7 @@ const allTabs = [
   { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
   { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards" },
   { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-  { href: "/accounts", label: "Accounts", icon: IndianRupee, key: "accounts" },
+  { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
 ];
 
 function getVisibleTabs(role: Role) {
