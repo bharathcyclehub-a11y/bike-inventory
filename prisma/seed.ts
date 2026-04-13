@@ -6,66 +6,25 @@ const prisma = new PrismaClient();
 async function main() {
   console.log("Seeding database...");
 
-  // Create users
-  const hashedPassword = await bcrypt.hash("password123", 10);
+  // Create users — password is the hashed access code (auth.ts compares accessCode against password)
+  const userData = [
+    { name: "Syed Ibrahim", email: "syed@bikeinventory.local", role: "ADMIN" as const, accessCode: "SYED123" },
+    { name: "Srinu", email: "srinu@bikeinventory.local", role: "SUPERVISOR" as const, accessCode: "SRINU123" },
+    { name: "Sravan", email: "sravan@bikeinventory.local", role: "MANAGER" as const, accessCode: "SRAVAN123" },
+    { name: "Nithin", email: "nithin@bikeinventory.local", role: "INWARDS_CLERK" as const, accessCode: "NITHIN123" },
+    { name: "Ranjitha", email: "ranjitha@bikeinventory.local", role: "OUTWARDS_CLERK" as const, accessCode: "RANJITHA123" },
+  ];
 
-  const users = await Promise.all([
-    prisma.user.upsert({
-      where: { email: "syed@bikeinventory.local" },
-      update: {},
-      create: {
-        name: "Syed Ibrahim",
-        email: "syed@bikeinventory.local",
-        password: hashedPassword,
-        role: "ADMIN",
-        accessCode: "SYED123",
-      },
-    }),
-    prisma.user.upsert({
-      where: { email: "srinu@bikeinventory.local" },
-      update: {},
-      create: {
-        name: "Srinu",
-        email: "srinu@bikeinventory.local",
-        password: hashedPassword,
-        role: "SUPERVISOR",
-        accessCode: "SRINU123",
-      },
-    }),
-    prisma.user.upsert({
-      where: { email: "sravan@bikeinventory.local" },
-      update: {},
-      create: {
-        name: "Sravan",
-        email: "sravan@bikeinventory.local",
-        password: hashedPassword,
-        role: "MANAGER",
-        accessCode: "SRAVAN123",
-      },
-    }),
-    prisma.user.upsert({
-      where: { email: "nithin@bikeinventory.local" },
-      update: {},
-      create: {
-        name: "Nithin",
-        email: "nithin@bikeinventory.local",
-        password: hashedPassword,
-        role: "INWARDS_CLERK",
-        accessCode: "NITHIN123",
-      },
-    }),
-    prisma.user.upsert({
-      where: { email: "ranjitha@bikeinventory.local" },
-      update: {},
-      create: {
-        name: "Ranjitha",
-        email: "ranjitha@bikeinventory.local",
-        password: hashedPassword,
-        role: "OUTWARDS_CLERK",
-        accessCode: "RANJITHA123",
-      },
-    }),
-  ]);
+  const users = [];
+  for (const u of userData) {
+    const hashedPassword = await bcrypt.hash(u.accessCode, 10);
+    const user = await prisma.user.upsert({
+      where: { email: u.email },
+      update: { password: hashedPassword },
+      create: { ...u, password: hashedPassword },
+    });
+    users.push(user);
+  }
 
   console.log(`Created ${users.length} users`);
 
