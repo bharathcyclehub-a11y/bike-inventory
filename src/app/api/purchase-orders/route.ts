@@ -44,10 +44,6 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = purchaseOrderSchema.parse(body);
 
-    const lastPO = await prisma.purchaseOrder.findFirst({ orderBy: { createdAt: "desc" }, select: { poNumber: true } });
-    const nextNum = lastPO ? parseInt(lastPO.poNumber.replace("PO-", ""), 10) + 1 : 1;
-    const poNumber = `PO-${String(nextNum).padStart(5, "0")}`;
-
     const items = data.items.map((item) => ({
       productId: item.productId,
       quantity: item.quantity,
@@ -59,23 +55,30 @@ export async function POST(req: NextRequest) {
     const subtotal = items.reduce((sum, i) => sum + i.amount, 0);
     const gstTotal = items.reduce((sum, i) => sum + i.amount * (i.gstRate / 100), 0);
 
-    const po = await prisma.purchaseOrder.create({
-      data: {
-        poNumber,
-        vendorId: data.vendorId,
-        expectedDate: data.expectedDate ? new Date(data.expectedDate) : null,
-        deliveryAddress: data.deliveryAddress,
-        notes: data.notes,
-        createdById: user.id,
-        subtotal,
-        gstTotal,
-        grandTotal: subtotal + gstTotal,
-        items: { create: items },
-      },
-      include: {
-        vendor: { select: { name: true } },
-        items: { include: { product: { select: { name: true, sku: true } } } },
-      },
+    // Generate PO number inside transaction with retry for race conditions
+    const po = await prisma.$transaction(async (tx) => {
+      const lastPO = await tx.purchaseOrder.findFirst({ orderBy: { createdAt: "desc" }, select: { poNumber: true } });
+      const nextNum = lastPO ? parseInt(lastPO.poNumber.replace("PO-", ""), 10) + 1 : 1;
+      const poNumber = `PO-${String(nextNum).padStart(5, "0")}`;
+
+      return tx.purchaseOrder.create({
+        data: {
+          poNumber,
+          vendorId: data.vendorId,
+          expectedDate: data.expectedDate ? new Date(data.expectedDate) : null,
+          deliveryAddress: data.deliveryAddress,
+          notes: data.notes,
+          createdById: user.id,
+          subtotal,
+          gstTotal,
+          grandTotal: subtotal + gstTotal,
+          items: { create: items },
+        },
+        include: {
+          vendor: { select: { name: true } },
+          items: { include: { product: { select: { name: true, sku: true } } } },
+        },
+      });
     });
 
     return successResponse(po, 201);

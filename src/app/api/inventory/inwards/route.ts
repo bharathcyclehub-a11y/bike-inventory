@@ -15,8 +15,12 @@ export async function GET(req: NextRequest) {
 
     const where = {
       type: "INWARD" as const,
-      ...(dateFrom && { createdAt: { gte: new Date(dateFrom) } }),
-      ...(dateTo && { createdAt: { lte: new Date(dateTo) } }),
+      ...((dateFrom || dateTo) && {
+        createdAt: {
+          ...(dateFrom && { gte: new Date(dateFrom) }),
+          ...(dateTo && { lte: new Date(dateTo) }),
+        },
+      }),
     };
 
     const [transactions, total] = await Promise.all([
@@ -45,18 +49,17 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = inwardSchema.parse(body);
 
-    const product = await prisma.product.findUnique({
-      where: { id: data.productId },
-    });
-
-    if (!product) {
-      return errorResponse("Product not found", 404);
-    }
-
-    const previousStock = product.currentStock;
-    const newStock = previousStock + data.quantity;
-
     const result = await prisma.$transaction(async (tx) => {
+      // Read product inside transaction to prevent race conditions
+      const product = await tx.product.findUnique({
+        where: { id: data.productId },
+      });
+
+      if (!product) throw new Error("Product not found");
+
+      const previousStock = product.currentStock;
+      const newStock = previousStock + data.quantity;
+
       // Update product stock
       await tx.product.update({
         where: { id: data.productId },

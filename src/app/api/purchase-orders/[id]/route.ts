@@ -35,6 +35,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const po = await prisma.purchaseOrder.findUnique({ where: { id } });
     if (!po) return errorResponse("Purchase order not found", 404);
 
+    const VALID_PO_STATUS = ["DRAFT", "PENDING_APPROVAL", "APPROVED", "SENT_TO_VENDOR", "PARTIALLY_RECEIVED", "RECEIVED", "CANCELLED"];
+    if (body.status && !VALID_PO_STATUS.includes(body.status)) {
+      return errorResponse("Invalid PO status", 400);
+    }
+
     if (body.status === "SENT_TO_VENDOR" && po.status !== "APPROVED") {
       return errorResponse("PO must be approved before sending", 400);
     }

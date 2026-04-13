@@ -30,6 +30,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const { id } = await params;
     const body = await req.json();
 
+    const VALID_BILL_STATUS = ["PENDING", "PARTIALLY_PAID", "PAID", "CANCELLED"];
+    if (body.status && !VALID_BILL_STATUS.includes(body.status)) {
+      return errorResponse("Invalid bill status", 400);
+    }
+
     const bill = await prisma.vendorBill.update({
       where: { id },
       data: {

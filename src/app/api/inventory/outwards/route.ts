@@ -14,8 +14,12 @@ export async function GET(req: NextRequest) {
 
     const where = {
       type: "OUTWARD" as const,
-      ...(dateFrom && { createdAt: { gte: new Date(dateFrom) } }),
-      ...(dateTo && { createdAt: { lte: new Date(dateTo) } }),
+      ...((dateFrom || dateTo) && {
+        createdAt: {
+          ...(dateFrom && { gte: new Date(dateFrom) }),
+          ...(dateTo && { lte: new Date(dateTo) }),
+        },
+      }),
     };
 
     const [transactions, total] = await Promise.all([
@@ -44,25 +48,21 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = outwardSchema.parse(body);
 
-    const product = await prisma.product.findUnique({
-      where: { id: data.productId },
-    });
-
-    if (!product) {
-      return errorResponse("Product not found", 404);
-    }
-
-    if (product.currentStock < data.quantity) {
-      return errorResponse(
-        `Insufficient stock. Available: ${product.currentStock}, Requested: ${data.quantity}`,
-        400
-      );
-    }
-
-    const previousStock = product.currentStock;
-    const newStock = previousStock - data.quantity;
-
     const result = await prisma.$transaction(async (tx) => {
+      // Read product inside transaction to prevent race conditions
+      const product = await tx.product.findUnique({
+        where: { id: data.productId },
+      });
+
+      if (!product) throw new Error("Product not found");
+
+      if (product.currentStock < data.quantity) {
+        throw new Error(`Insufficient stock. Available: ${product.currentStock}, Requested: ${data.quantity}`);
+      }
+
+      const previousStock = product.currentStock;
+      const newStock = previousStock - data.quantity;
+
       // Update product stock
       await tx.product.update({
         where: { id: data.productId },
