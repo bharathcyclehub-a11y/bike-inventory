@@ -15,7 +15,6 @@ interface TeamUser {
   name: string;
   email: string;
   role: string;
-  accessCode: string;
   isActive: boolean;
   createdAt: string;
   _count: { transactions: number };
@@ -102,8 +101,8 @@ export default function TeamPage() {
                       </div>
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="font-mono text-xs text-slate-500">
-                        {isAdmin ? m.accessCode : `${m.accessCode.slice(0, 2)}${"*".repeat(Math.max(0, m.accessCode.length - 2))}`}
+                      <p className="text-[10px] text-slate-400">
+                        {new Date(m.createdAt).toLocaleDateString("en-IN")}
                       </p>
                     </div>
                   </CardContent>

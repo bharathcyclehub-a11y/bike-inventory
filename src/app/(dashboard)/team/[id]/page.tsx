@@ -13,7 +13,6 @@ interface UserDetail {
   name: string;
   email: string;
   role: string;
-  accessCode: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -56,7 +55,7 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
           setName(u.name);
           setEmail(u.email);
           setRole(u.role);
-          setAccessCode(u.accessCode);
+          setAccessCode(u.accessCode || "");
           setIsActive(u.isActive);
         }
       })
@@ -199,10 +198,6 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
           <div className="bg-slate-50 rounded-lg p-3">
             <p className="text-xs text-slate-500">Email</p>
             <p className="text-sm font-medium text-slate-900">{user.email}</p>
-          </div>
-          <div className="bg-slate-50 rounded-lg p-3">
-            <p className="text-xs text-slate-500">Access Code</p>
-            <p className="text-sm font-mono font-medium text-slate-900">{user.accessCode.slice(0, 2) + "*".repeat(Math.max(0, user.accessCode.length - 2))}</p>
           </div>
           <div className="bg-slate-50 rounded-lg p-3">
             <p className="text-xs text-slate-500">Member Since</p>

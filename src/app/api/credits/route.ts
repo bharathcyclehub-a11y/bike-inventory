@@ -8,6 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const vendorId = searchParams.get("vendorId") || undefined;
 

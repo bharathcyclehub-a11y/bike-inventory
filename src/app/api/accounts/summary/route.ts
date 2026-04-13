@@ -2,10 +2,12 @@ export const dynamic = "force-dynamic";
 
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
+import { requireAuth, AuthError } from "@/lib/auth-helpers";
 import type { BillStatus, POStatus } from "@prisma/client";
 
 export async function GET() {
   try {
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
@@ -71,6 +73,7 @@ export async function GET() {
       overdueBillsList,
     });
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch accounts summary", 500);
   }
 }

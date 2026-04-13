@@ -16,10 +16,13 @@ const SEED_USERS = [
 
 export async function POST(_req: NextRequest) {
   try {
-    // Only allow in development, or if no users exist yet (first-time setup)
+    // Only allow if no users exist (first-time setup) or ADMIN in development
     const userCount = await prisma.user.count();
     if (userCount > 0) {
       await requireAuth(["ADMIN"]);
+    }
+    if (userCount > 0 && process.env.NODE_ENV === "production") {
+      return errorResponse("Seed is disabled when users already exist in production", 403);
     }
 
     const results = [];

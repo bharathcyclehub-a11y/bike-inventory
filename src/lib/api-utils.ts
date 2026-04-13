@@ -37,10 +37,10 @@ export function parseSearchParams(url: string) {
   );
   const skip = (page - 1) * limit;
 
-  const sortBy = searchParams.get("sortBy") || "createdAt";
-  const sortOrder = (searchParams.get("sortOrder") || "desc") as
-    | "asc"
-    | "desc";
+  const ALLOWED_SORT = ["createdAt", "updatedAt", "name", "sku", "currentStock", "costPrice", "sellingPrice", "dueDate", "billDate", "amount"];
+  const rawSort = searchParams.get("sortBy") || "createdAt";
+  const sortBy = ALLOWED_SORT.includes(rawSort) ? rawSort : "createdAt";
+  const sortOrder = (searchParams.get("sortOrder") || "desc") === "asc" ? "asc" as const : "desc" as const;
 
   const search = searchParams.get("search") || undefined;
 
