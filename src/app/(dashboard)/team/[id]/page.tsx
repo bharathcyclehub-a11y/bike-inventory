@@ -202,7 +202,7 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
           </div>
           <div className="bg-slate-50 rounded-lg p-3">
             <p className="text-xs text-slate-500">Access Code</p>
-            <p className="text-sm font-mono font-medium text-slate-900">{user.accessCode}</p>
+            <p className="text-sm font-mono font-medium text-slate-900">{user.accessCode.slice(0, 2) + "*".repeat(Math.max(0, user.accessCode.length - 2))}</p>
           </div>
           <div className="bg-slate-50 rounded-lg p-3">
             <p className="text-xs text-slate-500">Member Since</p>

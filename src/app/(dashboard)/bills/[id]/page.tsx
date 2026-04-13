@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 interface BillDetail {
   id: string;
   billNo: string;
+  vendorId: string;
   amount: number;
   paidAmount: number;
   status: string;
@@ -131,7 +132,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       {/* Actions */}
       {remaining > 0 && (
         <div className="flex gap-2 mb-4">
-          <Link href={`/payments/new?vendorId=${bill.vendor.code}&billId=${bill.id}`} className="flex-1">
+          <Link href={`/payments/new?vendorId=${bill.vendorId}&billId=${bill.id}`} className="flex-1">
             <Button size="sm" className="w-full bg-blue-600 hover:bg-blue-700">
               <CreditCard className="h-4 w-4 mr-1" /> Record Payment
             </Button>

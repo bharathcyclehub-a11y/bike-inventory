@@ -35,6 +35,7 @@ export default function NewOutwardPage() {
   const [availableSerials, setAvailableSerials] = useState<SerialItem[]>([]);
   const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (search.length < 2) { setProducts([]); return; }
@@ -60,12 +61,16 @@ export default function NewOutwardPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedProduct || !quantity) return;
-
     const qty = parseInt(quantity, 10);
-    if (qty > selectedProduct.currentStock) return;
+    if (!selectedProduct || !qty || qty <= 0) return;
+
+    if (qty > selectedProduct.currentStock) {
+      setError(`Only ${selectedProduct.currentStock} available in stock.`);
+      return;
+    }
 
     setSubmitting(true);
+    setError("");
     try {
       const res = await fetch("/api/inventory/outwards", {
         method: "POST",
@@ -81,8 +86,9 @@ export default function NewOutwardPage() {
       });
       const data = await res.json();
       if (data.success) router.push("/outwards");
+      else setError(data.error || "Failed to record outward. Please try again.");
     } catch {
-      // handle silently
+      setError("Network error. Please check your connection.");
     } finally {
       setSubmitting(false);
     }
@@ -172,6 +178,7 @@ export default function NewOutwardPage() {
             className="flex w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900" />
         </div>
 
+        {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
         <Button type="submit" size="lg" disabled={!selectedProduct || !quantity || submitting} className="w-full bg-orange-500 hover:bg-orange-600">
           {submitting ? "Recording..." : "Record Outward"}
         </Button>

@@ -107,16 +107,24 @@ export default function AIPage() {
         <>
           {/* Insights Tab */}
           {tab === "insights" && (
-            <div className="grid grid-cols-2 gap-3">
-              {insights.map((item) => (
-                <Card key={item.type} className={item.severity === "danger" ? "border-red-200 bg-red-50" : item.severity === "warning" ? "border-yellow-200 bg-yellow-50" : ""}>
-                  <CardContent className="p-3">
-                    <Badge variant={SEVERITY_MAP[item.severity] || "info"} className="text-[9px] mb-1">{item.type.replace("_", " ")}</Badge>
-                    <p className="text-xs text-slate-700 leading-tight">{item.title}</p>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
+            insights.length === 0 ? (
+              <div className="text-center py-12">
+                <BarChart3 className="h-10 w-10 text-slate-300 mx-auto mb-2" />
+                <p className="text-sm text-slate-500">No insights available yet</p>
+                <p className="text-xs text-slate-400 mt-1">Add products and record transactions to generate insights</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {insights.map((item) => (
+                  <Card key={item.type} className={item.severity === "danger" ? "border-red-200 bg-red-50" : item.severity === "warning" ? "border-yellow-200 bg-yellow-50" : ""}>
+                    <CardContent className="p-3">
+                      <Badge variant={SEVERITY_MAP[item.severity] || "info"} className="text-[9px] mb-1">{item.type.replace("_", " ")}</Badge>
+                      <p className="text-xs text-slate-700 leading-tight">{item.title}</p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )
           )}
 
           {/* Reorder Tab */}

@@ -33,14 +33,16 @@ export default function NewPurchaseOrderPage() {
   useEffect(() => {
     fetch("/api/vendors?limit=100")
       .then((r) => r.json())
-      .then((res) => { if (res.success) setVendors(res.data); });
+      .then((res) => { if (res.success) setVendors(res.data); })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
     if (productSearch.length < 2) { setProductResults([]); return; }
     fetch(`/api/products/search?q=${encodeURIComponent(productSearch)}`)
       .then((r) => r.json())
-      .then((res) => { if (res.success) setProductResults(res.data); });
+      .then((res) => { if (res.success) setProductResults(res.data); })
+      .catch(() => {});
   }, [productSearch]);
 
   function addItem(product: ProductOption) {

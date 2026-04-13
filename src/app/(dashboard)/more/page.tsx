@@ -25,90 +25,100 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { Role } from "@/types";
 
-const menuItems = [
+interface MenuItem {
+  label: string;
+  icon: typeof Building2;
+  href: string;
+  roles: Role[];
+  comingSoon?: boolean;
+}
+
+const menuItems: MenuItem[] = [
   {
     label: "Vendors",
     icon: Building2,
     href: "/vendors",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
     label: "Purchase Orders",
     icon: ShoppingCart,
     href: "/purchase-orders",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
     label: "Bills & Payments",
     icon: FileText,
     href: "/bills",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
     label: "Record Payment",
     icon: CreditCard,
     href: "/payments/new",
-    roles: ["ADMIN", "MANAGER"] as Role[],
+    roles: ["ADMIN", "MANAGER"],
   },
   {
     label: "Expenses",
     icon: Receipt,
     href: "/expenses",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
     label: "Stock Audit",
     icon: ClipboardCheck,
     href: "/stock-audit",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
     label: "Bins & Locations",
     icon: Warehouse,
     href: "/more/bins",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK"] as Role[],
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK"],
   },
   {
     label: "Barcode Scanner",
     icon: QrCode,
     href: "/scanner",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"] as Role[],
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
   },
   {
     label: "Team Management",
     icon: Users,
     href: "/team",
-    roles: ["ADMIN", "SUPERVISOR"] as Role[],
+    roles: ["ADMIN", "SUPERVISOR"],
   },
   {
     label: "AI Insights",
     icon: Brain,
     href: "/ai",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[],
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
     label: "Reports",
     icon: BarChart3,
     href: "/reports",
-    roles: ["ADMIN", "SUPERVISOR"] as Role[],
+    roles: ["ADMIN", "SUPERVISOR"],
   },
   {
     label: "Team Chat",
     icon: MessageSquare,
-    href: "/more/chat",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"] as Role[],
+    href: "#",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
+    comingSoon: true,
   },
   {
     label: "Zoho Books Sync",
     icon: Cloud,
     href: "/more/zoho",
-    roles: ["ADMIN"] as Role[],
+    roles: ["ADMIN"],
   },
   {
     label: "Settings",
     icon: Settings,
-    href: "/more/settings",
-    roles: ["ADMIN"] as Role[],
+    href: "#",
+    roles: ["ADMIN"],
+    comingSoon: true,
   },
 ];
 
@@ -140,6 +150,17 @@ export default function MorePage() {
       <div className="space-y-1">
         {visibleItems.map((item) => {
           const Icon = item.icon;
+          if (item.comingSoon) {
+            return (
+              <div key={item.label} className="flex items-center gap-3 px-4 py-3 rounded-lg opacity-50 cursor-not-allowed">
+                <Icon className="h-5 w-5 text-slate-400" />
+                <span className="flex-1 text-sm font-medium text-slate-500">
+                  {item.label}
+                </span>
+                <Badge variant="default">Soon</Badge>
+              </div>
+            );
+          }
           return (
             <Link key={item.href} href={item.href}>
               <div className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-100 transition-colors">

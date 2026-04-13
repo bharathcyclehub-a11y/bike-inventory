@@ -37,6 +37,7 @@ export default function NewInwardPage() {
   const [rgpReturnDate, setRgpReturnDate] = useState("");
   const [serialTracking, setSerialTracking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     fetch("/api/bins")
@@ -55,16 +56,18 @@ export default function NewInwardPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedProduct || !quantity) return;
+    const qty = parseInt(quantity, 10);
+    if (!selectedProduct || !qty || qty <= 0) return;
 
     setSubmitting(true);
+    setError("");
     try {
       const res = await fetch("/api/inventory/inwards", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           productId: selectedProduct.id,
-          quantity: parseInt(quantity, 10),
+          quantity: qty,
           referenceNo: referenceNo || undefined,
           notes: notes || undefined,
           isRgp,
@@ -75,8 +78,9 @@ export default function NewInwardPage() {
       });
       const data = await res.json();
       if (data.success) router.push("/inwards");
+      else setError(data.error || "Failed to record inward. Please try again.");
     } catch {
-      // handle silently
+      setError("Network error. Please check your connection.");
     } finally {
       setSubmitting(false);
     }
@@ -179,6 +183,7 @@ export default function NewInwardPage() {
             className="flex w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900" />
         </div>
 
+        {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
         <Button type="submit" size="lg" disabled={!selectedProduct || !quantity || submitting} className="w-full bg-blue-600 hover:bg-blue-700">
           {submitting ? "Recording..." : "Record Inward"}
         </Button>

@@ -20,10 +20,11 @@ export default function NewPaymentPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const presetBillId = searchParams.get("billId") || "";
+  const presetVendorId = searchParams.get("vendorId") || "";
 
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [bills, setBills] = useState<BillOption[]>([]);
-  const [vendorId, setVendorId] = useState("");
+  const [vendorId, setVendorId] = useState(presetVendorId);
   const [billId, setBillId] = useState(presetBillId);
   const [amount, setAmount] = useState("");
   const [paymentMode, setPaymentMode] = useState("CASH");
@@ -36,7 +37,8 @@ export default function NewPaymentPage() {
   useEffect(() => {
     fetch("/api/vendors?limit=100")
       .then((r) => r.json())
-      .then((res) => { if (res.success) setVendors(res.data); });
+      .then((res) => { if (res.success) setVendors(res.data); })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -47,14 +49,15 @@ export default function NewPaymentPage() {
         if (res.success) {
           const allBills = res.data as BillOption[];
           setBills(allBills);
-          // Also fetch partially paid
           fetch(`/api/bills?vendorId=${vendorId}&status=PARTIALLY_PAID&limit=50`)
             .then((r2) => r2.json())
             .then((res2) => {
               if (res2.success) setBills([...allBills, ...res2.data]);
-            });
+            })
+            .catch(() => {});
         }
-      });
+      })
+      .catch(() => {});
   }, [vendorId]);
 
   const selectedBill = bills.find((b) => b.id === billId);
