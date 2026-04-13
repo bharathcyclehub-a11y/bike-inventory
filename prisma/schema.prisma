@@ -184,6 +184,13 @@ model Product {
   stockCounts   StockCountItem[]
   serialItems   SerialItem[]
   purchaseOrderItems PurchaseOrderItem[]
+
+  @@index([status])
+  @@index([categoryId])
+  @@index([brandId])
+  @@index([type])
+  @@index([status, type])
+  @@index([status, categoryId])
 }
 
 model SerialItem {

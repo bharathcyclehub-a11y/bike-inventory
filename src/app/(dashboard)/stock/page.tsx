@@ -50,7 +50,7 @@ export default function StockPage() {
 
   useEffect(() => {
     setLoading(true);
-    const params = new URLSearchParams({ limit: "200" });
+    const params = new URLSearchParams({ limit: "30" });
     if (debouncedSearch) params.set("search", debouncedSearch);
     if (activeFilter === "BICYCLES") params.set("type", "BICYCLE");
     else if (activeFilter === "SPARES") params.set("type", "SPARE_PART");

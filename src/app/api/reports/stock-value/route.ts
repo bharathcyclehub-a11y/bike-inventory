@@ -13,7 +13,12 @@ export async function GET(req: NextRequest) {
 
     const products = await prisma.product.findMany({
       where: { status: "ACTIVE" },
-      include: { category: true, brand: true },
+      select: {
+        categoryId: true, brandId: true, type: true,
+        currentStock: true, costPrice: true, sellingPrice: true, mrp: true,
+        category: { select: { name: true } },
+        brand: { select: { name: true } },
+      },
     });
 
     let totalItems = 0;

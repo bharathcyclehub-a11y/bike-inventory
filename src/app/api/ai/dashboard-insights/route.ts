@@ -15,33 +15,28 @@ export async function GET() {
     const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
+    // Single product query instead of 3 separate ones (PERF: saves 2 DB round-trips)
     const [
-      reorderCount,
+      allProducts,
       todaySales,
       yesterdaySales,
       topSellerWeek,
-      overstockProducts,
-      allProducts,
       deadStockTxns,
     ] = await Promise.all([
-      // 1. Products needing reorder (fetched as array, counted in JS — Prisma can't compare fields)
       prisma.product.findMany({
         where: { status: "ACTIVE" },
-        select: { currentStock: true, reorderLevel: true },
+        select: { id: true, currentStock: true, costPrice: true, reorderLevel: true, maxStock: true },
       }),
-      // 2. Today's outward transactions
       prisma.inventoryTransaction.aggregate({
         where: { type: "OUTWARD", createdAt: { gte: todayStart } },
         _sum: { quantity: true },
         _count: true,
       }),
-      // 3. Yesterday's outward transactions
       prisma.inventoryTransaction.aggregate({
         where: { type: "OUTWARD", createdAt: { gte: yesterdayStart, lt: todayStart } },
         _sum: { quantity: true },
         _count: true,
       }),
-      // 4. Top seller this week
       prisma.inventoryTransaction.groupBy({
         by: ["productId"],
         where: { type: "OUTWARD", createdAt: { gte: weekStart } },
@@ -49,17 +44,6 @@ export async function GET() {
         orderBy: { _sum: { quantity: "desc" } },
         take: 1,
       }),
-      // 5. Overstock count
-      prisma.product.findMany({
-        where: { status: "ACTIVE", maxStock: { gt: 0 } },
-        select: { currentStock: true, maxStock: true },
-      }),
-      // 6. All active products for stock value
-      prisma.product.findMany({
-        where: { status: "ACTIVE" },
-        select: { id: true, currentStock: true, costPrice: true },
-      }),
-      // 7. Products with sales in last 90 days (to find dead stock)
       prisma.inventoryTransaction.groupBy({
         by: ["productId"],
         where: { type: "OUTWARD", createdAt: { gte: ninetyDaysAgo } },
@@ -67,17 +51,13 @@ export async function GET() {
       }),
     ]);
 
-    // Calculate overstock
-    const overstockCount = overstockProducts.filter((p) => p.currentStock > p.maxStock).length;
-
-    // Calculate dead stock
+    // Derive all metrics from single product array
+    const reorderNum = allProducts.filter((p) => p.currentStock <= p.reorderLevel).length;
+    const overstockCount = allProducts.filter((p) => p.maxStock > 0 && p.currentStock > p.maxStock).length;
+    const totalStockValue = allProducts.reduce((sum, p) => sum + (p.currentStock * p.costPrice), 0);
     const productsWithSales = new Set(deadStockTxns.map((t) => t.productId));
     const deadStockCount = allProducts.filter((p) => !productsWithSales.has(p.id)).length;
 
-    // Calculate total stock value
-    const totalStockValue = allProducts.reduce((sum, p) => sum + (p.currentStock * p.costPrice), 0);
-
-    // Get top seller product name
     let topSellerName = "None this week";
     if (topSellerWeek.length > 0) {
       const topProduct = await prisma.product.findUnique({
@@ -90,9 +70,6 @@ export async function GET() {
 
     const todayCount = todaySales._count || 0;
     const yesterdayCount = yesterdaySales._count || 0;
-
-    // Filter in JS since Prisma can't compare two columns
-    const reorderNum = reorderCount.filter((p) => p.currentStock <= p.reorderLevel).length;
 
     const insights = [
       {

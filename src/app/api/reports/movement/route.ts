@@ -36,12 +36,7 @@ export async function GET(req: NextRequest) {
       productMap.set(t.productId, entry);
     }
 
-    const productIds = Array.from(productMap.keys());
-    const products = await prisma.product.findMany({
-      where: { id: { in: productIds } },
-      select: { id: true, name: true, sku: true, currentStock: true, type: true, category: { select: { name: true } } },
-    });
-
+    // Single query — the redundant productIds query was a subset of this
     const allActiveProducts = await prisma.product.findMany({
       where: { status: "ACTIVE" },
       select: { id: true, name: true, sku: true, currentStock: true, type: true, category: { select: { name: true } } },

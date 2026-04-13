@@ -23,7 +23,11 @@ export async function GET(req: NextRequest) {
     const [vendors, total] = await Promise.all([
       prisma.vendor.findMany({
         where,
-        include: { contacts: true, _count: { select: { purchaseOrders: true, bills: true } } },
+        select: {
+          id: true, name: true, code: true, city: true, phone: true,
+          whatsappNumber: true, isActive: true, paymentTermDays: true,
+          _count: { select: { purchaseOrders: true, bills: true } },
+        },
         orderBy: { name: "asc" },
         skip,
         take: limit,
