@@ -13,7 +13,10 @@ export async function GET(req: NextRequest) {
     const authHeader = req.headers.get("authorization");
     const cronSecret = process.env.CRON_SECRET;
 
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    if (!cronSecret) {
+      return errorResponse("CRON_SECRET not configured", 500);
+    }
+    if (authHeader !== `Bearer ${cronSecret}`) {
       return errorResponse("Unauthorized", 401);
     }
 
@@ -240,46 +243,22 @@ export async function GET(req: NextRequest) {
               if (!product) continue;
 
               const previousStock = product.currentStock;
-              const newStock = Math.max(0, previousStock - item.quantity);
               const serialInfo = item.serial_numbers?.length
                 ? ` | Serials: ${item.serial_numbers.join(", ")}`
                 : "";
 
-              await prisma.$transaction(async (tx) => {
-                await tx.product.update({
-                  where: { id: product.id },
-                  data: { currentStock: newStock },
-                });
-
-                await tx.inventoryTransaction.create({
-                  data: {
-                    type: "OUTWARD",
-                    productId: product.id,
-                    quantity: item.quantity,
-                    previousStock,
-                    newStock,
-                    referenceNo: inv.invoice_number,
-                    notes: `[ZOHO][UNVERIFIED] Customer: ${inv.customer_name} | ${item.name} @ ₹${item.rate}${serialInfo}`,
-                    userId,
-                  },
-                });
-
-                // Mark serial items as SOLD if we have serial numbers
-                if (item.serial_numbers?.length) {
-                  await tx.serialItem.updateMany({
-                    where: {
-                      productId: product.id,
-                      serialCode: { in: item.serial_numbers },
-                      status: "IN_STOCK",
-                    },
-                    data: {
-                      status: "SOLD",
-                      soldAt: new Date(),
-                      customerName: inv.customer_name || null,
-                      saleInvoiceNo: inv.invoice_number || null,
-                    },
-                  });
-                }
+              // Don't deduct stock yet — staff must verify first (same pattern as inwards)
+              await prisma.inventoryTransaction.create({
+                data: {
+                  type: "OUTWARD",
+                  productId: product.id,
+                  quantity: item.quantity,
+                  previousStock,
+                  newStock: previousStock, // Stock NOT deducted until verified
+                  referenceNo: inv.invoice_number,
+                  notes: `[ZOHO][UNVERIFIED] Customer: ${inv.customer_name} | ${item.name} @ ₹${item.rate}${serialInfo}`,
+                  userId,
+                },
               });
             }
             imported++;

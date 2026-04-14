@@ -16,6 +16,7 @@ export async function POST(req: NextRequest) {
 
     const transaction = await prisma.inventoryTransaction.findUnique({
       where: { id: transactionId },
+      include: { product: true },
     });
 
     if (!transaction) return errorResponse("Transaction not found", 404);
@@ -23,16 +24,50 @@ export async function POST(req: NextRequest) {
     if (!transaction.notes?.includes("[ZOHO]")) return errorResponse("Not a Zoho transaction", 400);
     if (transaction.notes?.includes("[VERIFIED]")) return errorResponse("Already verified", 400);
 
-    await prisma.inventoryTransaction.update({
-      where: { id: transactionId },
-      data: {
-        notes: transaction.notes!
-          .replace("[UNVERIFIED]", "[VERIFIED]")
-          + ` | Verified by: ${user.name} at ${new Date().toLocaleString("en-IN")}`,
-      },
+    // Deduct stock inside transaction to prevent race condition
+    await prisma.$transaction(async (tx) => {
+      const product = await tx.product.findUniqueOrThrow({
+        where: { id: transaction.productId },
+      });
+
+      const newStock = Math.max(0, product.currentStock - transaction.quantity);
+
+      await tx.product.update({
+        where: { id: product.id },
+        data: { currentStock: newStock },
+      });
+
+      await tx.inventoryTransaction.update({
+        where: { id: transactionId },
+        data: {
+          previousStock: product.currentStock,
+          newStock,
+          notes: transaction.notes!
+            .replace("[UNVERIFIED]", "[VERIFIED]")
+            + ` | Verified by: ${user.name} at ${new Date().toISOString()}`,
+        },
+      });
+
+      // Mark serial items as SOLD if serials are in the notes
+      const serialMatch = transaction.notes?.match(/Serials: (.+?)(?:\s*\||$)/);
+      if (serialMatch) {
+        const serials = serialMatch[1].split(",").map((s) => s.trim());
+        await tx.serialItem.updateMany({
+          where: {
+            productId: product.id,
+            serialCode: { in: serials },
+            status: "IN_STOCK",
+          },
+          data: {
+            status: "SOLD",
+            soldAt: new Date(),
+            saleInvoiceNo: transaction.referenceNo || null,
+          },
+        });
+      }
     });
 
-    return successResponse({ message: "Transaction verified", id: transactionId });
+    return successResponse({ message: "Outward verified, stock deducted", id: transactionId });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Verification failed", 400);

@@ -8,6 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 // GET: Find vendors with no purchase orders in 90+ days
 export async function GET(req: NextRequest) {
   try {
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
     const { searchParams } = new URL(req.url);
     const days = parseInt(searchParams.get("days") || "90", 10);
     const cutoff = new Date();

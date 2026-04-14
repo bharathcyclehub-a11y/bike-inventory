@@ -24,12 +24,14 @@ export async function POST(req: NextRequest) {
     if (!transaction.notes?.includes("[ZOHO]")) return errorResponse("Not a Zoho transaction", 400);
     if (transaction.notes?.includes("[VERIFIED]")) return errorResponse("Already verified", 400);
 
-    // Now actually add the stock
-    const product = transaction.product;
-    const newStock = product.currentStock + transaction.quantity;
-
+    // Now actually add the stock — read product INSIDE transaction to prevent race condition
     await prisma.$transaction(async (tx) => {
-      // Update product stock
+      const product = await tx.product.findUniqueOrThrow({
+        where: { id: transaction.productId },
+      });
+
+      const newStock = product.currentStock + transaction.quantity;
+
       await tx.product.update({
         where: { id: product.id },
         data: {
@@ -38,7 +40,6 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      // Update transaction with verified status and correct stock numbers
       await tx.inventoryTransaction.update({
         where: { id: transactionId },
         data: {
@@ -46,12 +47,12 @@ export async function POST(req: NextRequest) {
           newStock,
           notes: transaction.notes!
             .replace("[UNVERIFIED]", "[VERIFIED]")
-            + ` | Verified by: ${user.name} at ${new Date().toLocaleString("en-IN")}`,
+            + ` | Verified by: ${user.name} at ${new Date().toISOString()}`,
         },
       });
     });
 
-    return successResponse({ message: "Inward verified, stock added", id: transactionId, newStock });
+    return successResponse({ message: "Inward verified, stock added", id: transactionId });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Verification failed", 400);
