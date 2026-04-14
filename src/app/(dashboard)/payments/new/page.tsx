@@ -67,6 +67,11 @@ export default function NewPaymentPage() {
     e.preventDefault();
     if (!vendorId || !amount || !paymentDate) return;
 
+    if (selectedBill && parseFloat(amount) > billRemaining) {
+      setError(`Amount exceeds bill remaining balance of ${formatCurrency(billRemaining)}`);
+      return;
+    }
+
     setSubmitting(true);
     setError("");
 

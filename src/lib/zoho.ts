@@ -61,26 +61,40 @@ export class ZohoClient {
     return true;
   }
 
-  async apiCall<T>(method: string, endpoint: string, body?: Record<string, unknown>): Promise<T> {
+  async apiCall<T>(method: string, endpoint: string, body?: Record<string, unknown>, _retried = false): Promise<T> {
     if (!this.accessToken || !this.organizationId) {
       throw new Error("Zoho client not initialized");
     }
 
     const separator = endpoint.includes("?") ? "&" : "?";
     const url = `${ZOHO_API_BASE}${endpoint}${separator}organization_id=${this.organizationId}`;
-    const options: RequestInit = {
-      method,
-      headers: {
-        Authorization: `Zoho-oauthtoken ${this.accessToken}`,
-        "Content-Type": "application/json",
-      },
+    const buildOptions = (): RequestInit => {
+      const opts: RequestInit = {
+        method,
+        headers: {
+          Authorization: `Zoho-oauthtoken ${this.accessToken}`,
+          "Content-Type": "application/json",
+        },
+      };
+      if (body && (method === "POST" || method === "PUT")) {
+        opts.body = JSON.stringify(body);
+      }
+      return opts;
     };
 
-    if (body && (method === "POST" || method === "PUT")) {
-      options.body = JSON.stringify(body);
-    }
+    let res = await fetch(url, buildOptions());
 
-    const res = await fetch(url, options);
+    // Token expired mid-request — refresh and retry once
+    if (res.status === 401 && !_retried) {
+      const config = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
+      if (config?.clientId && config?.clientSecret && config?.refreshToken) {
+        const refreshed = await this.refreshAccessToken(config.clientId, config.clientSecret, config.refreshToken);
+        if (refreshed) {
+          return this.apiCall<T>(method, endpoint, body, true);
+        }
+      }
+      throw new Error("Zoho authentication failed. Please reconnect.");
+    }
 
     if (res.status === 429) {
       throw new Error("Zoho API rate limit exceeded. Try again later.");

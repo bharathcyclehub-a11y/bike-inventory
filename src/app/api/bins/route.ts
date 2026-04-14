@@ -8,6 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET() {
   try {
+    await requireAuth();
     const bins = await prisma.bin.findMany({
       where: { isActive: true },
       include: { _count: { select: { products: true } } },
@@ -15,6 +16,7 @@ export async function GET() {
     });
     return successResponse(bins);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch bins", 500);
   }
 }

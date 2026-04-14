@@ -17,6 +17,7 @@ const transferSchema = z.object({
 // GET: List transfers
 export async function GET(req: NextRequest) {
   try {
+    await requireAuth();
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status"); // PENDING, APPROVED, REJECTED, all
 
@@ -43,6 +44,7 @@ export async function GET(req: NextRequest) {
 
     return paginatedResponse(transfers, total, page, limit);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch transfers", 500);
   }
 }

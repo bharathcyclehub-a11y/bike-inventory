@@ -44,6 +44,27 @@ export async function POST(req: NextRequest) {
     const data = vendorPaymentSchema.parse(body);
 
     const result = await prisma.$transaction(async (tx) => {
+      // Validate bill balance BEFORE creating payment
+      if (data.billId) {
+        const bill = await tx.vendorBill.findUnique({ where: { id: data.billId } });
+        if (!bill) throw new Error("Bill not found");
+        const remaining = bill.amount - bill.paidAmount;
+        if (data.amount > remaining) {
+          throw new Error(`Payment exceeds bill balance. Remaining: ${remaining}`);
+        }
+      }
+
+      // Validate credit balance BEFORE creating payment
+      if (data.creditId) {
+        const credit = await tx.vendorCredit.findUnique({ where: { id: data.creditId } });
+        if (!credit) throw new Error("Credit not found");
+        const creditRemaining = credit.amount - credit.usedAmount;
+        if (data.amount > creditRemaining) {
+          throw new Error(`Exceeds credit balance. Available: ${creditRemaining}`);
+        }
+      }
+
+      // Create payment after validation passes
       const payment = await tx.vendorPayment.create({
         data: {
           vendorId: data.vendorId,
@@ -59,13 +80,10 @@ export async function POST(req: NextRequest) {
         include: { vendor: { select: { name: true } }, bill: { select: { billNo: true } } },
       });
 
+      // Update bill status
       if (data.billId) {
         const bill = await tx.vendorBill.findUnique({ where: { id: data.billId } });
         if (bill) {
-          const remaining = bill.amount - bill.paidAmount;
-          if (data.amount > remaining) {
-            throw new Error(`Payment exceeds bill balance. Remaining: ${remaining}`);
-          }
           const newPaidAmount = bill.paidAmount + data.amount;
           const newStatus = newPaidAmount >= bill.amount ? "PAID" : "PARTIALLY_PAID";
           await tx.vendorBill.update({
@@ -75,13 +93,10 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Update credit usage
       if (data.creditId) {
         const credit = await tx.vendorCredit.findUnique({ where: { id: data.creditId } });
         if (credit) {
-          const creditRemaining = credit.amount - credit.usedAmount;
-          if (data.amount > creditRemaining) {
-            throw new Error(`Exceeds credit balance. Available: ${creditRemaining}`);
-          }
           await tx.vendorCredit.update({
             where: { id: data.creditId },
             data: { usedAmount: credit.usedAmount + data.amount },

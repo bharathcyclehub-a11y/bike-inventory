@@ -65,7 +65,8 @@ function getVendor(notes: string | null) {
 
 export default function InwardsPage() {
   const { data: session } = useSession();
-  const isAdmin = (session?.user as { role?: string })?.role === "ADMIN";
+  const role = (session?.user as { role?: string })?.role || "";
+  const canAddInward = ["ADMIN", "SUPERVISOR", "INWARDS_CLERK"].includes(role);
   const [inwards, setInwards] = useState<InwardTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
@@ -244,8 +245,8 @@ export default function InwardsPage() {
         </CardContent>
       </Card>
 
-      {/* Only admin can manually add inward */}
-      {isAdmin && (
+      {/* Admin, Supervisor, and Inwards Clerk can manually add inward */}
+      {canAddInward && (
         <Link
           href="/inwards/new"
           className="fixed bottom-20 right-4 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 active:scale-95 transition-transform"

@@ -18,9 +18,16 @@ export async function POST() {
       } catch { /* best-effort revoke */ }
     }
 
-    await prisma.zohoConfig.update({
+    await prisma.zohoConfig.upsert({
       where: { id: "singleton" },
-      data: {
+      update: {
+        isConnected: false,
+        accessToken: null,
+        refreshToken: null,
+        accessTokenExpiresAt: null,
+      },
+      create: {
+        id: "singleton",
         isConnected: false,
         accessToken: null,
         refreshToken: null,

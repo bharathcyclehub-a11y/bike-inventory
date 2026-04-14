@@ -8,6 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await requireAuth();
     const { id } = await params;
     const contacts = await prisma.vendorContact.findMany({
       where: { vendorId: id },
@@ -15,6 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     });
     return successResponse(contacts);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch contacts", 500);
   }
 }

@@ -18,8 +18,8 @@ export async function POST() {
       data: { syncType: "import-contacts", status: "running", triggeredBy: currentUser?.id },
     });
 
-    const data = await zoho.listContacts(1);
-    const vendors = data.contacts.filter((c) => c.contact_type === "vendor");
+    const allContacts = await zoho.listAllContacts();
+    const vendors = allContacts.filter((c) => c.contact_type === "vendor");
 
     let imported = 0;
     let skipped = 0;

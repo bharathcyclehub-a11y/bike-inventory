@@ -9,16 +9,15 @@ import {
   parseSearchParams,
 } from "@/lib/api-utils";
 import { productSchema } from "@/lib/validations";
-import { requireAuth, AuthError, getCurrentUser } from "@/lib/auth-helpers";
+import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
+    const user = await requireAuth();
     const { page, limit, skip, sortBy, sortOrder, search, searchParams } =
       parseSearchParams(req.url);
 
-    // Get user role to filter sensitive data
-    const user = await getCurrentUser();
-    const isAdmin = user?.role === "ADMIN";
+    const isAdmin = user.role === "ADMIN";
 
     const categoryId = searchParams.get("categoryId") || undefined;
     const brandId = searchParams.get("brandId") || undefined;
@@ -58,6 +57,9 @@ export async function GET(req: NextRequest) {
 
     return paginatedResponse(products, total, page, limit);
   } catch (error) {
+    if (error instanceof AuthError) {
+      return errorResponse(error.message, error.status);
+    }
     return errorResponse(
       error instanceof Error ? error.message : "Failed to fetch products",
       500

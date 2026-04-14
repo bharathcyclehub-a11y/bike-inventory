@@ -7,6 +7,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
     const { id } = await params;
     const po = await prisma.purchaseOrder.findUnique({
       where: { id },
@@ -22,6 +23,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (!po) return errorResponse("Purchase order not found", 404);
     return successResponse(po);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch purchase order", 500);
   }
 }

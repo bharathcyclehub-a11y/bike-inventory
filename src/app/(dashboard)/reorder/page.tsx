@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Search, AlertTriangle, Package, ChevronDown, ChevronUp,
@@ -54,6 +54,11 @@ export default function ReorderDashboardPage() {
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
   const [selectedForPO, setSelectedForPO] = useState<Set<string>>(new Set());
+  const expandedGroupsRef = useRef(expandedGroups);
+
+  useEffect(() => {
+    expandedGroupsRef.current = expandedGroups;
+  }, [expandedGroups]);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -67,7 +72,7 @@ export default function ReorderDashboardPage() {
           setGroups(res.data.groups);
           setSummary(res.data.summary);
           // Auto-expand all groups on first load
-          if (expandedGroups.size === 0) {
+          if (expandedGroupsRef.current.size === 0) {
             setExpandedGroups(new Set(res.data.groups.map((g: ProductGroup) => g.id)));
           }
         }

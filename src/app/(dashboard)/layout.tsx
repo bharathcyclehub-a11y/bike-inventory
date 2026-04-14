@@ -1,6 +1,7 @@
 "use client";
 
 import { useSession } from "next-auth/react";
+import { redirect } from "next/navigation";
 import { Header } from "@/components/header";
 import { BottomNav } from "@/components/bottom-nav";
 import type { Role } from "@/types";
@@ -20,7 +21,16 @@ export default function DashboardLayout({
     );
   }
 
-  const role = ((session?.user as { role?: string })?.role || "INWARDS_CLERK") as Role;
+  if (status === "unauthenticated") {
+    redirect("/login");
+  }
+
+  const userRole = (session?.user as { role?: string })?.role;
+  if (!userRole) {
+    redirect("/login");
+  }
+
+  const role = userRole as Role;
 
   return (
     <div className="flex flex-col min-h-screen">

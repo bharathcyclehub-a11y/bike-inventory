@@ -366,7 +366,7 @@ export default function ZohoSettingsPage() {
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Grant Token *</label>
-              <Input placeholder="1000.XXXX..." value={grantToken} onChange={(e) => setGrantToken(e.target.value)} />
+              <Input type="password" placeholder="1000.XXXX..." value={grantToken} onChange={(e) => setGrantToken(e.target.value)} />
               <p className="text-[10px] text-slate-400 mt-0.5">Expires in 2 minutes — generate and paste quickly</p>
             </div>
             <div>

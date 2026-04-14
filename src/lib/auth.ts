@@ -19,7 +19,11 @@ export const authOptions: NextAuthOptions = {
           where: { accessCode: code },
         });
 
-        if (!user || !user.isActive) return null;
+        if (!user || !user.isActive) {
+          // Run bcrypt against dummy hash to prevent timing attacks
+          await bcrypt.compare(code, "$2b$10$dummyhashvaluetopreventtimingattacks");
+          return null;
+        }
 
         // Verify password (accessCode is also used as password for simple login)
         const isValid = await bcrypt.compare(code, user.password);

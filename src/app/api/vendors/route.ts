@@ -8,6 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
+    await requireAuth();
     const { page, limit, skip, search } = parseSearchParams(req.url);
 
     const where = {
@@ -37,6 +38,7 @@ export async function GET(req: NextRequest) {
 
     return paginatedResponse(vendors, total, page, limit);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch vendors", 500);
   }
 }

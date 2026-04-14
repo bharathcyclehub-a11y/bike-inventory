@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Plus, Receipt } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,12 +37,17 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 export default function ExpensesPage() {
+  const { data: session, status: sessionStatus } = useSession();
+  const role = (session?.user as { role?: string })?.role || "";
+  const canAccess = ["ADMIN", "SUPERVISOR", "MANAGER"].includes(role);
+
   const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("ALL");
   const [totalAmount, setTotalAmount] = useState(0);
 
   useEffect(() => {
+    setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
     if (filter !== "ALL") params.set("category", filter);
 
@@ -56,6 +62,23 @@ export default function ExpensesPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [filter]);
+
+  if (sessionStatus === "loading") {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!canAccess) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-sm font-medium text-red-600">Access Denied</p>
+        <p className="text-xs text-slate-500 mt-1">You do not have permission to view expenses.</p>
+      </div>
+    );
+  }
 
   return (
     <div>

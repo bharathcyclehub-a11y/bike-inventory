@@ -11,9 +11,9 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const user = await requireAuth();
     const { id } = await params;
-    const user = await getCurrentUser();
-    const isAdmin = user?.role === "ADMIN";
+    const isAdmin = user.role === "ADMIN";
 
     const product = await prisma.product.findUnique({
       where: { id },
@@ -41,6 +41,9 @@ export async function GET(
 
     return successResponse(product);
   } catch (error) {
+    if (error instanceof AuthError) {
+      return errorResponse(error.message, error.status);
+    }
     return errorResponse(
       error instanceof Error ? error.message : "Failed to fetch product",
       500

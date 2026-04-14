@@ -8,12 +8,14 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET() {
   try {
+    await requireAuth();
     const brands = await prisma.brand.findMany({
       include: { _count: { select: { products: true } } },
       orderBy: { name: "asc" },
     });
     return successResponse(brands);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch brands", 500);
   }
 }

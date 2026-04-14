@@ -8,6 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await requireAuth();
     const { id } = await params;
     const vendor = await prisma.vendor.findUnique({
       where: { id },
@@ -22,6 +23,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (!vendor) return errorResponse("Vendor not found", 404);
     return successResponse(vendor);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch vendor", 500);
   }
 }

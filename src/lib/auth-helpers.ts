@@ -1,5 +1,6 @@
 import { getServerSession as nextAuthGetServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import type { Role } from "@/types";
 
 export async function getServerSession() {
@@ -19,12 +20,19 @@ export async function getCurrentUser() {
 
   if (!user.userId || !user.role) return null;
 
+  // Verify user is still active in the database
+  const dbUser = await prisma.user.findUnique({
+    where: { id: user.userId },
+    select: { isActive: true },
+  });
+  if (!dbUser || !dbUser.isActive) return null;
+
   return {
     id: user.userId,
     name: user.name || "User",
     email: user.email || "",
     role: user.role as Role,
-    isActive: true,
+    isActive: dbUser.isActive,
   };
 }
 

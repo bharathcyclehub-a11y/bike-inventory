@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
 
     return paginatedResponse(transactions, total, page, limit);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch inwards", 500);
   }
 }

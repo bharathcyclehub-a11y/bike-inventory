@@ -8,6 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status") || undefined;
     const vendorId = searchParams.get("vendorId") || undefined;
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest) {
 
     return paginatedResponse(orders, total, page, limit);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch purchase orders", 500);
   }
 }

@@ -21,8 +21,8 @@ export async function PUT(req: NextRequest) {
         const result = await tx.product.update({
           where: { id: item.id },
           data: {
-            reorderLevel: Math.max(0, parseInt(item.reorderLevel, 10)),
-            ...(item.reorderQty !== undefined && { reorderQty: Math.max(0, parseInt(item.reorderQty, 10)) }),
+            reorderLevel: Math.max(0, Number(item.reorderLevel) || 0),
+            ...(item.reorderQty !== undefined && { reorderQty: Math.max(0, Number(item.reorderQty) || 0) }),
           },
           select: { id: true, name: true, reorderLevel: true, reorderQty: true },
         });

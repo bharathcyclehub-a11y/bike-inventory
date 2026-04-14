@@ -7,6 +7,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
     const { id } = await params;
     const bill = await prisma.vendorBill.findUnique({
       where: { id },
@@ -20,6 +21,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (!bill) return errorResponse("Bill not found", 404);
     return successResponse(bill);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch bill", 500);
   }
 }
@@ -30,7 +32,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const { id } = await params;
     const body = await req.json();
 
-    const VALID_BILL_STATUS = ["PENDING", "PARTIALLY_PAID", "PAID", "CANCELLED"];
+    const VALID_BILL_STATUS = ["PENDING", "PARTIALLY_PAID", "PAID", "OVERDUE", "DISPUTED"];
     if (body.status && !VALID_BILL_STATUS.includes(body.status)) {
       return errorResponse("Invalid bill status", 400);
     }

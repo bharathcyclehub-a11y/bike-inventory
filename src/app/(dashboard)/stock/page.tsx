@@ -90,11 +90,11 @@ export default function StockPage() {
   const buildParams = useCallback((pageNum: number) => {
     const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(pageNum) });
     if (debouncedSearch) params.set("search", debouncedSearch);
-    if (activeFilter === "BICYCLES") params.set("type", "BICYCLE");
-    else if (activeFilter === "SPARES") params.set("type", "SPARE_PART");
-    else if (activeFilter === "ACCESSORIES") params.set("type", "ACCESSORY");
-    else if (activeFilter === "INACTIVE") params.set("status", "INACTIVE");
-    if (activeFilter !== "INACTIVE") params.set("status", "ACTIVE");
+    if (activeFilter === "BICYCLES") { params.set("type", "BICYCLE"); params.set("status", "ACTIVE"); }
+    else if (activeFilter === "SPARES") { params.set("type", "SPARE_PART"); params.set("status", "ACTIVE"); }
+    else if (activeFilter === "ACCESSORIES") { params.set("type", "ACCESSORY"); params.set("status", "ACTIVE"); }
+    else if (activeFilter === "INACTIVE") { params.set("status", "INACTIVE"); }
+    else if (activeFilter === "ALL" || activeFilter === "LOW_STOCK") { params.set("status", "ACTIVE"); }
     if (selectedBrand !== "ALL") params.set("brandId", selectedBrand);
     return params;
   }, [debouncedSearch, activeFilter, selectedBrand]);

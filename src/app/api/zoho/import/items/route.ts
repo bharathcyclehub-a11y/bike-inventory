@@ -18,8 +18,7 @@ export async function POST() {
       data: { syncType: "import-items", status: "running", triggeredBy: currentUser?.id },
     });
 
-    const data = await zoho.listItems(1);
-    const items = data.items || [];
+    const items = await zoho.listAllItems();
 
     let imported = 0;
     let skipped = 0;

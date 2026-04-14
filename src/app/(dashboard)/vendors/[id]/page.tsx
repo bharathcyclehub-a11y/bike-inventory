@@ -44,6 +44,9 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     return (
       <div className="text-center py-12">
         <p className="text-sm text-slate-400">Vendor not found</p>
+        <Link href="/vendors" className="text-sm text-blue-600 hover:underline mt-2 inline-block">
+          Back to Vendors
+        </Link>
       </div>
     );
   }

@@ -35,7 +35,8 @@ function parseTransferNotes(notes: string | null) {
 
 export default function TransfersPage() {
   const { data: session } = useSession();
-  const isAdmin = (session?.user as { role?: string })?.role === "ADMIN";
+  const role = (session?.user as { role?: string })?.role || "";
+  const canApprove = ["ADMIN", "SUPERVISOR"].includes(role);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>("all");
@@ -154,7 +155,7 @@ export default function TransfersPage() {
                       {t.referenceNo} | {t.user.name} | {new Date(t.createdAt).toLocaleString("en-IN")}
                     </p>
 
-                    {isAdmin && parsed.status === "PENDING" && (
+                    {canApprove && parsed.status === "PENDING" && (
                       <div className="flex gap-1.5">
                         <Button size="sm" variant="outline"
                           className="h-7 text-xs text-green-600 border-green-200 hover:bg-green-50"

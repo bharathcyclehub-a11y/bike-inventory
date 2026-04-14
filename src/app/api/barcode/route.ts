@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateBarcodePng } from "@/lib/barcode";
 import type { BarcodeType } from "@/lib/barcode";
+import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function POST(req: NextRequest) {
   try {
+    await requireAuth();
     const body = await req.json();
     const { text, type = "code128" } = body as {
       text: string;
@@ -26,6 +28,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ image, text, type });
   } catch (error) {
+    if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Barcode generation failed" },
       { status: 500 }

@@ -29,7 +29,8 @@ export type SerialStatus =
   | "SOLD"
   | "RETURNED"
   | "DAMAGED"
-  | "TRANSFERRED";
+  | "TRANSFERRED"
+  | "RGP_OUT";
 
 export type BarcodeFormat = "CODE128" | "QR" | "EAN13";
 

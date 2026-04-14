@@ -8,6 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET() {
   try {
+    await requireAuth();
     const categories = await prisma.category.findMany({
       include: {
         children: true,
@@ -17,6 +18,7 @@ export async function GET() {
     });
     return successResponse(categories);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch categories", 500);
   }
 }

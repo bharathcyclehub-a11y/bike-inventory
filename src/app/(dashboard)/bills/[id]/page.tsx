@@ -83,7 +83,14 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
     );
   }
 
-  if (!bill) return <div className="text-center py-12"><p className="text-sm text-slate-400">Bill not found</p></div>;
+  if (!bill) return (
+    <div className="text-center py-12">
+      <p className="text-sm text-slate-400">Bill not found</p>
+      <Link href="/bills" className="text-sm text-blue-600 hover:underline mt-2 inline-block">
+        Back to Bills
+      </Link>
+    </div>
+  );
 
   const remaining = bill.amount - bill.paidAmount;
   const isOverdue = new Date(bill.dueDate) < new Date() && remaining > 0;

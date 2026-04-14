@@ -92,7 +92,14 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
     );
   }
 
-  if (!po) return <div className="text-center py-12"><p className="text-sm text-slate-400">PO not found</p></div>;
+  if (!po) return (
+    <div className="text-center py-12">
+      <p className="text-sm text-slate-400">PO not found</p>
+      <Link href="/purchase-orders" className="text-sm text-blue-600 hover:underline mt-2 inline-block">
+        Back to Purchase Orders
+      </Link>
+    </div>
+  );
 
   const whatsappLink = getWhatsAppLink();
 

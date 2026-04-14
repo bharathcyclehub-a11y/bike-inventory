@@ -8,6 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
     const { id } = await params;
     const expense = await prisma.expense.findUnique({
       where: { id },
@@ -17,6 +18,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (!expense) return errorResponse("Expense not found", 404);
     return successResponse(expense);
   } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch expense", 500);
   }
 }

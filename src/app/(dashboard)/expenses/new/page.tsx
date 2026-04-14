@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
@@ -15,6 +16,10 @@ const CATEGORIES = [
 const PAYMENT_MODES = ["CASH", "CHEQUE", "NEFT", "RTGS", "UPI"];
 
 export default function NewExpensePage() {
+  const { data: session, status: sessionStatus } = useSession();
+  const role = (session?.user as { role?: string })?.role || "";
+  const canAccess = ["ADMIN", "SUPERVISOR", "MANAGER"].includes(role);
+
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -58,6 +63,23 @@ export default function NewExpensePage() {
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (sessionStatus === "loading") {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!canAccess) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-sm font-medium text-red-600">Access Denied</p>
+        <p className="text-xs text-slate-500 mt-1">You do not have permission to record expenses.</p>
+      </div>
+    );
   }
 
   return (

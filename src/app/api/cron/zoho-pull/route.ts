@@ -119,7 +119,8 @@ export async function GET(req: NextRequest) {
       let imported = 0, skipped = 0, failed = 0;
 
       const adminUser = await prisma.user.findFirst({ where: { role: "ADMIN" } });
-      const userId = adminUser?.id || "system";
+      if (!adminUser) return errorResponse("No admin user found for sync", 500);
+      const userId = adminUser.id;
 
       for (const bill of bills) {
         try {

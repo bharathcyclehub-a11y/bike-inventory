@@ -30,7 +30,11 @@ export async function POST(req: NextRequest) {
         where: { id: transaction.productId },
       });
 
-      const newStock = Math.max(0, product.currentStock - transaction.quantity);
+      if (product.currentStock < transaction.quantity) {
+        throw new Error("Insufficient stock for verification");
+      }
+
+      const newStock = product.currentStock - transaction.quantity;
 
       await tx.product.update({
         where: { id: product.id },

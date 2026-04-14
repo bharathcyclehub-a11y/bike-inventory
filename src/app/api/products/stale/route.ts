@@ -8,6 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 // GET: Find products with no inward transactions in 90+ days
 export async function GET(req: NextRequest) {
   try {
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
     const { searchParams } = new URL(req.url);
     const days = parseInt(searchParams.get("days") || "90", 10);
     const cutoff = new Date();
@@ -51,6 +52,9 @@ export async function GET(req: NextRequest) {
 
     return successResponse({ products: result, total: result.length, cutoffDays: days });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return errorResponse(error.message, error.status);
+    }
     return errorResponse(
       error instanceof Error ? error.message : "Failed to fetch stale products",
       500
