@@ -35,6 +35,14 @@ interface MenuItem {
   comingSoon?: boolean;
 }
 
+const ROLE_LABELS: Record<Role, string> = {
+  ADMIN: "Admin",
+  SUPERVISOR: "Supervisor",
+  MANAGER: "Manager",
+  INWARDS_CLERK: "Inwards Clerk",
+  OUTWARDS_CLERK: "Outwards Clerk",
+};
+
 const menuItems: MenuItem[] = [
   {
     label: "Vendors",
@@ -88,7 +96,7 @@ const menuItems: MenuItem[] = [
     label: "Bins & Locations",
     icon: Warehouse,
     href: "/more/bins",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK"],
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
     label: "Barcode Scanner",
@@ -155,7 +163,7 @@ export default function MorePage() {
             <p className="text-base font-semibold text-slate-900">
               {user?.name || "User"}
             </p>
-            <Badge variant="info">{role.replaceAll("_", " ")}</Badge>
+            <Badge variant="info">{ROLE_LABELS[role]}</Badge>
           </div>
         </CardContent>
       </Card>
