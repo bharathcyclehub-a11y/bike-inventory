@@ -114,9 +114,22 @@ export class ZohoClient {
   }
 
   async listItems(page = 1) {
-    return this.apiCall<{ items: Array<{ item_id: string; sku: string; name: string }> }>(
-      "GET", `/items?page=${page}`
-    );
+    return this.apiCall<{
+      items: Array<{ item_id: string; sku: string; name: string }>;
+      page_context?: { has_more_page: boolean };
+    }>("GET", `/items?page=${page}&per_page=200`);
+  }
+
+  async listAllItems(): Promise<Array<{ item_id: string; sku: string; name: string }>> {
+    const all: Array<{ item_id: string; sku: string; name: string }> = [];
+    let page = 1;
+    while (true) {
+      const data = await this.listItems(page);
+      all.push(...(data.items || []));
+      if (!data.page_context?.has_more_page) break;
+      page++;
+    }
+    return all;
   }
 
   // ---- Contacts (Vendors) ----
@@ -197,10 +210,24 @@ export class ZohoClient {
         phone?: string;
         billing_address?: { city?: string; state?: string };
       }>;
+      page_context?: { has_more_page: boolean };
     }>("GET", `/contacts?contact_type=vendor&page=${page}&per_page=200`);
   }
 
-  async listBills(page = 1) {
+  async listAllContacts() {
+    const all: Array<{ contact_id: string; contact_name: string; contact_type: string; gst_no?: string; email?: string; phone?: string; billing_address?: { city?: string; state?: string } }> = [];
+    let page = 1;
+    while (true) {
+      const data = await this.listContacts(page);
+      all.push(...(data.contacts || []));
+      if (!data.page_context?.has_more_page) break;
+      page++;
+    }
+    return all;
+  }
+
+  async listBills(page = 1, dateFrom?: string) {
+    const dateParam = dateFrom ? `&date_start=${dateFrom}` : "";
     return this.apiCall<{
       bills: Array<{
         bill_id: string;
@@ -213,7 +240,20 @@ export class ZohoClient {
         balance: number;
         status: string;
       }>;
-    }>("GET", `/bills?page=${page}&per_page=200`);
+      page_context?: { has_more_page: boolean };
+    }>("GET", `/bills?page=${page}&per_page=200${dateParam}`);
+  }
+
+  async listAllBills(dateFrom?: string) {
+    const all: Array<{ bill_id: string; bill_number: string; vendor_name: string; vendor_id: string; date: string; due_date: string; total: number; balance: number; status: string }> = [];
+    let page = 1;
+    while (true) {
+      const data = await this.listBills(page, dateFrom);
+      all.push(...(data.bills || []));
+      if (!data.page_context?.has_more_page) break;
+      page++;
+    }
+    return all;
   }
 
   async getBill(billId: string) {

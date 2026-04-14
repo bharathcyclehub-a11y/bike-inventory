@@ -12,6 +12,7 @@ import {
   QrCode,
   ClipboardCheck,
   Building2,
+  Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types";
@@ -49,8 +50,8 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "MANAGER":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/expenses", label: "Expenses", icon: Receipt, key: "expenses" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
         { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];

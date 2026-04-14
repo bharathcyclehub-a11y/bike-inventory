@@ -20,6 +20,7 @@ import {
   Cloud,
   Brain,
   ArrowRightLeft,
+  RefreshCw,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -40,6 +41,12 @@ const menuItems: MenuItem[] = [
     icon: Building2,
     href: "/vendors",
     roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+  },
+  {
+    label: "Reorder Dashboard",
+    icon: RefreshCw,
+    href: "/reorder",
+    roles: ["ADMIN", "MANAGER"],
   },
   {
     label: "Purchase Orders",

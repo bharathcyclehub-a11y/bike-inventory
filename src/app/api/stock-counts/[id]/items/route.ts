@@ -7,10 +7,11 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { id } = await params;
     const { searchParams } = new URL(req.url);
     const filter = searchParams.get("filter") || "all";
+    const search = searchParams.get("search") || "";
 
     const items = await prisma.stockCountItem.findMany({
       where: {
@@ -18,17 +19,29 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         ...(filter === "counted" && { countedQty: { not: null } }),
         ...(filter === "uncounted" && { countedQty: null }),
         ...(filter === "variance" && { variance: { not: null }, AND: { variance: { not: 0 } } }),
+        ...(search && {
+          product: {
+            OR: [
+              { name: { contains: search, mode: "insensitive" as const } },
+              { sku: { contains: search, mode: "insensitive" as const } },
+              { category: { name: { contains: search, mode: "insensitive" as const } } },
+              { brand: { name: { contains: search, mode: "insensitive" as const } } },
+            ],
+          },
+        }),
       },
       include: {
         product: {
           select: {
             name: true, sku: true, currentStock: true, type: true,
             category: { select: { name: true } },
+            brand: { select: { name: true } },
             bin: { select: { code: true, location: true } },
           },
         },
       },
       orderBy: { product: { name: "asc" } },
+      take: 50,
     });
 
     return successResponse(items);
@@ -40,7 +53,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { id } = await params;
     const body = await req.json();
 

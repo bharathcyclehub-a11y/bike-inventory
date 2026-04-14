@@ -30,8 +30,8 @@ export async function GET(req: NextRequest) {
 
     // --- Pull Contacts (Vendors) ---
     try {
-      const contactData = await zoho.listContacts(1);
-      const vendors = contactData.contacts.filter((c) => c.contact_type === "vendor");
+      const allContacts = await zoho.listAllContacts();
+      const vendors = allContacts.filter((c) => c.contact_type === "vendor");
       let imported = 0, skipped = 0, failed = 0;
 
       for (const contact of vendors) {
@@ -67,8 +67,7 @@ export async function GET(req: NextRequest) {
 
     // --- Pull Items (Products) ---
     try {
-      const itemData = await zoho.listItems(1);
-      const items = itemData.items || [];
+      const items = await zoho.listAllItems();
       let imported = 0, skipped = 0, failed = 0;
 
       let defaultCategory = await prisma.category.findFirst({ where: { name: "Imported" } });
@@ -115,8 +114,8 @@ export async function GET(req: NextRequest) {
 
     // --- Pull Bills + Create Inward Transactions ---
     try {
-      const billData = await zoho.listBills(1);
-      const bills = billData.bills || [];
+      // Pull bills from April 2026 onwards (new financial year)
+      const bills = await zoho.listAllBills("2026-04-01");
       let imported = 0, skipped = 0, failed = 0;
 
       const adminUser = await prisma.user.findFirst({ where: { role: "ADMIN" } });
@@ -200,75 +199,11 @@ export async function GET(req: NextRequest) {
       results.bills = { imported: 0, skipped: 0, failed: -1 };
     }
 
-    // --- Pull Sales Invoices → Outward Transactions ---
-    try {
-      const invoiceData = await zoho.listInvoices(1);
-      const invoices = invoiceData.invoices || [];
-      let imported = 0, skipped = 0, failed = 0;
-
-      // Get admin user for attribution
-      const adminUser = await prisma.user.findFirst({ where: { role: "ADMIN" } });
-      const userId = adminUser?.id || "system";
-
-      for (const inv of invoices) {
-        try {
-          // Skip already-imported invoices (check by referenceNo)
-          const existing = await prisma.inventoryTransaction.findFirst({
-            where: {
-              type: "OUTWARD",
-              referenceNo: inv.invoice_number,
-              notes: { contains: "[ZOHO]" },
-            },
-          });
-          if (existing) { skipped++; continue; }
-
-          // Fetch invoice details with line items and serial numbers
-          let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; serial_numbers?: string[] }> = [];
-          try {
-            const detail = await zoho.getInvoice(inv.invoice_id);
-            lineItems = detail.invoice.line_items || [];
-          } catch {
-            lineItems = [];
-          }
-
-          if (lineItems.length > 0) {
-            for (const item of lineItems) {
-              // Match product by SKU first, then name
-              const product = await prisma.product.findFirst({
-                where: item.sku
-                  ? { sku: item.sku }
-                  : { name: { contains: item.name, mode: "insensitive" } },
-              });
-
-              if (!product) continue;
-
-              const previousStock = product.currentStock;
-              const serialInfo = item.serial_numbers?.length
-                ? ` | Serials: ${item.serial_numbers.join(", ")}`
-                : "";
-
-              // Don't deduct stock yet — staff must verify first (same pattern as inwards)
-              await prisma.inventoryTransaction.create({
-                data: {
-                  type: "OUTWARD",
-                  productId: product.id,
-                  quantity: item.quantity,
-                  previousStock,
-                  newStock: previousStock, // Stock NOT deducted until verified
-                  referenceNo: inv.invoice_number,
-                  notes: `[ZOHO][UNVERIFIED] Customer: ${inv.customer_name} | ${item.name} @ ₹${item.rate}${serialInfo}`,
-                  userId,
-                },
-              });
-            }
-            imported++;
-          }
-        } catch { failed++; }
-      }
-      results.invoices = { imported, skipped, failed };
-    } catch {
-      results.invoices = { imported: 0, skipped: 0, failed: -1 };
-    }
+    // --- Sales Invoices → Outward Transactions ---
+    // DISABLED: Outward pull paused until stock count baseline is complete.
+    // Stock must exist in the app before outward deductions make sense.
+    // Will be re-enabled after physical inventory count is done.
+    results.invoices = { imported: 0, skipped: 0, failed: 0 };
 
     // Log the sync
     await prisma.syncLog.create({

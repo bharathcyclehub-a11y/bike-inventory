@@ -13,6 +13,7 @@ async function main() {
     { name: "Sravan", email: "sravan@bikeinventory.local", role: "MANAGER" as const, accessCode: "SRAVAN123" },
     { name: "Nithin", email: "nithin@bikeinventory.local", role: "INWARDS_CLERK" as const, accessCode: "NITHIN123" },
     { name: "Ranjitha", email: "ranjitha@bikeinventory.local", role: "OUTWARDS_CLERK" as const, accessCode: "RANJITHA123" },
+    { name: "Abhi Gowda", email: "abhi@bikeinventory.local", role: "MANAGER" as const, accessCode: "ABHI123" },
   ];
 
   const users = [];

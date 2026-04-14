@@ -8,7 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status") || undefined;
 
@@ -62,8 +62,13 @@ export async function POST(req: NextRequest) {
 
     let productIds = data.productIds;
     if (!productIds || productIds.length === 0) {
+      // If binId provided, only include products in that bin
+      const binId = body.binId as string | undefined;
       const allProducts = await prisma.product.findMany({
-        where: { status: "ACTIVE" },
+        where: {
+          status: "ACTIVE",
+          ...(binId && { binId }),
+        },
         select: { id: true },
       });
       productIds = allProducts.map((p) => p.id);
