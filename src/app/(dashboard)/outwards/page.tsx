@@ -5,6 +5,17 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 import { TransactionItem } from "@/components/transaction-item";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { ExportButtons } from "@/components/export-buttons";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+
+const OUTWARD_COLUMNS: ExportColumn[] = [
+  { header: "Product", key: "product.name" },
+  { header: "SKU", key: "product.sku" },
+  { header: "Quantity", key: "quantity" },
+  { header: "Reference No", key: "referenceNo" },
+  { header: "Recorded By", key: "user.name" },
+  { header: "Date/Time", key: "createdAt", format: (v) => new Date(String(v)).toLocaleString("en-IN") },
+];
 
 interface OutwardTransaction {
   id: string;
@@ -41,6 +52,10 @@ export default function OutwardsPage() {
           <h1 className="text-lg font-bold text-slate-900">Outwards</h1>
           <p className="text-sm text-slate-500">{outwards.length} entries | {totalQty} units today</p>
         </div>
+        <ExportButtons
+          onExcel={() => exportToExcel(outwards as unknown as Record<string, unknown>[], OUTWARD_COLUMNS, "outwards")}
+          onPDF={() => exportToPDF("Outwards Report", outwards as unknown as Record<string, unknown>[], OUTWARD_COLUMNS, "outwards")}
+        />
       </div>
 
       <Card>

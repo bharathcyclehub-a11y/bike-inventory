@@ -38,7 +38,7 @@ export default function NewOutwardPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (search.length < 2) { setProducts([]); return; }
+    if (search.length < 1) { setProducts([]); return; }
     fetch(`/api/products?search=${encodeURIComponent(search)}&limit=10`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setProducts(res.data); })

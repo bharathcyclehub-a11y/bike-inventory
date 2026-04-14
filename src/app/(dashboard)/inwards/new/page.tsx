@@ -33,8 +33,6 @@ export default function NewInwardPage() {
   const [referenceNo, setReferenceNo] = useState("");
   const [binId, setBinId] = useState("");
   const [notes, setNotes] = useState("");
-  const [isRgp, setIsRgp] = useState(false);
-  const [rgpReturnDate, setRgpReturnDate] = useState("");
   const [serialTracking, setSerialTracking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -47,7 +45,7 @@ export default function NewInwardPage() {
   }, []);
 
   useEffect(() => {
-    if (search.length < 2) { setProducts([]); return; }
+    if (search.length < 1) { setProducts([]); return; }
     fetch(`/api/products?search=${encodeURIComponent(search)}&limit=10`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setProducts(res.data); })
@@ -70,8 +68,6 @@ export default function NewInwardPage() {
           quantity: qty,
           referenceNo: referenceNo || undefined,
           notes: notes || undefined,
-          isRgp,
-          rgpReturnDate: rgpReturnDate || undefined,
           serialTracking,
           binId: binId || undefined,
         }),
@@ -159,21 +155,6 @@ export default function NewInwardPage() {
             <p className="text-xs text-blue-700 mb-1 font-medium">Serial codes will be auto-generated</p>
             <p className="text-xs text-blue-600">Format: {selectedProduct?.sku || "SKU"}-0001, {selectedProduct?.sku || "SKU"}-0002, ...</p>
             <p className="text-xs text-blue-600 mt-1">{quantity ? `${quantity} serial items will be created` : "Enter quantity first"}</p>
-          </div>
-        )}
-
-        <div className="flex items-center justify-between py-2">
-          <span className="text-sm font-medium text-slate-700">Returnable Gate Pass (RGP)</span>
-          <button type="button" onClick={() => setIsRgp(!isRgp)}
-            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isRgp ? "bg-blue-600" : "bg-slate-300"}`}>
-            <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${isRgp ? "translate-x-6" : "translate-x-1"}`} />
-          </button>
-        </div>
-
-        {isRgp && (
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Expected Return Date</label>
-            <Input type="date" value={rgpReturnDate} onChange={(e) => setRgpReturnDate(e.target.value)} />
           </div>
         )}
 

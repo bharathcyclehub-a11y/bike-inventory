@@ -184,6 +184,52 @@ export class ZohoClient {
     });
   }
 
+  // ---- Pull/Import from Zoho ----
+
+  async listContacts(page = 1) {
+    return this.apiCall<{
+      contacts: Array<{
+        contact_id: string;
+        contact_name: string;
+        contact_type: string;
+        gst_no?: string;
+        email?: string;
+        phone?: string;
+        billing_address?: { city?: string; state?: string };
+      }>;
+    }>("GET", `/contacts?contact_type=vendor&page=${page}&per_page=200`);
+  }
+
+  async listBills(page = 1) {
+    return this.apiCall<{
+      bills: Array<{
+        bill_id: string;
+        bill_number: string;
+        vendor_name: string;
+        vendor_id: string;
+        date: string;
+        due_date: string;
+        total: number;
+        balance: number;
+        status: string;
+      }>;
+    }>("GET", `/bills?page=${page}&per_page=200`);
+  }
+
+  async listInvoices(page = 1) {
+    return this.apiCall<{
+      invoices: Array<{
+        invoice_id: string;
+        invoice_number: string;
+        customer_name: string;
+        date: string;
+        total: number;
+        balance: number;
+        status: string;
+      }>;
+    }>("GET", `/invoices?page=${page}&per_page=200`);
+  }
+
   // ---- Organizations ----
 
   async getOrganizations() {

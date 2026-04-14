@@ -29,7 +29,6 @@ export type SerialStatus =
   | "SOLD"
   | "RETURNED"
   | "DAMAGED"
-  | "RGP_OUT"
   | "TRANSFERRED";
 
 export type BarcodeFormat = "CODE128" | "QR" | "EAN13";
@@ -138,9 +137,6 @@ export interface InventoryTransaction {
   notes?: string;
   userId: string;
   user?: User;
-  isRgp: boolean;
-  rgpReturnDate?: string;
-  rgpReturned: boolean;
   createdAt: string;
 }
 
@@ -173,8 +169,6 @@ export interface InwardFormInput {
   referenceNo: string;
   binId: string;
   notes: string;
-  isRgp: boolean;
-  rgpReturnDate?: string;
   serialTracking: boolean;
 }
 

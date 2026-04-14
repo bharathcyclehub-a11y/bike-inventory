@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ArrowLeft, Warehouse, Plus } from "lucide-react";
+import { ArrowLeft, Warehouse, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ export default function BinsPage() {
   const [name, setName] = useState("");
   const [location, setLocation] = useState("");
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState("");
   const [error, setError] = useState("");
 
   function fetchBins() {
@@ -53,6 +54,22 @@ export default function BinsPage() {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDelete(binId: string, binCode: string) {
+    if (!confirm(`Delete bin "${binCode}"? This cannot be undone.`)) return;
+    setDeleting(binId);
+    setError("");
+    try {
+      const res = await fetch(`/api/bins/${binId}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Failed to delete bin");
+      fetchBins();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+    } finally {
+      setDeleting("");
     }
   }
 
@@ -104,10 +121,17 @@ export default function BinsPage() {
                 <div className="h-10 w-10 rounded-lg bg-slate-100 flex items-center justify-center">
                   <span className="text-sm font-bold text-slate-600">{bin.code}</span>
                 </div>
-                <div>
+                <div className="flex-1">
                   <p className="text-sm font-medium text-slate-900">{bin.name}</p>
                   {bin.location && <p className="text-xs text-slate-500">{bin.location}</p>}
                 </div>
+                <button
+                  onClick={() => handleDelete(bin.id, bin.code)}
+                  disabled={deleting === bin.id}
+                  className="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
               </CardContent>
             </Card>
           ))}

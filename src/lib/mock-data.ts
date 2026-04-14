@@ -128,16 +128,16 @@ const now = new Date();
 const today = now.toISOString().split("T")[0];
 
 export const MOCK_TRANSACTIONS: InventoryTransaction[] = [
-  { id: "txn-1", type: "INWARD", productId: "prod-4", product: MOCK_PRODUCTS[3], quantity: 20, previousStock: 25, newStock: 45, referenceNo: "INV-2024-0312", userId: "user-nithin", isRgp: false, rgpReturned: false, createdAt: `${today}T09:30:00` },
-  { id: "txn-2", type: "INWARD", productId: "prod-9", product: MOCK_PRODUCTS[8], quantity: 10, previousStock: 12, newStock: 22, referenceNo: "INV-2024-0313", userId: "user-nithin", isRgp: false, rgpReturned: false, createdAt: `${today}T10:15:00` },
-  { id: "txn-3", type: "INWARD", productId: "prod-1", product: MOCK_PRODUCTS[0], quantity: 5, previousStock: 3, newStock: 8, referenceNo: "INV-2024-0314", userId: "user-nithin", isRgp: false, rgpReturned: false, createdAt: `${today}T11:00:00` },
-  { id: "txn-4", type: "OUTWARD", productId: "prod-1", product: MOCK_PRODUCTS[0], quantity: 1, previousStock: 9, newStock: 8, referenceNo: "SALE-0456", userId: "user-ranjitha", isRgp: false, rgpReturned: false, createdAt: `${today}T09:45:00` },
-  { id: "txn-5", type: "OUTWARD", productId: "prod-4", product: MOCK_PRODUCTS[3], quantity: 3, previousStock: 48, newStock: 45, referenceNo: "SALE-0457", userId: "user-ranjitha", isRgp: false, rgpReturned: false, createdAt: `${today}T10:30:00` },
-  { id: "txn-6", type: "OUTWARD", productId: "prod-7", product: MOCK_PRODUCTS[6], quantity: 2, previousStock: 14, newStock: 12, referenceNo: "SALE-0458", userId: "user-ranjitha", isRgp: false, rgpReturned: false, createdAt: `${today}T11:15:00` },
-  { id: "txn-7", type: "OUTWARD", productId: "prod-5", product: MOCK_PRODUCTS[4], quantity: 4, previousStock: 34, newStock: 30, referenceNo: "SALE-0459", userId: "user-ranjitha", isRgp: false, rgpReturned: false, createdAt: `${today}T11:45:00` },
-  { id: "txn-8", type: "OUTWARD", productId: "prod-8", product: MOCK_PRODUCTS[7], quantity: 1, previousStock: 7, newStock: 6, referenceNo: "SALE-0460", userId: "user-ranjitha", isRgp: false, rgpReturned: false, createdAt: `${today}T12:00:00` },
-  { id: "txn-9", type: "INWARD", productId: "prod-5", product: MOCK_PRODUCTS[4], quantity: 10, previousStock: 20, newStock: 30, referenceNo: "INV-2024-0315", notes: "RGP return from service center", userId: "user-nithin", isRgp: true, rgpReturnDate: "2024-04-15", rgpReturned: false, createdAt: `${today}T14:00:00` },
-  { id: "txn-10", type: "OUTWARD", productId: "prod-10", product: MOCK_PRODUCTS[9], quantity: 1, previousStock: 5, newStock: 4, referenceNo: "SALE-0461", userId: "user-ranjitha", isRgp: false, rgpReturned: false, createdAt: `${today}T14:30:00` },
+  { id: "txn-1", type: "INWARD", productId: "prod-4", product: MOCK_PRODUCTS[3], quantity: 20, previousStock: 25, newStock: 45, referenceNo: "INV-2024-0312", userId: "user-nithin", createdAt: `${today}T09:30:00` },
+  { id: "txn-2", type: "INWARD", productId: "prod-9", product: MOCK_PRODUCTS[8], quantity: 10, previousStock: 12, newStock: 22, referenceNo: "INV-2024-0313", userId: "user-nithin", createdAt: `${today}T10:15:00` },
+  { id: "txn-3", type: "INWARD", productId: "prod-1", product: MOCK_PRODUCTS[0], quantity: 5, previousStock: 3, newStock: 8, referenceNo: "INV-2024-0314", userId: "user-nithin", createdAt: `${today}T11:00:00` },
+  { id: "txn-4", type: "OUTWARD", productId: "prod-1", product: MOCK_PRODUCTS[0], quantity: 1, previousStock: 9, newStock: 8, referenceNo: "SALE-0456", userId: "user-ranjitha", createdAt: `${today}T09:45:00` },
+  { id: "txn-5", type: "OUTWARD", productId: "prod-4", product: MOCK_PRODUCTS[3], quantity: 3, previousStock: 48, newStock: 45, referenceNo: "SALE-0457", userId: "user-ranjitha", createdAt: `${today}T10:30:00` },
+  { id: "txn-6", type: "OUTWARD", productId: "prod-7", product: MOCK_PRODUCTS[6], quantity: 2, previousStock: 14, newStock: 12, referenceNo: "SALE-0458", userId: "user-ranjitha", createdAt: `${today}T11:15:00` },
+  { id: "txn-7", type: "OUTWARD", productId: "prod-5", product: MOCK_PRODUCTS[4], quantity: 4, previousStock: 34, newStock: 30, referenceNo: "SALE-0459", userId: "user-ranjitha", createdAt: `${today}T11:45:00` },
+  { id: "txn-8", type: "OUTWARD", productId: "prod-8", product: MOCK_PRODUCTS[7], quantity: 1, previousStock: 7, newStock: 6, referenceNo: "SALE-0460", userId: "user-ranjitha", createdAt: `${today}T12:00:00` },
+  { id: "txn-9", type: "INWARD", productId: "prod-5", product: MOCK_PRODUCTS[4], quantity: 10, previousStock: 20, newStock: 30, referenceNo: "INV-2024-0315", notes: "Return from service center", userId: "user-nithin", createdAt: `${today}T14:00:00` },
+  { id: "txn-10", type: "OUTWARD", productId: "prod-10", product: MOCK_PRODUCTS[9], quantity: 1, previousStock: 5, newStock: 4, referenceNo: "SALE-0461", userId: "user-ranjitha", createdAt: `${today}T14:30:00` },
 ];
 
 export const MOCK_SERIAL_ITEMS: SerialItem[] = [

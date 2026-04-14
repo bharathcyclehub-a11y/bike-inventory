@@ -27,6 +27,14 @@ const ROLES = [
   { value: "OUTWARDS_CLERK", label: "Outwards Clerk" },
 ];
 
+const ROLE_PERMISSIONS: Record<string, string[]> = {
+  ADMIN: ["Full access to all features", "Manage team & roles", "Zoho sync", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Settings"],
+  SUPERVISOR: ["View all data", "Manage stock", "Team view", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights"],
+  MANAGER: ["Day-to-day operations", "Vendors & POs", "Bills & Payments", "Record Payments", "Expenses", "AI Insights", "Inwards & Outwards"],
+  INWARDS_CLERK: ["Record inwards only", "View stock", "Bins & Locations", "Barcode Scanner"],
+  OUTWARDS_CLERK: ["Record outwards only", "View stock", "Barcode Scanner"],
+};
+
 export default function EditTeamMemberPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: session } = useSession();
@@ -180,6 +188,21 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
             <label className="block text-sm font-medium text-slate-700 mb-1">New Password</label>
             <Input type="password" placeholder="Leave blank to keep current" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
           </div>
+
+          {/* Role Permissions Summary */}
+          {role && ROLE_PERMISSIONS[role] && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <p className="text-xs font-semibold text-blue-800 mb-1.5">Permissions for {ROLES.find(r => r.value === role)?.label}</p>
+              <ul className="space-y-0.5">
+                {ROLE_PERMISSIONS[role].map((perm) => (
+                  <li key={perm} className="text-xs text-blue-700 flex items-center gap-1.5">
+                    <span className="h-1 w-1 rounded-full bg-blue-400 shrink-0" />
+                    {perm}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <Button onClick={handleSave} size="lg" disabled={saving} className="w-full bg-blue-600 hover:bg-blue-700">
             <Save className="h-4 w-4 mr-2" />{saving ? "Saving..." : "Save Changes"}

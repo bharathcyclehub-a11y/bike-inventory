@@ -8,6 +8,19 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { useDebounce } from "@/lib/utils";
 import type { FilterChip } from "@/types";
+import { ExportButtons } from "@/components/export-buttons";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+
+const STOCK_COLUMNS: ExportColumn[] = [
+  { header: "SKU", key: "sku" },
+  { header: "Product Name", key: "name" },
+  { header: "Type", key: "type" },
+  { header: "Category", key: "category.name" },
+  { header: "Brand", key: "brand.name" },
+  { header: "Stock", key: "currentStock" },
+  { header: "Reorder Level", key: "reorderLevel" },
+  { header: "Bin", key: "bin.code" },
+];
 
 interface ProductItem {
   id: string;
@@ -69,7 +82,13 @@ export default function StockPage() {
 
   return (
     <div>
-      <h1 className="text-lg font-bold text-slate-900 mb-3">Stock</h1>
+      <div className="flex items-center justify-between mb-3">
+        <h1 className="text-lg font-bold text-slate-900">Stock</h1>
+        <ExportButtons
+          onExcel={() => exportToExcel(filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
+          onPDF={() => exportToPDF("Stock Inventory", filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
+        />
+      </div>
 
       <div className="relative mb-3">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />

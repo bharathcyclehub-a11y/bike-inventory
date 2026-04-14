@@ -48,8 +48,6 @@ export const inwardSchema = z.object({
   quantity: z.number().int().min(1, "Quantity must be at least 1"),
   referenceNo: z.string().optional(),
   notes: z.string().optional(),
-  isRgp: z.boolean().optional(),
-  rgpReturnDate: z.string().optional(),
 });
 
 export const outwardSchema = z.object({

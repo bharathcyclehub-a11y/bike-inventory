@@ -8,6 +8,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDebounce } from "@/lib/utils";
+import { ExportButtons } from "@/components/export-buttons";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+
+const VENDOR_COLUMNS: ExportColumn[] = [
+  { header: "Code", key: "code" },
+  { header: "Name", key: "name" },
+  { header: "City", key: "city" },
+  { header: "Phone", key: "phone" },
+  { header: "WhatsApp", key: "whatsappNumber" },
+  { header: "Payment Terms (Days)", key: "paymentTermDays" },
+  { header: "Status", key: "isActive", format: (v) => (v ? "Active" : "Inactive") },
+  { header: "POs", key: "_count.purchaseOrders" },
+  { header: "Bills", key: "_count.bills" },
+];
 
 interface VendorItem {
   id: string;
@@ -43,11 +57,17 @@ export default function VendorsPage() {
     <div>
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Vendors</h1>
-        <Link href="/vendors/new">
-          <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
-            <Plus className="h-4 w-4 mr-1" /> Add
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ExportButtons
+            onExcel={() => exportToExcel(vendors as unknown as Record<string, unknown>[], VENDOR_COLUMNS, "vendors")}
+            onPDF={() => exportToPDF("Vendors List", vendors as unknown as Record<string, unknown>[], VENDOR_COLUMNS, "vendors")}
+          />
+          <Link href="/vendors/new">
+            <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
+              <Plus className="h-4 w-4 mr-1" /> Add
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <div className="relative mb-3">

@@ -5,6 +5,19 @@ import Link from "next/link";
 import { FileText, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ExportButtons } from "@/components/export-buttons";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+
+const BILL_COLUMNS: ExportColumn[] = [
+  { header: "Bill No", key: "billNo" },
+  { header: "Vendor", key: "vendor.name" },
+  { header: "Bill Date", key: "billDate", format: (v) => new Date(String(v)).toLocaleDateString("en-IN") },
+  { header: "Due Date", key: "dueDate", format: (v) => new Date(String(v)).toLocaleDateString("en-IN") },
+  { header: "Amount", key: "amount", format: (v) => `₹${Number(v || 0).toLocaleString("en-IN")}` },
+  { header: "Paid", key: "paidAmount", format: (v) => `₹${Number(v || 0).toLocaleString("en-IN")}` },
+  { header: "Balance", key: "amount", format: (_v, row) => `₹${(Number(row.amount || 0) - Number(row.paidAmount || 0)).toLocaleString("en-IN")}` },
+  { header: "Status", key: "status", format: (v) => String(v).replace(/_/g, " ") },
+];
 
 interface BillItem {
   id: string;
@@ -45,7 +58,13 @@ export default function BillsPage() {
 
   return (
     <div>
-      <h1 className="text-lg font-bold text-slate-900 mb-3">Vendor Bills</h1>
+      <div className="flex items-center justify-between mb-3">
+        <h1 className="text-lg font-bold text-slate-900">Vendor Bills</h1>
+        <ExportButtons
+          onExcel={() => exportToExcel(bills as unknown as Record<string, unknown>[], BILL_COLUMNS, "vendor-bills")}
+          onPDF={() => exportToPDF("Vendor Bills", bills as unknown as Record<string, unknown>[], BILL_COLUMNS, "vendor-bills")}
+        />
+      </div>
 
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
         {STATUS_FILTERS.map((s) => (

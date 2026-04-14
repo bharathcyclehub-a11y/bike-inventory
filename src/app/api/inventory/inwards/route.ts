@@ -77,8 +77,6 @@ export async function POST(req: NextRequest) {
           referenceNo: data.referenceNo,
           notes: data.notes,
           userId: user.id,
-          isRgp: data.isRgp || false,
-          rgpReturnDate: data.rgpReturnDate ? new Date(data.rgpReturnDate) : null,
         },
         include: {
           product: { select: { name: true, sku: true } },

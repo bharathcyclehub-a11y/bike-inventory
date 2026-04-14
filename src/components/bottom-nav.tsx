@@ -17,16 +17,15 @@ interface BottomNavProps {
 }
 
 const allTabs = [
-  { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-  { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
-  { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards" },
-  { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-  { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+  { href: "/", label: "Home", icon: LayoutDashboard, key: "home", roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[] },
+  { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards", roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK"] as Role[] },
+  { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards", roles: ["ADMIN", "SUPERVISOR", "MANAGER", "OUTWARDS_CLERK"] as Role[] },
+  { href: "/stock", label: "Stock", icon: Package, key: "stock", roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[] },
+  { href: "/more", label: "More", icon: MoreHorizontal, key: "more", roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"] as Role[] },
 ];
 
 function getVisibleTabs(role: Role) {
-  // All roles see all tabs, but we highlight certain tabs per role
-  return allTabs;
+  return allTabs.filter((tab) => tab.roles.includes(role));
 }
 
 function getHighlightedTab(role: Role): string {

@@ -26,6 +26,8 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "dotenv": "^17.4.2",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.7",
     "lucide-react": "^1.8.0",
     "next": "16.2.3",
     "next-auth": "^4.24.13",
@@ -34,6 +36,7 @@
     "react-dom": "19.2.4",
     "react-hook-form": "^7.72.1",
     "tailwind-merge": "^3.5.0",
+    "xlsx": "^0.18.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {

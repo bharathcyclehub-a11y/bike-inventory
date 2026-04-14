@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Cloud, CloudOff, RefreshCw, CheckCircle2, XCircle,
   Package, Users, FileText, Receipt, Loader2, Clock, AlertTriangle,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,6 +45,7 @@ export default function ZohoSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
   const [syncing, setSyncing] = useState<string | null>(null);
+  const [importing, setImporting] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [logs, setLogs] = useState<SyncLogEntry[]>([]);
   const [error, setError] = useState("");
@@ -127,11 +129,45 @@ export default function ZohoSettingsPage() {
     } finally { setSyncing(null); }
   }
 
+  async function handleImport(type: string) {
+    setImporting(type);
+    setSyncResult(null);
+    try {
+      const res = await fetch(`/api/zoho/import/${type}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+      if (data.success) {
+        const d = data.data;
+        setSyncResult({
+          syncType: `import-${type}`,
+          status: d.status,
+          total: d.total,
+          synced: d.imported,
+          failed: d.failed,
+          errors: d.errors || [],
+        });
+        fetchLogs();
+      } else {
+        setSyncResult({ syncType: `import-${type}`, status: "failed", total: 0, synced: 0, failed: 0, errors: [data.error] });
+      }
+    } catch {
+      setSyncResult({ syncType: `import-${type}`, status: "failed", total: 0, synced: 0, failed: 0, errors: ["Network error"] });
+    } finally { setImporting(null); }
+  }
+
   const SYNC_TYPES = [
-    { key: "items", label: "Products", icon: Package, desc: "Sync products as Zoho Items" },
-    { key: "contacts", label: "Vendors", icon: Users, desc: "Sync vendors as Zoho Contacts" },
-    { key: "invoices", label: "Sales", icon: FileText, desc: "Sync outwards as Zoho Invoices" },
-    { key: "bills", label: "Bills", icon: Receipt, desc: "Sync vendor bills to Zoho" },
+    { key: "items", label: "Products", icon: Package, desc: "Push products to Zoho Items" },
+    { key: "contacts", label: "Vendors", icon: Users, desc: "Push vendors to Zoho Contacts" },
+    { key: "invoices", label: "Sales", icon: FileText, desc: "Push outwards as Zoho Invoices" },
+    { key: "bills", label: "Bills", icon: Receipt, desc: "Push vendor bills to Zoho" },
+  ];
+
+  const IMPORT_TYPES = [
+    { key: "contacts", label: "Vendors", icon: Users, desc: "Pull vendors from Zoho" },
+    { key: "items", label: "Products", icon: Package, desc: "Pull items from Zoho" },
+    { key: "bills", label: "Bills", icon: Receipt, desc: "Pull bills from Zoho" },
   ];
 
   return (
@@ -195,6 +231,33 @@ export default function ZohoSettingsPage() {
                     </div>
                     <Button size="sm" variant="outline" onClick={() => handleSync(st.key)} disabled={syncing !== null}>
                       {syncing === st.key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Sync"}
+                    </Button>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+
+          {/* Import from Zoho */}
+          <div className="space-y-2 mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Download className="h-4 w-4 text-blue-600" />
+              <h2 className="text-sm font-semibold text-slate-900">Import from Zoho</h2>
+            </div>
+            <p className="text-[10px] text-slate-500 -mt-1 mb-2">Pull data from Zoho Books into this app</p>
+
+            {IMPORT_TYPES.map((it) => {
+              const Icon = it.icon;
+              return (
+                <Card key={it.key}>
+                  <CardContent className="p-3 flex items-center gap-3">
+                    <Icon className="h-5 w-5 text-blue-500 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-900">{it.label}</p>
+                      <p className="text-[10px] text-slate-500">{it.desc}</p>
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => handleImport(it.key)} disabled={importing !== null || syncing !== null}>
+                      {importing === it.key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Import"}
                     </Button>
                   </CardContent>
                 </Card>

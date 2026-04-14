@@ -6,6 +6,19 @@ import { Plus, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ExportButtons } from "@/components/export-buttons";
+import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+
+const PO_COLUMNS: ExportColumn[] = [
+  { header: "PO Number", key: "poNumber" },
+  { header: "Vendor", key: "vendor.name" },
+  { header: "Status", key: "status", format: (v) => String(v).replace(/_/g, " ") },
+  { header: "Order Date", key: "orderDate", format: (v) => new Date(String(v)).toLocaleDateString("en-IN") },
+  { header: "Expected Date", key: "expectedDate", format: (v) => v ? new Date(String(v)).toLocaleDateString("en-IN") : "" },
+  { header: "Items", key: "items", format: (v) => String((v as Array<{ quantity: number }>)?.reduce((s: number, i) => s + i.quantity, 0) || 0) },
+  { header: "Grand Total", key: "grandTotal", format: (v) => `₹${Number(v || 0).toLocaleString("en-IN")}` },
+  { header: "Created By", key: "createdBy.name" },
+];
 
 interface POItem {
   id: string;
@@ -54,11 +67,17 @@ export default function PurchaseOrdersPage() {
     <div>
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Purchase Orders</h1>
-        <Link href="/purchase-orders/new">
-          <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
-            <Plus className="h-4 w-4 mr-1" /> New PO
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ExportButtons
+            onExcel={() => exportToExcel(orders as unknown as Record<string, unknown>[], PO_COLUMNS, "purchase-orders")}
+            onPDF={() => exportToPDF("Purchase Orders", orders as unknown as Record<string, unknown>[], PO_COLUMNS, "purchase-orders")}
+          />
+          <Link href="/purchase-orders/new">
+            <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
+              <Plus className="h-4 w-4 mr-1" /> New PO
+            </Button>
+          </Link>
+        </div>
       </div>
 
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
