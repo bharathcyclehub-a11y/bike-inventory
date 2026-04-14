@@ -20,11 +20,11 @@ interface UserDetail {
 }
 
 const ROLES = [
-  { value: "ADMIN", label: "Admin" },
-  { value: "SUPERVISOR", label: "Supervisor" },
-  { value: "MANAGER", label: "Manager" },
-  { value: "INWARDS_CLERK", label: "Inwards Clerk" },
-  { value: "OUTWARDS_CLERK", label: "Outwards Clerk" },
+  { value: "ADMIN", label: "Owner / Director" },
+  { value: "SUPERVISOR", label: "Store Supervisor" },
+  { value: "MANAGER", label: "Operations Manager" },
+  { value: "INWARDS_CLERK", label: "Purchase & Receiving Executive" },
+  { value: "OUTWARDS_CLERK", label: "Sales & Dispatch Executive" },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -125,7 +125,7 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-bold text-slate-900 truncate">{user.name}</h1>
           <div className="flex items-center gap-2">
-            <Badge variant="info" className="text-[9px]">{user.role.replace("_", " ")}</Badge>
+            <Badge variant="info" className="text-[9px]">{ROLES.find(r => r.value === user.role)?.label || user.role}</Badge>
             {!user.isActive && <Badge variant="danger" className="text-[9px]">Inactive</Badge>}
           </div>
         </div>

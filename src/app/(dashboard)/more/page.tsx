@@ -36,11 +36,11 @@ interface MenuItem {
 }
 
 const ROLE_LABELS: Record<Role, string> = {
-  ADMIN: "Admin",
-  SUPERVISOR: "Supervisor",
-  MANAGER: "Manager",
-  INWARDS_CLERK: "Inwards Clerk",
-  OUTWARDS_CLERK: "Outwards Clerk",
+  ADMIN: "Owner / Director",
+  SUPERVISOR: "Store Supervisor",
+  MANAGER: "Operations Manager",
+  INWARDS_CLERK: "Purchase & Receiving Executive",
+  OUTWARDS_CLERK: "Sales & Dispatch Executive",
 };
 
 const menuItems: MenuItem[] = [
