@@ -83,8 +83,22 @@ function AdminDashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-12">
-        <div className="h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      <div className="space-y-4 animate-pulse">
+        <div className="grid grid-cols-2 gap-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="p-3 border border-slate-100 rounded-lg space-y-2">
+              <div className="h-3 bg-slate-200 rounded w-16" />
+              <div className="h-6 bg-slate-200 rounded w-20" />
+            </div>
+          ))}
+        </div>
+        <div className="h-4 bg-slate-200 rounded w-32" />
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="flex items-center gap-3 py-3 border-b border-slate-100">
+            <div className="h-9 w-9 rounded-full bg-slate-200 shrink-0" />
+            <div className="flex-1 space-y-1.5"><div className="h-4 bg-slate-200 rounded w-2/3" /><div className="h-3 bg-slate-200 rounded w-1/3" /></div>
+          </div>
+        ))}
       </div>
     );
   }
@@ -172,7 +186,7 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
   }, [type]);
 
   if (loading) {
-    return <div className="flex items-center justify-center py-12"><div className="h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>;
+    return <div className="animate-pulse space-y-3 py-4">{[1,2,3].map(i=><div key={i} className="flex items-center gap-3 py-2 border-b border-slate-100"><div className="h-9 w-9 rounded-full bg-slate-200 shrink-0"/><div className="flex-1 space-y-1.5"><div className="h-4 bg-slate-200 rounded w-2/3"/><div className="h-3 bg-slate-200 rounded w-1/3"/></div></div>)}</div>;
   }
 
   const totalQty = transactions.reduce((s, t) => s + t.quantity, 0);
@@ -202,7 +216,7 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
 function ManagerDashboard() {
   const { data, loading, error } = useDashboardData();
   if (loading) {
-    return <div className="flex items-center justify-center py-12"><div className="h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" /></div>;
+    return <div className="animate-pulse space-y-3 py-4">{[1,2,3].map(i=><div key={i} className="flex items-center gap-3 py-2 border-b border-slate-100"><div className="h-9 w-9 rounded-full bg-slate-200 shrink-0"/><div className="flex-1 space-y-1.5"><div className="h-4 bg-slate-200 rounded w-2/3"/><div className="h-3 bg-slate-200 rounded w-1/3"/></div></div>)}</div>;
   }
   if (error || !data) {
     return <div className="text-center py-12"><AlertTriangle className="h-8 w-8 text-red-400 mx-auto mb-2" /><p className="text-sm text-slate-500">Failed to load dashboard.</p></div>;

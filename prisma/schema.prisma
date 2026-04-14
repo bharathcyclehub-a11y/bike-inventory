@@ -191,6 +191,8 @@ model Product {
   @@index([type])
   @@index([status, type])
   @@index([status, categoryId])
+  @@index([sku])
+  @@index([name])
 }
 
 model SerialItem {

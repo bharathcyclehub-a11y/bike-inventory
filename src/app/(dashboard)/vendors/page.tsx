@@ -35,23 +35,36 @@ interface VendorItem {
   _count: { purchaseOrders: number; bills: number };
 }
 
+type VendorFilter = "ALL" | "ACTIVE" | "INACTIVE";
+
 export default function VendorsPage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
   const [vendors, setVendors] = useState<VendorItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [total, setTotal] = useState(0);
+  const [activeFilter, setActiveFilter] = useState<VendorFilter>("ACTIVE");
 
   useEffect(() => {
     setLoading(true);
-    const params = new URLSearchParams({ limit: "50" });
+    const params = new URLSearchParams({ limit: "100" });
     if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
 
     fetch(`/api/vendors?${params}`)
       .then((r) => r.json())
-      .then((res) => { if (res.success) setVendors(res.data); })
+      .then((res) => {
+        if (res.success) {
+          setVendors(res.data);
+          setTotal(res.pagination?.total || res.data.length);
+        }
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [debouncedSearch]);
+
+  const filtered = activeFilter === "ALL" ? vendors
+    : activeFilter === "ACTIVE" ? vendors.filter((v) => v.isActive)
+    : vendors.filter((v) => !v.isActive);
 
   return (
     <div>
@@ -80,15 +93,34 @@ export default function VendorsPage() {
         />
       </div>
 
-      <p className="text-xs text-slate-500 mb-2">{vendors.length} vendor{vendors.length !== 1 ? "s" : ""}</p>
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1">
+        {(["ALL", "ACTIVE", "INACTIVE"] as VendorFilter[]).map((f) => (
+          <button key={f} onClick={() => setActiveFilter(f)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              activeFilter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            }`}>
+            {f === "ALL" ? "All" : f === "ACTIVE" ? "Active" : "Inactive"}
+          </button>
+        ))}
+      </div>
+
+      <p className="text-xs text-slate-500 mb-2">Showing {filtered.length} of {total} vendors</p>
 
       {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="p-3 border border-slate-100 rounded-lg animate-pulse">
+              <div className="flex items-start justify-between">
+                <div className="flex-1 space-y-1.5"><div className="h-4 bg-slate-200 rounded w-3/4" /><div className="h-3 bg-slate-200 rounded w-1/2" /></div>
+                <div className="h-5 w-14 bg-slate-200 rounded-full" />
+              </div>
+              <div className="flex gap-3 mt-2"><div className="h-3 bg-slate-200 rounded w-20" /><div className="h-3 bg-slate-200 rounded w-16" /></div>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="space-y-2">
-          {vendors.map((v) => (
+          {filtered.map((v) => (
             <Link key={v.id} href={`/vendors/${v.id}`}>
               <Card className="hover:border-slate-300 transition-colors mb-2">
                 <CardContent className="p-3">
@@ -125,7 +157,7 @@ export default function VendorsPage() {
             </Link>
           ))}
 
-          {vendors.length === 0 && (
+          {filtered.length === 0 && (
             <div className="text-center py-12">
               <Building2 className="h-8 w-8 text-slate-300 mx-auto mb-2" />
               <p className="text-sm text-slate-400">No vendors found</p>

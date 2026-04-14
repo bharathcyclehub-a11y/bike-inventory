@@ -1,6 +1,7 @@
 "use client";
 
 import { use, useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { ArrowLeft, QrCode, MapPin, Tag, Package, IndianRupee } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -59,6 +60,8 @@ function formatTime(dateStr: string) {
 
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const { data: session } = useSession();
+  const isAdmin = (session?.user as { role?: string })?.role === "ADMIN";
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -130,8 +133,8 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       <Card className="mb-3">
         <CardHeader><CardTitle className="flex items-center gap-1.5"><IndianRupee className="h-3.5 w-3.5" /> Pricing</CardTitle></CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-3 text-sm">
-            <div><p className="text-slate-500">Cost</p><p className="font-medium">{fmt(product.costPrice)}</p></div>
+          <div className={`grid ${isAdmin ? "grid-cols-3" : "grid-cols-2"} gap-3 text-sm`}>
+            {isAdmin && <div><p className="text-slate-500">Cost</p><p className="font-medium">{fmt(product.costPrice)}</p></div>}
             <div><p className="text-slate-500">Selling</p><p className="font-medium">{fmt(product.sellingPrice)}</p></div>
             <div><p className="text-slate-500">MRP</p><p className="font-medium">{fmt(product.mrp)}</p></div>
           </div>

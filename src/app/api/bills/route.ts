@@ -10,12 +10,18 @@ import type { BillStatus } from "@prisma/client";
 export async function GET(req: NextRequest) {
   try {
     await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
-    const { page, limit, skip, searchParams } = parseSearchParams(req.url);
+    const { page, limit, skip, search, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status") || undefined;
     const vendorId = searchParams.get("vendorId") || undefined;
     const overdue = searchParams.get("overdue") === "true";
 
     const where = {
+      ...(search && {
+        OR: [
+          { billNo: { contains: search, mode: "insensitive" as const } },
+          { vendor: { name: { contains: search, mode: "insensitive" as const } } },
+        ],
+      }),
       ...(status && { status: status as never }),
       ...(vendorId && { vendorId }),
       ...(overdue && { dueDate: { lt: new Date() }, status: { in: ["PENDING", "PARTIALLY_PAID"] as BillStatus[] } }),

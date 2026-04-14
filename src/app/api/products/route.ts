@@ -9,12 +9,16 @@ import {
   parseSearchParams,
 } from "@/lib/api-utils";
 import { productSchema } from "@/lib/validations";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireAuth, AuthError, getCurrentUser } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
     const { page, limit, skip, sortBy, sortOrder, search, searchParams } =
       parseSearchParams(req.url);
+
+    // Get user role to filter sensitive data
+    const user = await getCurrentUser();
+    const isAdmin = user?.role === "ADMIN";
 
     const categoryId = searchParams.get("categoryId") || undefined;
     const brandId = searchParams.get("brandId") || undefined;
@@ -37,7 +41,14 @@ export async function GET(req: NextRequest) {
     const [products, total] = await Promise.all([
       prisma.product.findMany({
         where,
-        include: { category: true, brand: true, bin: true },
+        select: {
+          id: true, sku: true, name: true, type: true, status: true,
+          costPrice: isAdmin, sellingPrice: true, mrp: true, gstRate: true, hsnCode: true,
+          currentStock: true, minStock: true, reorderLevel: true,
+          category: { select: { id: true, name: true } },
+          brand: { select: { id: true, name: true } },
+          bin: { select: { id: true, code: true } },
+        },
         orderBy: { [sortBy]: sortOrder },
         skip,
         take: limit,

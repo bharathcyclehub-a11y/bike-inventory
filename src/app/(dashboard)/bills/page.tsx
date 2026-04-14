@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { FileText, AlertTriangle } from "lucide-react";
+import { FileText, AlertTriangle, Search } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { useDebounce } from "@/lib/utils";
 
 const BILL_COLUMNS: ExportColumn[] = [
   { header: "Bill No", key: "billNo" },
@@ -40,21 +42,25 @@ export default function BillsPage() {
   const [bills, setBills] = useState<BillItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("ALL");
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search);
 
   useEffect(() => {
+    setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
     if (filter === "OVERDUE") {
       params.set("overdue", "true");
     } else if (filter !== "ALL") {
       params.set("status", filter);
     }
+    if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
 
     fetch(`/api/bills?${params}`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setBills(res.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter]);
+  }, [filter, debouncedSearch]);
 
   return (
     <div>
@@ -63,6 +69,16 @@ export default function BillsPage() {
         <ExportButtons
           onExcel={() => exportToExcel(bills as unknown as Record<string, unknown>[], BILL_COLUMNS, "vendor-bills")}
           onPDF={() => exportToPDF("Vendor Bills", bills as unknown as Record<string, unknown>[], BILL_COLUMNS, "vendor-bills")}
+        />
+      </div>
+
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        <Input
+          placeholder="Search bill no or vendor..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="pl-9"
         />
       </div>
 
@@ -81,8 +97,21 @@ export default function BillsPage() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
+        <div className="space-y-2">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="p-3 border border-slate-100 rounded-lg animate-pulse">
+              <div className="flex items-start justify-between">
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-4 bg-slate-200 rounded w-3/4" />
+                  <div className="h-3 bg-slate-200 rounded w-1/2" />
+                </div>
+                <div className="text-right space-y-1.5">
+                  <div className="h-4 bg-slate-200 rounded w-16 ml-auto" />
+                  <div className="h-5 w-14 bg-slate-200 rounded-full ml-auto" />
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="space-y-2">

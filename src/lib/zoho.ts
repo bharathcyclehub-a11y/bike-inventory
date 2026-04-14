@@ -216,6 +216,27 @@ export class ZohoClient {
     }>("GET", `/bills?page=${page}&per_page=200`);
   }
 
+  async getBill(billId: string) {
+    return this.apiCall<{
+      bill: {
+        bill_id: string;
+        bill_number: string;
+        vendor_name: string;
+        date: string;
+        total: number;
+        line_items: Array<{
+          line_item_id: string;
+          item_id: string;
+          name: string;
+          sku: string;
+          quantity: number;
+          rate: number;
+          item_total: number;
+        }>;
+      };
+    }>("GET", `/bills/${billId}`);
+  }
+
   async listInvoices(page = 1) {
     return this.apiCall<{
       invoices: Array<{
@@ -228,6 +249,30 @@ export class ZohoClient {
         status: string;
       }>;
     }>("GET", `/invoices?page=${page}&per_page=200`);
+  }
+
+  async getInvoice(invoiceId: string) {
+    return this.apiCall<{
+      invoice: {
+        invoice_id: string;
+        invoice_number: string;
+        customer_name: string;
+        date: string;
+        total: number;
+        balance: number;
+        status: string;
+        line_items: Array<{
+          line_item_id: string;
+          item_id: string;
+          name: string;
+          sku: string;
+          quantity: number;
+          rate: number;
+          item_total: number;
+          serial_numbers?: string[];
+        }>;
+      };
+    }>("GET", `/invoices/${invoiceId}`);
   }
 
   // ---- Organizations ----

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, QrCode } from "lucide-react";
+import { ArrowLeft, QrCode, MapPin } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,14 @@ interface Product {
   name: string;
   sku: string;
   currentStock: number;
+  bin: { id: string; code: string } | null;
+}
+
+interface Bin {
+  id: string;
+  code: string;
+  name: string;
+  location: string;
 }
 
 interface SerialItem {
@@ -27,8 +35,10 @@ export default function NewOutwardPage() {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
+  const [bins, setBins] = useState<Bin[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [quantity, setQuantity] = useState("");
+  const [binId, setBinId] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [referenceNo, setReferenceNo] = useState("");
   const [notes, setNotes] = useState("");
@@ -36,6 +46,13 @@ export default function NewOutwardPage() {
   const [selectedSerials, setSelectedSerials] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/bins")
+      .then((r) => r.json())
+      .then((res) => { if (res.success) setBins(res.data); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (search.length < 1) { setProducts([]); return; }
@@ -46,7 +63,9 @@ export default function NewOutwardPage() {
   }, [search]);
 
   useEffect(() => {
-    if (!selectedProduct) { setAvailableSerials([]); return; }
+    if (!selectedProduct) { setAvailableSerials([]); setBinId(""); return; }
+    // Auto-select product's current bin
+    if (selectedProduct.bin) setBinId(selectedProduct.bin.id);
     fetch(`/api/serials?productId=${selectedProduct.id}&status=IN_STOCK`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setAvailableSerials(res.data); })
@@ -81,6 +100,7 @@ export default function NewOutwardPage() {
           referenceNo: referenceNo || undefined,
           notes: notes || undefined,
           customerName: customerName || undefined,
+          binId: binId || undefined,
           serialCodes: selectedSerials.length > 0 ? selectedSerials : undefined,
         }),
       });
@@ -110,8 +130,11 @@ export default function NewOutwardPage() {
                 <div>
                   <p className="text-sm font-medium text-slate-900">{selectedProduct.name}</p>
                   <p className="text-xs text-slate-500">{selectedProduct.sku} | Available: <span className="font-semibold text-green-600">{selectedProduct.currentStock}</span></p>
+                  {selectedProduct.bin && (
+                    <p className="text-xs text-slate-500 mt-0.5 flex items-center gap-1"><MapPin className="h-3 w-3" />Bin: {selectedProduct.bin.code}</p>
+                  )}
                 </div>
-                <button type="button" onClick={() => { setSelectedProduct(null); setSearch(""); setSelectedSerials([]); setAvailableSerials([]); }} className="text-xs text-orange-600 font-medium">Change</button>
+                <button type="button" onClick={() => { setSelectedProduct(null); setSearch(""); setSelectedSerials([]); setAvailableSerials([]); setBinId(""); }} className="text-xs text-orange-600 font-medium">Change</button>
               </CardContent>
             </Card>
           ) : (
@@ -139,6 +162,18 @@ export default function NewOutwardPage() {
             <p className="mt-1 text-xs text-red-600">Exceeds available stock ({selectedProduct.currentStock})</p>
           )}
         </div>
+
+        {selectedProduct && (
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Billed from Bin *</label>
+            <select value={binId} onChange={(e) => setBinId(e.target.value)}
+              className="flex h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900">
+              <option value="">Select bin...</option>
+              {bins.map((b) => (<option key={b.id} value={b.id}>{b.code} - {b.location} ({b.name})</option>))}
+            </select>
+            {!binId && <p className="mt-1 text-xs text-orange-600">Please select the bin from which this item is being billed</p>}
+          </div>
+        )}
 
         {availableSerials.length > 0 && (
           <div>

@@ -8,6 +8,10 @@ import {
   ArrowUpCircle,
   Package,
   MoreHorizontal,
+  ArrowRightLeft,
+  QrCode,
+  ClipboardCheck,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types";
@@ -16,52 +20,81 @@ interface BottomNavProps {
   role: Role;
 }
 
-const allTabs = [
-  { href: "/", label: "Home", icon: LayoutDashboard, key: "home", roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[] },
-  { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards", roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK"] as Role[] },
-  { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards", roles: ["ADMIN", "SUPERVISOR", "MANAGER", "OUTWARDS_CLERK"] as Role[] },
-  { href: "/stock", label: "Stock", icon: Package, key: "stock", roles: ["ADMIN", "SUPERVISOR", "MANAGER"] as Role[] },
-  { href: "/more", label: "More", icon: MoreHorizontal, key: "more", roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"] as Role[] },
-];
-
-function getVisibleTabs(role: Role) {
-  return allTabs.filter((tab) => tab.roles.includes(role));
+interface TabConfig {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  key: string;
 }
 
-function getHighlightedTab(role: Role): string {
+// Each role gets exactly 5 tabs tailored to their daily work
+function getTabsForRole(role: Role): TabConfig[] {
   switch (role) {
-    case "INWARDS_CLERK":
-      return "inwards";
-    case "OUTWARDS_CLERK":
-      return "outwards";
-    case "MANAGER":
-      return "home";
-    case "SUPERVISOR":
-      return "home";
     case "ADMIN":
-      return "home";
+      return [
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
+        { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
+    case "SUPERVISOR":
+      return [
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
+        { href: "/stock-audit", label: "Audit", icon: ClipboardCheck, key: "audit" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
+    case "MANAGER":
+      return [
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
+        { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
+    case "INWARDS_CLERK":
+      return [
+        { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
+        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
+        { href: "/scanner", label: "Scanner", icon: QrCode, key: "scanner" },
+        { href: "/stock", label: "Stock Count", icon: Package, key: "stock" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
+    case "OUTWARDS_CLERK":
+      return [
+        { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards" },
+        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
+        { href: "/scanner", label: "Scanner", icon: QrCode, key: "scanner" },
+        { href: "/stock", label: "Stock Count", icon: Package, key: "stock" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
     default:
-      return "home";
+      return [
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
   }
 }
 
 export function BottomNav({ role }: BottomNavProps) {
   const pathname = usePathname();
-  const tabs = getVisibleTabs(role);
-  const highlightedTab = getHighlightedTab(role);
+  const tabs = getTabsForRole(role);
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";
+    // Exact match for /inwards/new and /outwards/new to avoid double-highlight
+    if (href === "/inwards/new" || href === "/outwards/new") return pathname === href;
     return pathname.startsWith(href);
   }
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-slate-200 safe-bottom">
       <div className="flex items-center justify-around h-16 max-w-lg mx-auto px-2">
-        {tabs.map((tab) => {
+        {tabs.map((tab: TabConfig) => {
           const active = isActive(tab.href);
           const Icon = tab.icon;
-          const isRoleHighlight = tab.key === highlightedTab && !active;
 
           return (
             <Link
@@ -71,8 +104,7 @@ export function BottomNav({ role }: BottomNavProps) {
                 "flex flex-col items-center justify-center flex-1 h-full min-w-[44px] gap-0.5 transition-colors",
                 {
                   "text-slate-900": active,
-                  "text-slate-400": !active && !isRoleHighlight,
-                  "text-slate-600": isRoleHighlight,
+                  "text-slate-400": !active,
                 }
               )}
             >

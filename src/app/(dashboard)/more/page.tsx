@@ -19,6 +19,7 @@ import {
   Users,
   Cloud,
   Brain,
+  ArrowRightLeft,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -62,6 +63,12 @@ const menuItems: MenuItem[] = [
     label: "Expenses",
     icon: Receipt,
     href: "/expenses",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+  },
+  {
+    label: "Transfers",
+    icon: ArrowRightLeft,
+    href: "/transfers",
     roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {

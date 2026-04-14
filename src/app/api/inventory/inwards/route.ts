@@ -60,10 +60,13 @@ export async function POST(req: NextRequest) {
       const previousStock = product.currentStock;
       const newStock = previousStock + data.quantity;
 
-      // Update product stock
+      // Update product stock and bin location if provided
       await tx.product.update({
         where: { id: data.productId },
-        data: { currentStock: newStock },
+        data: {
+          currentStock: newStock,
+          ...(body.binId && { binId: body.binId }),
+        },
       });
 
       // Create transaction record

@@ -2,12 +2,14 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { Plus, ShoppingCart } from "lucide-react";
+import { Plus, ShoppingCart, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { useDebounce } from "@/lib/utils";
 
 const PO_COLUMNS: ExportColumn[] = [
   { header: "PO Number", key: "poNumber" },
@@ -51,17 +53,21 @@ export default function PurchaseOrdersPage() {
   const [orders, setOrders] = useState<POItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("ALL");
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search);
 
   useEffect(() => {
+    setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
     if (statusFilter !== "ALL") params.set("status", statusFilter);
+    if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
 
     fetch(`/api/purchase-orders?${params}`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setOrders(res.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [statusFilter]);
+  }, [statusFilter, debouncedSearch]);
 
   return (
     <div>
@@ -80,6 +86,16 @@ export default function PurchaseOrdersPage() {
         </div>
       </div>
 
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        <Input
+          placeholder="Search PO number or vendor..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="pl-9"
+        />
+      </div>
+
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
         {STATUS_FILTERS.map((s) => (
           <button
@@ -95,8 +111,22 @@ export default function PurchaseOrdersPage() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="p-3 border border-slate-100 rounded-lg animate-pulse">
+              <div className="flex items-start justify-between">
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-4 bg-slate-200 rounded w-1/3" />
+                  <div className="h-3 bg-slate-200 rounded w-2/3" />
+                  <div className="h-3 bg-slate-200 rounded w-1/2" />
+                </div>
+                <div className="text-right space-y-1.5">
+                  <div className="h-4 bg-slate-200 rounded w-16 ml-auto" />
+                  <div className="h-5 w-20 bg-slate-200 rounded-full ml-auto" />
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       ) : (
         <div className="space-y-2">

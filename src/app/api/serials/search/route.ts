@@ -15,6 +15,7 @@ export async function GET(req: NextRequest) {
       return errorResponse("Search code must be at least 2 characters", 400);
     }
 
+    // Search serial items by serial code or barcode
     const serials = await prisma.serialItem.findMany({
       where: {
         OR: [
@@ -30,9 +31,31 @@ export async function GET(req: NextRequest) {
       orderBy: { serialCode: "asc" },
     });
 
-    return successResponse(serials);
+    // Also search products by SKU or name (for items without serials)
+    const products = await prisma.product.findMany({
+      where: {
+        OR: [
+          { sku: { contains: code, mode: "insensitive" } },
+          { name: { contains: code, mode: "insensitive" } },
+        ],
+      },
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        type: true,
+        currentStock: true,
+        sellingPrice: true,
+        mrp: true,
+        bin: { select: { code: true, location: true } },
+      },
+      take: 10,
+      orderBy: { name: "asc" },
+    });
+
+    return successResponse({ serials, products });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
-    return errorResponse(error instanceof Error ? error.message : "Failed to search serials", 500);
+    return errorResponse(error instanceof Error ? error.message : "Failed to search", 500);
   }
 }

@@ -69,6 +69,10 @@ export async function POST(req: NextRequest) {
         data: { currentStock: newStock },
       });
 
+      // Build notes with bin info
+      const binNote = body.binId ? `[Bin: ${body.binId}]` : "";
+      const combinedNotes = [binNote, data.notes].filter(Boolean).join(" ");
+
       // Create transaction record
       const transaction = await tx.inventoryTransaction.create({
         data: {
@@ -78,7 +82,7 @@ export async function POST(req: NextRequest) {
           previousStock,
           newStock,
           referenceNo: data.referenceNo,
-          notes: data.notes,
+          notes: combinedNotes || undefined,
           userId: user.id,
         },
         include: {

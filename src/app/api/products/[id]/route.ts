@@ -4,7 +4,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { productUpdateSchema } from "@/lib/validations";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireAuth, AuthError, getCurrentUser } from "@/lib/auth-helpers";
 
 export async function GET(
   _req: NextRequest,
@@ -12,6 +12,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    const user = await getCurrentUser();
+    const isAdmin = user?.role === "ADMIN";
+
     const product = await prisma.product.findUnique({
       where: { id },
       include: {
@@ -29,6 +32,11 @@ export async function GET(
 
     if (!product) {
       return errorResponse("Product not found", 404);
+    }
+
+    // Strip cost price for non-admin users
+    if (!isAdmin) {
+      return successResponse({ ...product, costPrice: undefined });
     }
 
     return successResponse(product);

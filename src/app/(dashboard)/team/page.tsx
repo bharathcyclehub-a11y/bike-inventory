@@ -21,11 +21,11 @@ interface TeamUser {
 }
 
 const ROLE_CONFIG: Record<string, { label: string; icon: typeof Shield; color: "danger" | "warning" | "info" | "success" | "default" }> = {
-  ADMIN: { label: "Admin", icon: ShieldCheck, color: "danger" },
-  SUPERVISOR: { label: "Supervisor", icon: Shield, color: "warning" },
-  MANAGER: { label: "Manager", icon: UserCog, color: "info" },
-  INWARDS_CLERK: { label: "Inwards", icon: PackagePlus, color: "success" },
-  OUTWARDS_CLERK: { label: "Outwards", icon: PackageMinus, color: "default" },
+  ADMIN: { label: "Owner / Director", icon: ShieldCheck, color: "danger" },
+  SUPERVISOR: { label: "Store Supervisor", icon: Shield, color: "warning" },
+  MANAGER: { label: "Operations Manager", icon: UserCog, color: "info" },
+  INWARDS_CLERK: { label: "Purchase & Receiving Executive", icon: PackagePlus, color: "success" },
+  OUTWARDS_CLERK: { label: "Sales & Dispatch Executive", icon: PackageMinus, color: "default" },
 };
 
 export default function TeamPage() {
@@ -70,8 +70,16 @@ export default function TeamPage() {
       </div>
 
       {loading ? (
-        <div className="flex items-center justify-center py-12">
-          <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
+        <div className="space-y-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="p-3 border border-slate-100 rounded-lg animate-pulse">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-full bg-slate-200 shrink-0" />
+                <div className="flex-1 space-y-1.5"><div className="h-4 bg-slate-200 rounded w-1/2" /><div className="h-3 bg-slate-200 rounded w-1/3" /></div>
+                <div className="h-5 w-16 bg-slate-200 rounded-full" />
+              </div>
+            </div>
+          ))}
         </div>
       ) : members.length === 0 ? (
         <div className="text-center py-12">
