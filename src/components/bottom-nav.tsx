@@ -59,7 +59,7 @@ function getTabsForRole(role: Role): TabConfig[] {
         { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
         { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
         { href: "/scanner", label: "Scanner", icon: QrCode, key: "scanner" },
-        { href: "/stock", label: "Stock Count", icon: Package, key: "stock" },
+        { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "OUTWARDS_CLERK":
@@ -67,7 +67,7 @@ function getTabsForRole(role: Role): TabConfig[] {
         { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards" },
         { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
         { href: "/scanner", label: "Scanner", icon: QrCode, key: "scanner" },
-        { href: "/stock", label: "Stock Count", icon: Package, key: "stock" },
+        { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     default:
