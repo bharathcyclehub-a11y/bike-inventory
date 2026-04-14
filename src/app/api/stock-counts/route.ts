@@ -62,15 +62,25 @@ export async function POST(req: NextRequest) {
 
     let productIds = data.productIds;
     if (!productIds || productIds.length === 0) {
-      // If binId provided, only include products in that bin
       const binId = body.binId as string | undefined;
-      const allProducts = await prisma.product.findMany({
-        where: {
-          status: "ACTIVE",
-          ...(binId && { binId }),
-        },
-        select: { id: true },
-      });
+      let allProducts: { id: string }[] = [];
+
+      // Try bin-specific products first
+      if (binId) {
+        allProducts = await prisma.product.findMany({
+          where: { status: "ACTIVE", binId },
+          select: { id: true },
+        });
+      }
+
+      // If no products in bin (or no bin selected), include all active products
+      if (allProducts.length === 0) {
+        allProducts = await prisma.product.findMany({
+          where: { status: "ACTIVE" },
+          select: { id: true },
+        });
+      }
+
       productIds = allProducts.map((p) => p.id);
     }
 
