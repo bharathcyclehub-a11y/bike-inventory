@@ -31,8 +31,8 @@ const ROLE_PERMISSIONS: Record<string, string[]> = {
   ADMIN: ["Full access to all features", "Manage team & roles", "Zoho sync", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Settings"],
   SUPERVISOR: ["View all data", "Manage stock", "Team view", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights"],
   MANAGER: ["Day-to-day operations", "Vendors & POs", "Bills & Payments", "Record Payments", "Expenses", "AI Insights", "Inwards & Outwards"],
-  INWARDS_CLERK: ["Record inwards only", "View stock", "Bins & Locations", "Barcode Scanner"],
-  OUTWARDS_CLERK: ["Record outwards only", "View stock", "Barcode Scanner"],
+  INWARDS_CLERK: ["Record inwards only", "Stock Count", "Barcode Scanner"],
+  OUTWARDS_CLERK: ["Record outwards only", "Stock Count", "Barcode Scanner"],
 };
 
 export default function EditTeamMemberPage({ params }: { params: Promise<{ id: string }> }) {

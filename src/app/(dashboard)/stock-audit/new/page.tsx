@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 interface Bin {
   id: string;
   code: string;
+  name: string;
   location: string;
   _count: { products: number };
 }
@@ -110,7 +111,7 @@ export default function NewStockAuditPage() {
               <option value="">Choose a bin...</option>
               {bins.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.code} — {b.location} ({b._count.products} items)
+                  {b.code} — {b.name} ({b.location}, {b._count.products} items)
                 </option>
               ))}
             </select>
