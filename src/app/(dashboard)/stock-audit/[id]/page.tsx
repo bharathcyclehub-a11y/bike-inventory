@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, use } from "react";
 import Link from "next/link";
-import { ArrowLeft, Play, CheckCircle2, Save, Search, Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Play, CheckCircle2, Save, Search, Loader2, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -48,7 +49,9 @@ const STATUS_STYLE: Record<string, string> = {
 
 export default function StockAuditDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [summary, setSummary] = useState<StockCountSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [items, setItems] = useState<StockCountItemData[]>([]);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [loadingItems, setLoadingItems] = useState(false);
@@ -139,6 +142,21 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
     finally { setSaving(false); }
   };
 
+  const handleDelete = async () => {
+    if (!confirm("Delete this stock audit permanently? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/stock-counts/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (data.success) {
+        router.push("/stock-audit");
+      } else {
+        alert(data.error || "Failed to delete");
+      }
+    } catch { alert("Failed to delete"); }
+    finally { setDeleting(false); }
+  };
+
   if (loadingSummary) {
     return (
       <div className="space-y-3">
@@ -183,6 +201,11 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         <Badge variant={STATUS_STYLE[summary.status] as "warning" | "info" | "success"}>
           {summary.status === "IN_PROGRESS" ? "In Progress" : summary.status.charAt(0) + summary.status.slice(1).toLowerCase()}
         </Badge>
+        <button onClick={handleDelete} disabled={deleting}
+          className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg disabled:opacity-50"
+          title="Delete audit">
+          <Trash2 className="h-4.5 w-4.5" />
+        </button>
       </div>
 
       {/* Progress */}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, QrCode, MapPin } from "lucide-react";
 import Link from "next/link";
@@ -32,7 +33,15 @@ interface SerialItem {
 }
 
 export default function NewOutwardPage() {
+  const { data: session } = useSession();
   const router = useRouter();
+  const role = (session?.user as { role?: string })?.role || "";
+
+  // Only ADMIN can manually record outwards — staff use Zoho verification flow
+  useEffect(() => {
+    if (session && role !== "ADMIN") router.replace("/outwards");
+  }, [session, role, router]);
+
   const [search, setSearch] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [bins, setBins] = useState<Bin[]>([]);

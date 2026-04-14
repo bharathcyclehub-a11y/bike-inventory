@@ -96,3 +96,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     return errorResponse(error instanceof Error ? error.message : "Failed to update stock count", 400);
   }
 }
+
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    await requireAuth(["ADMIN", "SUPERVISOR"]);
+    const { id } = await params;
+
+    const stockCount = await prisma.stockCount.findUnique({ where: { id } });
+    if (!stockCount) return errorResponse("Stock count not found", 404);
+
+    // Delete items first, then the stock count
+    await prisma.$transaction([
+      prisma.stockCountItem.deleteMany({ where: { stockCountId: id } }),
+      prisma.stockCount.delete({ where: { id } }),
+    ]);
+
+    return successResponse({ deleted: true });
+  } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    return errorResponse(error instanceof Error ? error.message : "Failed to delete stock count", 400);
+  }
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, QrCode } from "lucide-react";
 import Link from "next/link";
@@ -24,7 +25,15 @@ interface Bin {
 }
 
 export default function NewInwardPage() {
+  const { data: session } = useSession();
   const router = useRouter();
+  const role = (session?.user as { role?: string })?.role || "";
+
+  // Only ADMIN can manually record inwards — staff use Zoho verification flow
+  useEffect(() => {
+    if (session && role !== "ADMIN") router.replace("/inwards");
+  }, [session, role, router]);
+
   const [search, setSearch] = useState("");
   const [products, setProducts] = useState<Product[]>([]);
   const [bins, setBins] = useState<Bin[]>([]);

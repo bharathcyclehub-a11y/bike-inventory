@@ -66,7 +66,7 @@ function getVendor(notes: string | null) {
 export default function InwardsPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAddInward = ["ADMIN", "SUPERVISOR", "INWARDS_CLERK"].includes(role);
+  const canAddInward = role === "ADMIN";
   const [inwards, setInwards] = useState<InwardTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
