@@ -3,10 +3,11 @@
 import { use, useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, QrCode, MapPin, Tag, Package, IndianRupee } from "lucide-react";
+import { ArrowLeft, QrCode, MapPin, Tag, Package, IndianRupee, Pencil, Save, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { TransactionItem } from "@/components/transaction-item";
 
 interface SerialItem {
@@ -61,9 +62,14 @@ function formatTime(dateStr: string) {
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: session } = useSession();
-  const isAdmin = (session?.user as { role?: string })?.role === "ADMIN";
+  const role = (session?.user as { role?: string })?.role || "";
+  const isAdmin = role === "ADMIN";
+  const canEdit = ["ADMIN", "MANAGER"].includes(role);
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editData, setEditData] = useState({ name: "", color: "", size: "", sellingPrice: 0, mrp: 0, reorderLevel: 0 });
 
   useEffect(() => {
     fetch(`/api/products/${id}`)
@@ -92,12 +98,90 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
 
   const inStockSerials = product.serialItems.filter((s) => s.status === "IN_STOCK");
 
+  function startEdit() {
+    setEditData({
+      name: product!.name,
+      color: (product as unknown as Record<string, string>).color || "",
+      size: product!.size || "",
+      sellingPrice: product!.sellingPrice,
+      mrp: product!.mrp,
+      reorderLevel: product!.reorderLevel,
+    });
+    setEditing(true);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/products/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(editData),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setProduct({ ...product!, ...editData });
+        setEditing(false);
+      }
+    } catch { /* */ }
+    finally { setSaving(false); }
+  }
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
         <Link href="/stock" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
-        <h1 className="text-lg font-bold text-slate-900 truncate">{product.name}</h1>
+        <h1 className="text-lg font-bold text-slate-900 truncate flex-1">{product.name}</h1>
+        {canEdit && !editing && (
+          <button onClick={startEdit} className="p-2 rounded-lg hover:bg-slate-100">
+            <Pencil className="h-4 w-4 text-slate-500" />
+          </button>
+        )}
       </div>
+
+      {editing && (
+        <Card className="mb-4 border-blue-200 bg-blue-50">
+          <CardContent className="p-3 space-y-2">
+            <p className="text-xs font-semibold text-blue-800 mb-1">Edit Product</p>
+            <div>
+              <label className="text-[10px] text-slate-500">Name</label>
+              <Input value={editData.name} onChange={(e) => setEditData({ ...editData, name: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-slate-500">Size</label>
+                <Input value={editData.size} onChange={(e) => setEditData({ ...editData, size: e.target.value })} placeholder='e.g. 26"' />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500">Color</label>
+                <Input value={editData.color} onChange={(e) => setEditData({ ...editData, color: e.target.value })} placeholder="e.g. Red" />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div>
+                <label className="text-[10px] text-slate-500">Selling Price</label>
+                <Input type="number" value={editData.sellingPrice} onChange={(e) => setEditData({ ...editData, sellingPrice: Number(e.target.value) })} />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500">MRP</label>
+                <Input type="number" value={editData.mrp} onChange={(e) => setEditData({ ...editData, mrp: Number(e.target.value) })} />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500">Reorder Level</label>
+                <Input type="number" value={editData.reorderLevel} onChange={(e) => setEditData({ ...editData, reorderLevel: Number(e.target.value) })} />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={handleSave} disabled={saving} className="flex-1 bg-blue-600 hover:bg-blue-700">
+                <Save className="h-3.5 w-3.5 mr-1" />{saving ? "Saving..." : "Save"}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setEditing(false)} className="flex-1">
+                <X className="h-3.5 w-3.5 mr-1" />Cancel
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="bg-slate-100 rounded-xl h-40 flex items-center justify-center mb-4">
         <Package className="h-12 w-12 text-slate-300" />
