@@ -21,6 +21,14 @@ interface User {
   role: string;
 }
 
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: "Owner / Director",
+  SUPERVISOR: "Store Supervisor",
+  MANAGER: "Operations Manager",
+  INWARDS_CLERK: "Inventory & Receiving Lead",
+  OUTWARDS_CLERK: "Sales & Dispatch Lead",
+};
+
 export default function NewStockAuditPage() {
   const router = useRouter();
   const { data: session } = useSession();
@@ -35,6 +43,7 @@ export default function NewStockAuditPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [assignedTo, setAssignedTo] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     fetch("/api/bins").then((r) => r.json()).then((res) => { if (res.success) setBins(res.data); }).catch(() => {});
@@ -54,12 +63,13 @@ export default function NewStockAuditPage() {
   const handleSubmit = async () => {
     if (!title || !dueDate) return;
     setSubmitting(true);
+    setError("");
     try {
       const body: Record<string, unknown> = {
         title,
         dueDate,
         notes: notes || undefined,
-        assignedToId: assignedTo || user?.userId || undefined,
+        assignedToId: assignedTo || user?.userId,
       };
 
       if (scope === "bin" && selectedBin) {
@@ -73,7 +83,10 @@ export default function NewStockAuditPage() {
       });
       const data = await res.json();
       if (data.success) router.push(`/stock-audit/${data.data.id}`);
-    } catch { /* */ }
+      else setError(data.error || "Failed to create stock count");
+    } catch {
+      setError("Network error. Please try again.");
+    }
     finally { setSubmitting(false); }
   };
 
@@ -136,7 +149,7 @@ export default function NewStockAuditPage() {
               className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-900">
               <option value="">Myself</option>
               {users.map((u) => (
-                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                <option key={u.id} value={u.id}>{u.name} ({ROLE_LABELS[u.role] || u.role})</option>
               ))}
             </select>
           </div>
@@ -151,6 +164,12 @@ export default function NewStockAuditPage() {
             onChange={(e) => setNotes(e.target.value)}
           />
         </div>
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
 
         <button onClick={handleSubmit}
           disabled={!title || !dueDate || (scope === "bin" && !selectedBin) || submitting}
