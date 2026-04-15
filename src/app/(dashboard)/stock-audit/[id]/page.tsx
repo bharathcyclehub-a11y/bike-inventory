@@ -243,7 +243,16 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
             <Save className="h-4 w-4" />
             {saving ? "Saving..." : savedCount > 0 ? `Saved ${savedCount}!` : unsavedCount > 0 ? `Save (${unsavedCount})` : "Save All"}
           </button>
-          <button onClick={() => handleStatusChange("COMPLETED")} disabled={actionLoading}
+          <button onClick={async () => {
+            const uncountedCount = summary.totalItems - summary.countedItems - unsavedCount;
+            if (unsavedCount > 0) {
+              await handleSaveBatch();
+            }
+            if (uncountedCount > 0) {
+              if (!confirm(`${uncountedCount} item(s) have not been counted yet. Their stock will not be updated. Complete anyway?`)) return;
+            }
+            handleStatusChange("COMPLETED");
+          }} disabled={actionLoading || saving}
             className="flex-1 flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <CheckCircle2 className="h-4 w-4" /> {actionLoading ? "..." : "Complete"}
           </button>
@@ -314,6 +323,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
                       <input
                         type="number"
                         inputMode="numeric"
+                        min="0"
                         placeholder="Physical count"
                         value={val}
                         onChange={(e) => setCounts((prev) => ({ ...prev, [item.id]: e.target.value }))}

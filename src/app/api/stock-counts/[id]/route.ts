@@ -55,9 +55,28 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const existing = await prisma.stockCount.findUnique({ where: { id } });
     if (!existing) return errorResponse("Stock count not found", 404);
 
+    // Status transition guards
+    if (data.status) {
+      const VALID_TRANSITIONS: Record<string, string[]> = {
+        PENDING: ["IN_PROGRESS"],
+        IN_PROGRESS: ["COMPLETED"],
+        COMPLETED: [], // Cannot transition from COMPLETED
+      };
+      const allowed = VALID_TRANSITIONS[existing.status] || [];
+      if (!allowed.includes(data.status)) {
+        return errorResponse(
+          `Cannot change status from ${existing.status} to ${data.status}. ${
+            existing.status === "COMPLETED" ? "This stock count is already completed." : `Must be ${allowed.join(" or ")} next.`
+          }`,
+          400
+        );
+      }
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       if (data.items && data.items.length > 0) {
         for (const item of data.items) {
+          if (item.countedQty < 0) continue; // Reject negative counts
           const existingItem = await tx.stockCountItem.findUnique({ where: { id: item.id } });
           if (existingItem) {
             await tx.stockCountItem.update({
@@ -87,7 +106,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         for (const item of countedItems) {
           if (item.countedQty === null) continue;
 
-          // Update product stock to the counted quantity
           const product = await tx.product.findUnique({
             where: { id: item.productId },
             select: { currentStock: true },
@@ -99,7 +117,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
               data: { currentStock: item.countedQty },
             });
 
-            // Create an ADJUSTMENT transaction for audit trail
+            // Create ADJUSTMENT transaction for audit trail
             const variance = item.countedQty - product.currentStock;
             if (variance !== 0) {
               await tx.inventoryTransaction.create({
@@ -140,11 +158,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { id } = await params;
 
     const stockCount = await prisma.stockCount.findUnique({ where: { id } });
     if (!stockCount) return errorResponse("Stock count not found", 404);
+
+    if (stockCount.status === "COMPLETED") {
+      return errorResponse("Cannot delete a completed stock count. The stock adjustments have already been applied.", 400);
+    }
 
     // Delete items first, then the stock count
     await prisma.$transaction([
