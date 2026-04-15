@@ -35,6 +35,7 @@ interface StockCountSummary {
   completedAt: string | null;
   notes: string | null;
   assignedTo: { name: string };
+  bin: { code: string; name: string; location: string } | null;
   totalItems: number;
   countedItems: number;
   totalVariance: number;
@@ -196,6 +197,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
           <h1 className="text-lg font-bold text-slate-900 truncate">{summary.title}</h1>
           <p className="text-xs text-slate-500">
             {summary.assignedTo.name} | Due: {new Date(summary.dueDate).toLocaleDateString("en-IN")}
+            {summary.bin && ` | ${summary.bin.name} (${summary.bin.location})`}
           </p>
         </div>
         <Badge variant={STATUS_STYLE[summary.status] as "warning" | "info" | "success"}>

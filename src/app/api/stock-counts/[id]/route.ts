@@ -15,6 +15,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       where: { id },
       include: {
         assignedTo: { select: { name: true } },
+        bin: { select: { code: true, name: true, location: true } },
         items: {
           include: {
             product: {
@@ -99,36 +100,71 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
       // When completing: apply counted quantities to product stock
       if (data.status === "COMPLETED") {
+        const BASELINE_END = new Date("2026-04-19T23:59:59+05:30");
+        const isBaselinePeriod = new Date() <= BASELINE_END;
+
         const countedItems = await tx.stockCountItem.findMany({
           where: { stockCountId: id, countedQty: { not: null } },
         });
 
         for (const item of countedItems) {
-          if (item.countedQty === null) continue;
+          if (item.countedQty === null || item.countedQty === 0) continue;
 
           const product = await tx.product.findUnique({
             where: { id: item.productId },
-            select: { currentStock: true },
+            select: { id: true, currentStock: true, binId: true },
           });
 
-          if (product) {
+          if (!product) continue;
+
+          if (isBaselinePeriod) {
+            // --- BASELINE MODE (Apr 14-19): Stock count = INWARD + PUTAWAY ---
+            // 1. Set product stock to counted quantity
             await tx.product.update({
-              where: { id: item.productId },
-              data: { currentStock: item.countedQty },
+              where: { id: product.id },
+              data: {
+                currentStock: item.countedQty,
+                // 2. PUTAWAY: assign product to this bin
+                ...(existing.binId && { binId: existing.binId }),
+              },
             });
 
-            // Create ADJUSTMENT transaction for audit trail
+            // 3. Create INWARD transaction (this is inventory intake, not an audit)
+            await tx.inventoryTransaction.create({
+              data: {
+                type: "INWARD",
+                productId: product.id,
+                quantity: item.countedQty,
+                previousStock: product.currentStock,
+                newStock: item.countedQty,
+                referenceNo: existing.title,
+                notes: `[STOCK_COUNT] [BASELINE] Counted ${item.countedQty} units${existing.binId ? " — placed in bin" : ""} during "${existing.title}"`,
+                userId: user.id,
+              },
+            });
+          } else {
+            // --- VERIFICATION MODE (after Apr 19): Stock count = AUDIT ---
+            // Compare counted vs system, create adjustment only for variance
             const variance = item.countedQty - product.currentStock;
+
+            await tx.product.update({
+              where: { id: product.id },
+              data: {
+                currentStock: item.countedQty,
+                ...(existing.binId && { binId: existing.binId }),
+              },
+            });
+
             if (variance !== 0) {
               await tx.inventoryTransaction.create({
                 data: {
                   type: "ADJUSTMENT",
-                  productId: item.productId,
+                  productId: product.id,
                   quantity: Math.abs(variance),
                   previousStock: product.currentStock,
                   newStock: item.countedQty,
                   referenceNo: existing.title,
-                  notes: `[STOCK_COUNT] ${variance > 0 ? "Surplus" : "Shortage"} of ${Math.abs(variance)} found during stock count "${existing.title}"`,
+                  notes: `[STOCK_COUNT] [VERIFICATION] ${variance > 0 ? "Surplus" : "Shortage"} of ${Math.abs(variance)} found during "${existing.title}"`,
                   userId: user.id,
                 },
               });
