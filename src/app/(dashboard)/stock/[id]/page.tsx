@@ -183,23 +183,24 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
         </Card>
       )}
 
-      <div className="bg-slate-100 rounded-xl h-40 flex items-center justify-center mb-4">
-        <Package className="h-12 w-12 text-slate-300" />
-      </div>
-
-      <div className="flex flex-wrap gap-2 mb-4">
+      {/* Identity badges */}
+      <div className="flex flex-wrap gap-2 mb-3">
         <Badge variant="info">{product.sku}</Badge>
-        <Badge variant="default">{product.category?.name}</Badge>
-        <Badge variant="default">{product.brand?.name}</Badge>
+        {product.brand && <Badge variant="default" className="font-semibold">{product.brand.name}</Badge>}
+        {product.category && <Badge variant="default">{product.category.name}</Badge>}
         {product.type === "BICYCLE" && product.size && <Badge variant="default">{product.size}</Badge>}
         {product.condition !== "NEW" && <Badge variant="warning">{product.condition.replace("_", " ")}</Badge>}
       </div>
 
+      {/* Stock + Location combined card (most important info first) */}
       <Card className="mb-3">
         <CardContent className="p-4">
-          <div className="grid grid-cols-3 gap-4 text-center">
+          <div className="grid grid-cols-3 gap-4 text-center mb-3">
             <div>
-              <p className="text-2xl font-bold text-slate-900">{product.currentStock}</p>
+              <p className={`text-2xl font-bold ${
+                product.currentStock <= 0 ? "text-red-600" :
+                product.reorderLevel > 0 && product.currentStock <= product.reorderLevel ? "text-yellow-600" : "text-green-600"
+              }`}>{product.currentStock}</p>
               <p className="text-xs text-slate-500">In Stock</p>
             </div>
             <div>
@@ -211,6 +212,22 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
               <p className="text-xs text-slate-500">Max Stock</p>
             </div>
           </div>
+          {product.bin ? (
+            <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
+              <MapPin className="h-4 w-4 text-blue-500" />
+              <div>
+                <p className="text-sm font-medium text-slate-900">
+                  <span className="font-mono">{product.bin.code}</span> — {product.bin.name}
+                </p>
+                <p className="text-xs text-slate-500">{product.bin.location}</p>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
+              <MapPin className="h-4 w-4 text-slate-300" />
+              <p className="text-xs text-slate-400">No bin assigned</p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -227,16 +244,6 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           </div>
         </CardContent>
       </Card>
-
-      {product.bin && (
-        <Card className="mb-3">
-          <CardHeader><CardTitle className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Location</CardTitle></CardHeader>
-          <CardContent>
-            <p className="text-sm"><span className="font-mono font-medium">{product.bin.code}</span> — {product.bin.name}</p>
-            <p className="text-xs text-slate-500 mt-0.5">{product.bin.location}</p>
-          </CardContent>
-        </Card>
-      )}
 
       {product.serialItems.length > 0 && (
         <Card className="mb-3">

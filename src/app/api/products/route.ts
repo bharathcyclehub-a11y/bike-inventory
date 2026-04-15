@@ -23,6 +23,7 @@ export async function GET(req: NextRequest) {
     const brandId = searchParams.get("brandId") || undefined;
     const type = searchParams.get("type") || undefined;
     const status = searchParams.get("status") || "ACTIVE";
+    const size = searchParams.get("size") || undefined;
 
     const where = {
       ...(search && {
@@ -35,18 +36,19 @@ export async function GET(req: NextRequest) {
       ...(brandId && { brandId }),
       ...(type && { type: type as never }),
       ...(status && { status: status as never }),
+      ...(size && { size }),
     };
 
     const [products, total] = await Promise.all([
       prisma.product.findMany({
         where,
         select: {
-          id: true, sku: true, name: true, type: true, status: true,
+          id: true, sku: true, name: true, type: true, status: true, size: true,
           costPrice: isAdmin, sellingPrice: true, mrp: true, gstRate: true, hsnCode: true,
           currentStock: true, minStock: true, reorderLevel: true,
           category: { select: { id: true, name: true } },
           brand: { select: { id: true, name: true } },
-          bin: { select: { id: true, code: true } },
+          bin: { select: { id: true, code: true, location: true } },
         },
         orderBy: { [sortBy]: sortOrder },
         skip,
