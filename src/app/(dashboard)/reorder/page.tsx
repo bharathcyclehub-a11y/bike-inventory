@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   Search, AlertTriangle, Package, ChevronDown, ChevronUp,
@@ -54,11 +54,6 @@ export default function ReorderDashboardPage() {
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
   const [selectedForPO, setSelectedForPO] = useState<Set<string>>(new Set());
-  const expandedGroupsRef = useRef(expandedGroups);
-
-  useEffect(() => {
-    expandedGroupsRef.current = expandedGroups;
-  }, [expandedGroups]);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -71,10 +66,7 @@ export default function ReorderDashboardPage() {
         if (res.success) {
           setGroups(res.data.groups);
           setSummary(res.data.summary);
-          // Auto-expand all groups on first load
-          if (expandedGroupsRef.current.size === 0) {
-            setExpandedGroups(new Set(res.data.groups.map((g: ProductGroup) => g.id)));
-          }
+          // Brands collapsed by default — Abhi taps to expand
         }
       })
       .catch(() => {})
@@ -303,13 +295,22 @@ export default function ReorderDashboardPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {groups.map((group) => (
+          {groups.map((group) => {
+            const totalStock = group.products.reduce((s, p) => s + p.currentStock, 0);
+            const zeroCount = group.products.filter((p) => p.currentStock === 0).length;
+            return (
             <Card key={group.id}>
               <button onClick={() => toggleGroup(group.id)}
                 className="w-full flex items-center justify-between p-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold text-slate-900">{group.name}</span>
-                  <Badge variant="default" className="text-[10px]">{group.products.length}</Badge>
+                <div className="flex-1 min-w-0 text-left">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-slate-900">{group.name}</span>
+                    <Badge variant="default" className="text-[10px]">{group.products.length} items</Badge>
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-0.5">
+                    Stock: {totalStock}
+                    {zeroCount > 0 && <span className="text-red-500 ml-1">({zeroCount} at zero)</span>}
+                  </p>
                 </div>
                 {expandedGroups.has(group.id) ? (
                   <ChevronUp className="h-4 w-4 text-slate-400" />
@@ -381,7 +382,8 @@ export default function ReorderDashboardPage() {
                 </CardContent>
               )}
             </Card>
-          ))}
+          );
+          })}
 
           {groups.length === 0 && !loading && (
             <div className="text-center py-12">
