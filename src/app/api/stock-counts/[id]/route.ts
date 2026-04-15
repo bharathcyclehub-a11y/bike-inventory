@@ -194,17 +194,62 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { id } = await params;
 
     const stockCount = await prisma.stockCount.findUnique({ where: { id } });
     if (!stockCount) return errorResponse("Stock count not found", 404);
 
     if (stockCount.status === "COMPLETED") {
-      return errorResponse("Cannot delete a completed stock count. The stock adjustments have already been applied.", 400);
+      // Only ADMIN can delete completed stock counts (with full reversal)
+      if (user.role !== "ADMIN") {
+        return errorResponse("Only ADMIN can delete a completed stock count", 403);
+      }
+
+      await prisma.$transaction(async (tx) => {
+        // Find all transactions created by this stock count
+        const transactions = await tx.inventoryTransaction.findMany({
+          where: {
+            referenceNo: stockCount.title,
+            notes: { contains: "[STOCK_COUNT]" },
+          },
+        });
+
+        // Reverse each product's stock and bin assignment
+        for (const txn of transactions) {
+          const product = await tx.product.findUnique({
+            where: { id: txn.productId },
+            select: { id: true, binId: true },
+          });
+          if (!product) continue;
+
+          await tx.product.update({
+            where: { id: product.id },
+            data: {
+              currentStock: txn.previousStock,
+              // Clear bin only if it was assigned by this stock count
+              ...(stockCount.binId && product.binId === stockCount.binId && { binId: null }),
+            },
+          });
+        }
+
+        // Delete the transactions
+        await tx.inventoryTransaction.deleteMany({
+          where: {
+            referenceNo: stockCount.title,
+            notes: { contains: "[STOCK_COUNT]" },
+          },
+        });
+
+        // Delete count items and count
+        await tx.stockCountItem.deleteMany({ where: { stockCountId: id } });
+        await tx.stockCount.delete({ where: { id } });
+      });
+
+      return successResponse({ deleted: true, reversed: true });
     }
 
-    // Delete items first, then the stock count
+    // Non-completed counts: simple delete
     await prisma.$transaction([
       prisma.stockCountItem.deleteMany({ where: { stockCountId: id } }),
       prisma.stockCount.delete({ where: { id } }),

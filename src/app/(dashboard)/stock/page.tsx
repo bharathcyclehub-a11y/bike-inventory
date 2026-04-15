@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { Search, MapPin, Loader2, LayoutGrid, SlidersHorizontal, ChevronDown, RefreshCw } from "lucide-react";
+import { Search, MapPin, Loader2, SlidersHorizontal, ChevronDown, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -38,7 +38,6 @@ interface ProductItem {
 }
 
 interface BrandItem { id: string; name: string; _count: { products: number }; }
-interface CategoryItem { id: string; name: string; _count: { products: number }; }
 interface BinItem { id: string; code: string; name: string; location: string; _count: { products: number }; }
 
 type QuickFilter = "ALL" | "BICYCLES" | "SPARES" | "ACCESSORIES" | "LOW_STOCK" | "INACTIVE";
@@ -78,11 +77,9 @@ export default function StockPage() {
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("ALL");
   const [showFilters, setShowFilters] = useState(false);
   const [selectedBrand, setSelectedBrand] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSize, setSelectedSize] = useState("");
   const [selectedBin, setSelectedBin] = useState("");
   const [brands, setBrands] = useState<BrandItem[]>([]);
-  const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [bins, setBins] = useState<BinItem[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -95,19 +92,17 @@ export default function StockPage() {
   useEffect(() => {
     Promise.all([
       fetch("/api/brands").then((r) => r.json()),
-      fetch("/api/categories").then((r) => r.json()),
       fetch("/api/bins").then((r) => r.json()),
-    ]).then(([brandsRes, catsRes, binsRes]) => {
+    ]).then(([brandsRes, binsRes]) => {
       if (brandsRes.success) setBrands(brandsRes.data);
-      if (catsRes.success) setCategories(catsRes.data);
       if (binsRes.success) setBins(binsRes.data);
     }).catch(() => {});
   }, []);
 
-  const activeFilterCount = [selectedBrand, selectedCategory, selectedSize, selectedBin].filter(Boolean).length;
+  const activeFilterCount = [selectedBrand, selectedSize, selectedBin].filter(Boolean).length;
 
   const buildParams = useCallback((pageNum: number) => {
-    const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(pageNum) });
+    const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(pageNum), sortBy: "currentStock", sortOrder: "desc" });
     if (debouncedSearch) params.set("search", debouncedSearch);
     if (quickFilter === "BICYCLES") { params.set("type", "BICYCLE"); params.set("status", "ACTIVE"); }
     else if (quickFilter === "SPARES") { params.set("type", "SPARE_PART"); params.set("status", "ACTIVE"); }
@@ -115,11 +110,10 @@ export default function StockPage() {
     else if (quickFilter === "INACTIVE") { params.set("status", "INACTIVE"); }
     else if (quickFilter === "ALL" || quickFilter === "LOW_STOCK") { params.set("status", "ACTIVE"); }
     if (selectedBrand) params.set("brandId", selectedBrand);
-    if (selectedCategory) params.set("categoryId", selectedCategory);
     if (selectedSize) params.set("size", selectedSize);
     if (selectedBin) params.set("binId", selectedBin);
     return params;
-  }, [debouncedSearch, quickFilter, selectedBrand, selectedCategory, selectedSize, selectedBin]);
+  }, [debouncedSearch, quickFilter, selectedBrand, selectedSize, selectedBin]);
 
   const fetchProducts = useCallback((pageNum: number, append = false, silent = false) => {
     if (!silent) { if (append) setLoadingMore(true); else setLoading(true); }
@@ -167,7 +161,6 @@ export default function StockPage() {
 
   function clearFilters() {
     setSelectedBrand("");
-    setSelectedCategory("");
     setSelectedSize("");
     setSelectedBin("");
   }
@@ -187,10 +180,6 @@ export default function StockPage() {
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Stock</h1>
         <div className="flex items-center gap-2">
-          <Link href="/stock/by-brand"
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-xs font-medium hover:bg-slate-200 transition-colors">
-            <LayoutGrid className="h-3.5 w-3.5" /> Brands
-          </Link>
           <ExportButtons
             onExcel={() => exportToExcel(filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
             onPDF={() => exportToPDF("Stock Inventory", filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
@@ -275,37 +264,21 @@ export default function StockPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5">
+            {showSizeFilter && (
               <div>
-                <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Category</label>
+                <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Size (Bicycles)</label>
                 <select
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  value={selectedSize}
+                  onChange={(e) => setSelectedSize(e.target.value)}
                   className="mt-0.5 flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
                 >
-                  <option value="">All Categories</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name} ({c._count.products})</option>
+                  <option value="">All Sizes</option>
+                  {BICYCLE_SIZES.map((s) => (
+                    <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
               </div>
-
-              {showSizeFilter && (
-                <div>
-                  <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Size (Bicycles)</label>
-                  <select
-                    value={selectedSize}
-                    onChange={(e) => setSelectedSize(e.target.value)}
-                    className="mt-0.5 flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                  >
-                    <option value="">All Sizes</option>
-                    {BICYCLE_SIZES.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
+            )}
 
             {activeFilterCount > 0 && (
               <button onClick={clearFilters} className="text-xs text-red-500 font-medium">
