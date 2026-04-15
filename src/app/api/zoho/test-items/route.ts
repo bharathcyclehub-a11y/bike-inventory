@@ -12,9 +12,11 @@ export async function GET() {
     const ready = await zoho.init();
     if (!ready) return errorResponse("Zoho not connected. Check Settings > Zoho.", 400);
 
-    // Pull first page (up to 200) and return 5 sample items with raw fields
+    // Pull first page (up to 200) and return 5 sample items with stock > 0
     const data = await zoho.listItems(1);
-    const items = (data.items || []).slice(0, 5);
+    const items = (data.items || [])
+      .filter((item) => Number(item.stock_on_hand || 0) > 0)
+      .slice(0, 5);
 
     const samples = items.map((item) => ({
       name: item.name,
