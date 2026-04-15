@@ -15,30 +15,42 @@ export async function POST() {
     const ready = await zoho.init();
     if (!ready) return errorResponse("Zoho not connected", 400);
 
-    // Find products that have a zohoItemId but are still "Unbranded"
     const unbrandedBrand = await prisma.brand.findFirst({ where: { name: "Unbranded" } });
     if (!unbrandedBrand) {
       return successResponse({ message: "No 'Unbranded' brand found — nothing to enrich", updated: 0, remaining: 0 });
     }
 
+    // Get unbranded products (prefer those with zohoItemId, then fall back to SKU match)
     const products = await prisma.product.findMany({
-      where: {
-        brandId: unbrandedBrand.id,
-        zohoItemId: { not: null },
-      },
-      select: { id: true, zohoItemId: true, name: true },
+      where: { brandId: unbrandedBrand.id },
+      select: { id: true, sku: true, zohoItemId: true, name: true },
       take: BATCH_SIZE,
     });
 
     if (products.length === 0) {
-      const totalUnbranded = await prisma.product.count({ where: { brandId: unbrandedBrand.id } });
-      return successResponse({
-        message: totalUnbranded > 0
-          ? `${totalUnbranded} products still unbranded but have no Zoho ID`
-          : "All products have brands assigned!",
-        updated: 0,
-        remaining: 0,
-      });
+      return successResponse({ message: "All products have brands assigned!", updated: 0, remaining: 0 });
+    }
+
+    // For products without zohoItemId, we need to find their Zoho item_id by SKU
+    const needsLookup = products.filter((p) => !p.zohoItemId);
+    let skuToItemId: Map<string, string> | null = null;
+
+    if (needsLookup.length > 0) {
+      // Pull all Zoho items once (cached across batches via Zoho pagination)
+      const allZohoItems = await zoho.listAllItems("active");
+      skuToItemId = new Map(allZohoItems.map((z) => [z.sku, z.item_id]));
+
+      // Backfill zohoItemId for matched products
+      for (const p of needsLookup) {
+        const zohoId = skuToItemId.get(p.sku);
+        if (zohoId) {
+          await prisma.product.update({
+            where: { id: p.id },
+            data: { zohoItemId: zohoId },
+          });
+          p.zohoItemId = zohoId;
+        }
+      }
     }
 
     // Build brand cache
@@ -51,8 +63,14 @@ export async function POST() {
     const errors: string[] = [];
 
     for (const product of products) {
+      if (!product.zohoItemId) {
+        failed++;
+        errors.push(`${product.name}: No Zoho ID found (SKU: ${product.sku})`);
+        continue;
+      }
+
       try {
-        const detail = await zoho.getItem(product.zohoItemId!);
+        const detail = await zoho.getItem(product.zohoItemId);
         const item = detail.item as Record<string, unknown>;
 
         // Extract brand
@@ -62,7 +80,6 @@ export async function POST() {
         let gstRate = 0;
         const taxPrefs = item.item_tax_preferences as Array<{ tax_percentage?: number; tax_type?: string }> | undefined;
         if (taxPrefs && taxPrefs.length > 0) {
-          // Prefer intra-state GST (CGST+SGST)
           const intraTax = taxPrefs.find((t) => t.tax_type !== "inter_state");
           gstRate = Number(intraTax?.tax_percentage || taxPrefs[0]?.tax_percentage || 0);
         }
@@ -80,20 +97,31 @@ export async function POST() {
 
           await prisma.product.update({
             where: { id: product.id },
-            data: {
-              brandId,
-              ...(gstRate > 0 ? { gstRate } : {}),
-            },
+            data: { brandId, ...(gstRate > 0 ? { gstRate } : {}) },
           });
           enriched.push({ name: product.name, brand: brandName, gst: gstRate });
           updated++;
         } else if (gstRate > 0) {
-          // No brand found but has GST — still update GST
           await prisma.product.update({
             where: { id: product.id },
             data: { gstRate },
           });
           enriched.push({ name: product.name, brand: "—", gst: gstRate });
+          updated++;
+        } else {
+          // No brand and no GST — mark as checked by setting a placeholder
+          // Move to a "No Brand in Zoho" brand so we don't re-fetch
+          let noBrandId = brandMap.get("no brand in zoho");
+          if (!noBrandId) {
+            const nb = await prisma.brand.create({ data: { name: "No Brand in Zoho" } });
+            brandMap.set("no brand in zoho", nb.id);
+            noBrandId = nb.id;
+          }
+          await prisma.product.update({
+            where: { id: product.id },
+            data: { brandId: noBrandId },
+          });
+          enriched.push({ name: product.name, brand: "No Brand in Zoho", gst: 0 });
           updated++;
         }
       } catch (err) {
@@ -102,10 +130,7 @@ export async function POST() {
       }
     }
 
-    // Count remaining
-    const remaining = await prisma.product.count({
-      where: { brandId: unbrandedBrand.id, zohoItemId: { not: null } },
-    });
+    const remaining = await prisma.product.count({ where: { brandId: unbrandedBrand.id } });
 
     return successResponse({
       batchSize: BATCH_SIZE,
