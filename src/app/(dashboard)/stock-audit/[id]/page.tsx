@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Play, CheckCircle2, Save, Search, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, Play, CheckCircle2, Save, Search, Loader2, Trash2, Table } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -231,6 +231,14 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       </Card>
 
       {/* Action Buttons */}
+      {summary.status === "COMPLETED" && (
+        <Link href={`/stock-audit/${id}/review`}>
+          <button className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-2.5 rounded-lg text-sm font-medium mb-3">
+            <Table className="h-4 w-4" /> Review Table View
+          </button>
+        </Link>
+      )}
+
       {summary.status === "PENDING" && (
         <button onClick={() => handleStatusChange("IN_PROGRESS")} disabled={actionLoading}
           className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium mb-3 disabled:opacity-50">

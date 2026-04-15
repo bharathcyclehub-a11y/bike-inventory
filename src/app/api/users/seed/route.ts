@@ -7,34 +7,37 @@ import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 const SEED_USERS = [
-  { name: "Syed", email: "syed@bikeinventory.local", role: "ADMIN" as const, accessCode: "SYED123" },
+  { name: "Syed Ibrahim", email: "syed@bikeinventory.local", role: "ADMIN" as const, accessCode: "SYED123" },
   { name: "Srinu", email: "srinu@bikeinventory.local", role: "SUPERVISOR" as const, accessCode: "SRINU123" },
   { name: "Sravan", email: "sravan@bikeinventory.local", role: "MANAGER" as const, accessCode: "SRAVAN123" },
   { name: "Nithin", email: "nithin@bikeinventory.local", role: "INWARDS_CLERK" as const, accessCode: "NITHIN123" },
   { name: "Ranjitha", email: "ranjitha@bikeinventory.local", role: "OUTWARDS_CLERK" as const, accessCode: "RANJITHA123" },
+  { name: "Abhi Gowda", email: "abhi@bikeinventory.local", role: "MANAGER" as const, accessCode: "ABHI123" },
 ];
 
 export async function POST(_req: NextRequest) {
   try {
-    // Only allow if no users exist (first-time setup) or ADMIN in development
+    // Only allow if no users exist (first-time setup) or ADMIN
     const userCount = await prisma.user.count();
     if (userCount > 0) {
       await requireAuth(["ADMIN"]);
-    }
-    if (userCount > 0 && process.env.NODE_ENV === "production") {
-      return errorResponse("Seed is disabled when users already exist in production", 403);
     }
 
     const results = [];
 
     for (const seed of SEED_USERS) {
+      const hashedPassword = await bcrypt.hash(seed.accessCode, 10);
+
       const existing = await prisma.user.findUnique({ where: { email: seed.email } });
       if (existing) {
-        results.push({ name: seed.name, status: "already exists" });
+        // Update password in case access code changed
+        await prisma.user.update({
+          where: { email: seed.email },
+          data: { password: hashedPassword, name: seed.name, role: seed.role, accessCode: seed.accessCode },
+        });
+        results.push({ name: seed.name, status: "updated" });
         continue;
       }
-
-      const hashedPassword = await bcrypt.hash(seed.accessCode, 10);
 
       await prisma.user.create({
         data: {
