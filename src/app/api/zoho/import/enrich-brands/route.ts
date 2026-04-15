@@ -5,7 +5,7 @@ import { ZohoClient } from "@/lib/zoho";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
-const BATCH_SIZE = 25; // Stay within Vercel's 60s timeout
+const BATCH_SIZE = 15; // 15 items × 500ms delay = ~7.5s + processing, well within Vercel's 60s timeout
 
 export async function POST() {
   try {
@@ -62,12 +62,16 @@ export async function POST() {
     const enriched: Array<{ name: string; brand: string; gst: number }> = [];
     const errors: string[] = [];
 
-    for (const product of products) {
+    for (let i = 0; i < products.length; i++) {
+      const product = products[i];
       if (!product.zohoItemId) {
         failed++;
         errors.push(`${product.name}: No Zoho ID found (SKU: ${product.sku})`);
         continue;
       }
+
+      // Throttle: 500ms between Zoho detail API calls to avoid rate limit
+      if (i > 0) await zoho.delay(500);
 
       try {
         const detail = await zoho.getItem(product.zohoItemId);

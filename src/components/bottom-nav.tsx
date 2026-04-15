@@ -42,9 +42,9 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "SUPERVISOR":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
-        { href: "/stock-audit", label: "Audit", icon: ClipboardCheck, key: "audit" },
+        { href: "/accounts", label: "Accounts", icon: Receipt, key: "accounts" },
+        { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
+        { href: "/bills", label: "Bills", icon: ArrowDownCircle, key: "bills" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "MANAGER":

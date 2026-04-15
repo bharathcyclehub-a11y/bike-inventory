@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
-import type { BillStatus, POStatus } from "@prisma/client";
+import type { BillStatus, POStatus, InvoiceStatus } from "@prisma/client";
 
 export async function GET() {
   try {
@@ -13,6 +13,7 @@ export async function GET() {
 
     const billPendingStatuses: BillStatus[] = ["PENDING", "PARTIALLY_PAID"];
     const poPendingStatuses: POStatus[] = ["DRAFT", "PENDING_APPROVAL", "APPROVED"];
+    const invoicePendingStatuses: InvoiceStatus[] = ["PENDING", "PARTIALLY_PAID", "OVERDUE"];
 
     const [
       totalVendors,
@@ -25,6 +26,8 @@ export async function GET() {
       pendingPOs,
       recentPayments,
       overdueBillsList,
+      pendingReceivables,
+      totalReceivable,
     ] = await Promise.all([
       prisma.vendor.count(),
       prisma.vendor.count({ where: { isActive: true } }),
@@ -54,9 +57,15 @@ export async function GET() {
         orderBy: { dueDate: "asc" },
         include: { vendor: { select: { name: true } } },
       }),
+      prisma.customerInvoice.count({ where: { status: { in: invoicePendingStatuses } } }),
+      prisma.customerInvoice.aggregate({
+        where: { status: { in: invoicePendingStatuses } },
+        _sum: { amount: true, paidAmount: true },
+      }),
     ]);
 
     const outstandingPayable = (totalPayable._sum.amount || 0) - (totalPayable._sum.paidAmount || 0);
+    const outstandingReceivable = (totalReceivable._sum.amount || 0) - (totalReceivable._sum.paidAmount || 0);
 
     return successResponse({
       stats: {
@@ -68,6 +77,8 @@ export async function GET() {
         totalPaid30d: totalPaid30d._sum.amount || 0,
         totalExpenses30d: totalExpenses30d._sum.amount || 0,
         pendingPOs,
+        outstandingReceivable,
+        pendingReceivables,
       },
       recentPayments,
       overdueBillsList,

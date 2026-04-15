@@ -33,6 +33,9 @@ export default function ZohoTestPage() {
   const [enrichResult, setEnrichResult] = useState<{ processed: number; updated: number; failed: number; remaining: number; enriched: Array<{ name: string; brand: string; gst: number }> } | null>(null);
   const [enrichError, setEnrichError] = useState("");
   const [enrichTotal, setEnrichTotal] = useState(0);
+  const [autoEnriching, setAutoEnriching] = useState(false);
+  const [autoEnrichLog, setAutoEnrichLog] = useState<string[]>([]);
+  const [stopRequested, setStopRequested] = useState(false);
 
   if (role !== "ADMIN") {
     return (
@@ -167,7 +170,7 @@ export default function ZohoTestPage() {
           <p className="text-sm font-semibold text-slate-900 mb-1">Step 3: Enrich Brands from Zoho</p>
           <div className="text-xs text-slate-500 mb-3">
             <p>Fetches brand, manufacturer & GST from Zoho detail API for &quot;Unbranded&quot; items.</p>
-            <p>Processes 25 items per batch (Vercel timeout safe). Tap multiple times until done.</p>
+            <p>15 items per batch with throttling. Use &quot;Auto-Enrich All&quot; to run hands-free.</p>
           </div>
 
           {enrichError && (
@@ -181,7 +184,9 @@ export default function ZohoTestPage() {
           {enrichResult && (
             <Card className="mb-3 border-blue-200 bg-blue-50">
               <CardContent className="p-2">
-                <p className="text-xs font-semibold text-blue-800 mb-1">Batch Complete</p>
+                <p className="text-xs font-semibold text-blue-800 mb-1">
+                  {autoEnriching ? "Auto-Enriching..." : "Batch Complete"}
+                </p>
                 <div className="grid grid-cols-2 gap-1 text-xs text-blue-700">
                   <div>Processed: <span className="font-medium">{enrichResult.processed}</span></div>
                   <div>Updated: <span className="font-medium">{enrichResult.updated}</span></div>
@@ -189,7 +194,7 @@ export default function ZohoTestPage() {
                   <div>Remaining: <span className="font-medium text-orange-600">{enrichResult.remaining}</span></div>
                   {enrichTotal > 0 && <div className="col-span-2">Total enriched so far: <span className="font-medium text-green-600">{enrichTotal}</span></div>}
                 </div>
-                {enrichResult.enriched.length > 0 && (
+                {enrichResult.enriched.length > 0 && !autoEnriching && (
                   <div className="mt-2 space-y-0.5">
                     <p className="text-[10px] font-medium text-blue-800">This batch:</p>
                     {enrichResult.enriched.map((e, i) => (
@@ -203,31 +208,125 @@ export default function ZohoTestPage() {
             </Card>
           )}
 
-          <Button
-            size="sm"
-            className="w-full"
-            disabled={enriching}
-            onClick={async () => {
-              setEnriching(true);
-              setEnrichError("");
-              try {
-                const res = await fetch("/api/zoho/import/enrich-brands", { method: "POST" });
-                const data = await res.json();
-                if (data.success) {
-                  setEnrichResult(data.data);
-                  setEnrichTotal((prev) => prev + (data.data.updated || 0));
-                } else {
-                  setEnrichError(data.error || "Enrichment failed");
+          {/* Auto-enrich log */}
+          {autoEnrichLog.length > 0 && (
+            <Card className="mb-3 border-slate-200 bg-slate-50">
+              <CardContent className="p-2 max-h-32 overflow-y-auto">
+                <p className="text-[10px] font-medium text-slate-600 mb-1">Log:</p>
+                {autoEnrichLog.map((log, i) => (
+                  <p key={i} className="text-[10px] text-slate-500">{log}</p>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              className="flex-1"
+              disabled={enriching || autoEnriching}
+              onClick={async () => {
+                setEnriching(true);
+                setEnrichError("");
+                try {
+                  const res = await fetch("/api/zoho/import/enrich-brands", { method: "POST" });
+                  const data = await res.json();
+                  if (data.success) {
+                    setEnrichResult(data.data);
+                    setEnrichTotal((prev) => prev + (data.data.updated || 0));
+                  } else {
+                    setEnrichError(data.error || "Enrichment failed");
+                  }
+                } catch (err) {
+                  setEnrichError(err instanceof Error ? err.message : "Failed");
+                } finally {
+                  setEnriching(false);
                 }
-              } catch (err) {
-                setEnrichError(err instanceof Error ? err.message : "Failed");
-              } finally {
-                setEnriching(false);
-              }
-            }}
-          >
-            {enriching ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Enriching... (25 items)</> : "Enrich Next 25 Brands"}
-          </Button>
+              }}
+            >
+              {enriching ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Enriching...</> : "Next 15"}
+            </Button>
+
+            {!autoEnriching ? (
+              <Button
+                size="sm"
+                variant="default"
+                className="flex-1 bg-green-600 hover:bg-green-700"
+                disabled={enriching}
+                onClick={async () => {
+                  setAutoEnriching(true);
+                  setStopRequested(false);
+                  setAutoEnrichLog([]);
+                  setEnrichError("");
+                  let batch = 1;
+                  let totalUpdated = enrichTotal;
+                  let remaining = Infinity;
+
+                  while (remaining > 0) {
+                    // Check stop flag via a ref-like pattern
+                    // We use a hidden input to communicate stop
+                    const stopEl = document.getElementById("stop-flag") as HTMLInputElement | null;
+                    if (stopEl?.value === "true") {
+                      setAutoEnrichLog((prev) => [...prev, `Stopped by user after batch ${batch - 1}`]);
+                      break;
+                    }
+
+                    try {
+                      const res = await fetch("/api/zoho/import/enrich-brands", { method: "POST" });
+                      const data = await res.json();
+                      if (data.success) {
+                        const d = data.data;
+                        remaining = d.remaining;
+                        totalUpdated += d.updated || 0;
+                        setEnrichResult(d);
+                        setEnrichTotal(totalUpdated);
+                        setAutoEnrichLog((prev) => [
+                          ...prev,
+                          `Batch ${batch}: ${d.updated} updated, ${d.remaining} remaining`,
+                        ]);
+                        batch++;
+
+                        if (remaining === 0) {
+                          setAutoEnrichLog((prev) => [...prev, "All done! No items remaining."]);
+                          break;
+                        }
+
+                        // Wait 3s between batches to be safe with rate limits
+                        await new Promise((r) => setTimeout(r, 3000));
+                      } else {
+                        setEnrichError(data.error || "Batch failed");
+                        setAutoEnrichLog((prev) => [...prev, `Error at batch ${batch}: ${data.error}`]);
+                        // Wait longer on error, then retry
+                        await new Promise((r) => setTimeout(r, 10000));
+                      }
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : "Network error";
+                      setAutoEnrichLog((prev) => [...prev, `Error at batch ${batch}: ${msg}. Retrying in 15s...`]);
+                      await new Promise((r) => setTimeout(r, 15000));
+                    }
+                  }
+
+                  setAutoEnriching(false);
+                }}
+              >
+                Auto-Enrich All
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="destructive"
+                className="flex-1"
+                onClick={() => {
+                  const stopEl = document.getElementById("stop-flag") as HTMLInputElement | null;
+                  if (stopEl) stopEl.value = "true";
+                  setStopRequested(true);
+                }}
+              >
+                {stopRequested ? "Stopping..." : "Stop"}
+              </Button>
+            )}
+          </div>
+          <input type="hidden" id="stop-flag" value="false" />
         </CardContent>
       </Card>
 

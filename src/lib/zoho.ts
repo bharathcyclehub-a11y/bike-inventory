@@ -61,6 +61,11 @@ export class ZohoClient {
     return true;
   }
 
+  /** Delay helper for rate limiting */
+  async delay(ms: number) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
   async apiCall<T>(method: string, endpoint: string, body?: Record<string, unknown>, _retried = false): Promise<T> {
     if (!this.accessToken || !this.organizationId) {
       throw new Error("Zoho client not initialized");
@@ -97,7 +102,15 @@ export class ZohoClient {
     }
 
     if (res.status === 429) {
-      throw new Error("Zoho API rate limit exceeded. Try again later.");
+      // Retry with exponential backoff (up to 3 attempts)
+      const retryAfter = parseInt(res.headers.get("Retry-After") || "0", 10);
+      const attempts = _retried ? 3 : 1; // track via _retried flag
+      if (attempts < 3) {
+        const delay = retryAfter > 0 ? retryAfter * 1000 : Math.min(2000 * Math.pow(2, attempts), 10000);
+        await new Promise((r) => setTimeout(r, delay));
+        return this.apiCall<T>(method, endpoint, body, true);
+      }
+      throw new Error("Zoho API rate limit exceeded after retries. Wait 1-2 minutes and try again.");
     }
 
     const data = await res.json();

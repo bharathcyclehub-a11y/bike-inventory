@@ -45,23 +45,18 @@ const ROLE_LABELS: Record<Role, string> = {
   OUTWARDS_CLERK: "Sales & Dispatch Lead",
 };
 
+// Ordered by frequency of use — Srinu (SUPERVISOR) accesses bills/payments/receivables daily
 const menuItems: MenuItem[] = [
   {
-    label: "Vendors",
-    icon: Building2,
-    href: "/vendors",
+    label: "Bills & Payments",
+    icon: FileText,
+    href: "/bills",
     roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
-    label: "Reorder Dashboard",
-    icon: RefreshCw,
-    href: "/reorder",
-    roles: ["ADMIN", "MANAGER"],
-  },
-  {
-    label: "Purchase Orders",
-    icon: ShoppingCart,
-    href: "/purchase-orders",
+    label: "Record Payment",
+    icon: CreditCard,
+    href: "/payments/new",
     roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
@@ -77,16 +72,16 @@ const menuItems: MenuItem[] = [
     roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
-    label: "Bills & Payments",
-    icon: FileText,
-    href: "/bills",
+    label: "Vendors",
+    icon: Building2,
+    href: "/vendors",
     roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
-    label: "Record Payment",
-    icon: CreditCard,
-    href: "/payments/new",
-    roles: ["ADMIN", "MANAGER"],
+    label: "Purchase Orders",
+    icon: ShoppingCart,
+    href: "/purchase-orders",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
     label: "Expenses",
@@ -101,16 +96,28 @@ const menuItems: MenuItem[] = [
     roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {
+    label: "Team Management",
+    icon: Users,
+    href: "/team",
+    roles: ["ADMIN", "SUPERVISOR"],
+  },
+  {
+    label: "Reports",
+    icon: BarChart3,
+    href: "/reports",
+    roles: ["ADMIN", "SUPERVISOR"],
+  },
+  {
+    label: "Reorder Dashboard",
+    icon: RefreshCw,
+    href: "/reorder",
+    roles: ["ADMIN", "MANAGER"],
+  },
+  {
     label: "Stock Audit",
     icon: ClipboardCheck,
     href: "/stock-audit",
     roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
-  },
-  {
-    label: "Bins & Locations",
-    icon: Warehouse,
-    href: "/more/bins",
-    roles: ["ADMIN"],
   },
   {
     label: "Barcode Scanner",
@@ -119,22 +126,16 @@ const menuItems: MenuItem[] = [
     roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
   },
   {
-    label: "Team Management",
-    icon: Users,
-    href: "/team",
-    roles: ["ADMIN", "SUPERVISOR"],
+    label: "Bins & Locations",
+    icon: Warehouse,
+    href: "/more/bins",
+    roles: ["ADMIN"],
   },
   {
     label: "AI Insights",
     icon: Brain,
     href: "/ai",
     roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
-  },
-  {
-    label: "Reports",
-    icon: BarChart3,
-    href: "/reports",
-    roles: ["ADMIN", "SUPERVISOR"],
   },
   {
     label: "Team Chat",

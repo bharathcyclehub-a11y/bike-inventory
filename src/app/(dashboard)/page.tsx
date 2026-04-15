@@ -171,6 +171,163 @@ function AdminDashboard() {
   );
 }
 
+interface SupervisorData {
+  outstandingPayable: number;
+  outstandingReceivable: number;
+  overdueBills: number;
+  openIssues: number;
+  todayInwards: number;
+  todayOutwards: number;
+  overdueBillsList: Array<{ id: string; billNo: string; amount: number; paidAmount: number; dueDate: string; vendor: { name: string } }>;
+}
+
+function SupervisorDashboard() {
+  const [data, setData] = useState<SupervisorData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const today = new Date().toISOString().split("T")[0];
+    const safeFetch = (url: string) => fetch(url).then((r) => r.ok ? r.json() : { success: false }).catch(() => ({ success: false }));
+
+    Promise.all([
+      safeFetch("/api/accounts/summary"),
+      safeFetch(`/api/inventory/inwards?dateFrom=${today}&limit=50`),
+      safeFetch(`/api/inventory/outwards?dateFrom=${today}&limit=50`),
+      safeFetch("/api/customer-invoices?status=PENDING&limit=500"),
+      safeFetch("/api/vendor-issues?status=OPEN&limit=1"),
+    ])
+      .then(([accountsRes, inwardsRes, outwardsRes, receivablesRes, issuesRes]) => {
+        const acct = accountsRes.success ? accountsRes.data : null;
+        const inwards = inwardsRes.success ? inwardsRes.data : [];
+        const outwards = outwardsRes.success ? outwardsRes.data : [];
+        const inwardQty = inwards.reduce((s: number, t: { quantity: number }) => s + t.quantity, 0);
+        const outwardQty = outwards.reduce((s: number, t: { quantity: number }) => s + t.quantity, 0);
+
+        // Calculate total receivable from pending invoices
+        const invoices = receivablesRes.success ? receivablesRes.data : [];
+        const totalReceivable = invoices.reduce((s: number, inv: { amount: number; paidAmount: number }) => s + (inv.amount - inv.paidAmount), 0);
+
+        setData({
+          outstandingPayable: acct?.stats?.outstandingPayable || 0,
+          outstandingReceivable: totalReceivable,
+          overdueBills: acct?.stats?.overdueBills || 0,
+          openIssues: issuesRes.success ? (issuesRes.pagination?.total || 0) : 0,
+          todayInwards: inwardQty,
+          todayOutwards: outwardQty,
+          overdueBillsList: acct?.overdueBillsList || [],
+        });
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="space-y-4 animate-pulse">
+        <div className="grid grid-cols-2 gap-3">
+          {[1, 2, 3, 4].map((i) => (
+            <div key={i} className="p-3 border border-slate-100 rounded-lg space-y-2">
+              <div className="h-3 bg-slate-200 rounded w-16" />
+              <div className="h-6 bg-slate-200 rounded w-20" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="text-center py-12">
+        <AlertTriangle className="h-8 w-8 text-red-400 mx-auto mb-2" />
+        <p className="text-sm text-slate-500">Failed to load dashboard.</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {/* Top Cards — Srinu's priorities */}
+      <div className="grid grid-cols-2 gap-3">
+        <Link href="/accounts">
+          <Card className="bg-red-50 border-red-200">
+            <CardContent className="p-3">
+              <p className="text-[10px] text-red-600 font-medium">Outstanding Payable</p>
+              <p className="text-lg font-bold text-red-700">{formatINR(data.outstandingPayable)}</p>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/receivables">
+          <Card className="bg-blue-50 border-blue-200">
+            <CardContent className="p-3">
+              <p className="text-[10px] text-blue-600 font-medium">Outstanding Receivable</p>
+              <p className="text-lg font-bold text-blue-700">{formatINR(data.outstandingReceivable)}</p>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/bills">
+          <Card className={data.overdueBills > 0 ? "bg-red-50 border-red-300" : ""}>
+            <CardContent className="p-3">
+              <p className="text-[10px] text-slate-500 font-medium">Overdue Bills</p>
+              <p className={`text-lg font-bold ${data.overdueBills > 0 ? "text-red-600" : "text-green-600"}`}>
+                {data.overdueBills > 0 ? data.overdueBills : "None"}
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/vendor-issues">
+          <Card className={data.openIssues > 0 ? "bg-orange-50 border-orange-200" : ""}>
+            <CardContent className="p-3">
+              <p className="text-[10px] text-slate-500 font-medium">Open Issues</p>
+              <p className={`text-lg font-bold ${data.openIssues > 0 ? "text-orange-600" : "text-green-600"}`}>
+                {data.openIssues > 0 ? data.openIssues : "None"}
+              </p>
+            </CardContent>
+          </Card>
+        </Link>
+      </div>
+
+      {/* Daily Pulse */}
+      <div className="flex gap-3 mt-3">
+        <Card className="flex-1">
+          <CardContent className="p-3 text-center">
+            <ArrowDownCircle className="h-4 w-4 text-blue-500 mx-auto mb-1" />
+            <p className="text-lg font-bold text-slate-900">{data.todayInwards}</p>
+            <p className="text-[10px] text-slate-500">Inwards Today</p>
+          </CardContent>
+        </Card>
+        <Card className="flex-1">
+          <CardContent className="p-3 text-center">
+            <ArrowUpCircle className="h-4 w-4 text-orange-500 mx-auto mb-1" />
+            <p className="text-lg font-bold text-slate-900">{data.todayOutwards}</p>
+            <p className="text-[10px] text-slate-500">Outwards Today</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Overdue Bills */}
+      {data.overdueBillsList.length > 0 && (
+        <Card className="mt-4">
+          <CardHeader><CardTitle className="text-red-600">Overdue Bills</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {data.overdueBillsList.slice(0, 5).map((bill) => (
+              <Link key={bill.id} href={`/bills/${bill.id}`}>
+                <div className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">{bill.vendor.name}</p>
+                    <p className="text-xs text-slate-500">{bill.billNo} | Due: {new Date(bill.dueDate).toLocaleDateString("en-IN")}</p>
+                  </div>
+                  <p className="text-sm font-bold text-red-600">{formatINR(bill.amount - bill.paidAmount)}</p>
+                </div>
+              </Link>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+    </>
+  );
+}
+
 function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
   const [transactions, setTransactions] = useState<Array<{ id: string; type: string; quantity: number; createdAt: string; referenceNo?: string; product: { name: string; sku: string } }>>([]);
   const [loading, setLoading] = useState(true);
@@ -245,7 +402,8 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {(role === "ADMIN" || role === "SUPERVISOR") && <AdminDashboard />}
+      {role === "ADMIN" && <AdminDashboard />}
+      {role === "SUPERVISOR" && <SupervisorDashboard />}
       {role === "MANAGER" && <ManagerDashboard />}
       {role === "INWARDS_CLERK" && <ClerkDashboard type="inward" />}
       {role === "OUTWARDS_CLERK" && <ClerkDashboard type="outward" />}
