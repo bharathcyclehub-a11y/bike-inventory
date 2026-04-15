@@ -39,6 +39,7 @@ interface ProductItem {
 
 interface BrandItem { id: string; name: string; _count: { products: number }; }
 interface CategoryItem { id: string; name: string; _count: { products: number }; }
+interface BinItem { id: string; code: string; name: string; location: string; _count: { products: number }; }
 
 type QuickFilter = "ALL" | "BICYCLES" | "SPARES" | "ACCESSORIES" | "LOW_STOCK" | "INACTIVE";
 
@@ -79,8 +80,10 @@ export default function StockPage() {
   const [selectedBrand, setSelectedBrand] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSize, setSelectedSize] = useState("");
+  const [selectedBin, setSelectedBin] = useState("");
   const [brands, setBrands] = useState<BrandItem[]>([]);
   const [categories, setCategories] = useState<CategoryItem[]>([]);
+  const [bins, setBins] = useState<BinItem[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
@@ -88,18 +91,20 @@ export default function StockPage() {
   const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Fetch brands + categories once
+  // Fetch brands + categories + bins once
   useEffect(() => {
     Promise.all([
       fetch("/api/brands").then((r) => r.json()),
       fetch("/api/categories").then((r) => r.json()),
-    ]).then(([brandsRes, catsRes]) => {
+      fetch("/api/bins").then((r) => r.json()),
+    ]).then(([brandsRes, catsRes, binsRes]) => {
       if (brandsRes.success) setBrands(brandsRes.data);
       if (catsRes.success) setCategories(catsRes.data);
+      if (binsRes.success) setBins(binsRes.data);
     }).catch(() => {});
   }, []);
 
-  const activeFilterCount = [selectedBrand, selectedCategory, selectedSize].filter(Boolean).length;
+  const activeFilterCount = [selectedBrand, selectedCategory, selectedSize, selectedBin].filter(Boolean).length;
 
   const buildParams = useCallback((pageNum: number) => {
     const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(pageNum) });
@@ -112,8 +117,9 @@ export default function StockPage() {
     if (selectedBrand) params.set("brandId", selectedBrand);
     if (selectedCategory) params.set("categoryId", selectedCategory);
     if (selectedSize) params.set("size", selectedSize);
+    if (selectedBin) params.set("binId", selectedBin);
     return params;
-  }, [debouncedSearch, quickFilter, selectedBrand, selectedCategory, selectedSize]);
+  }, [debouncedSearch, quickFilter, selectedBrand, selectedCategory, selectedSize, selectedBin]);
 
   const fetchProducts = useCallback((pageNum: number, append = false, silent = false) => {
     if (!silent) { if (append) setLoadingMore(true); else setLoading(true); }
@@ -163,6 +169,7 @@ export default function StockPage() {
     setSelectedBrand("");
     setSelectedCategory("");
     setSelectedSize("");
+    setSelectedBin("");
   }
 
   const filtered = quickFilter === "LOW_STOCK"
@@ -238,18 +245,34 @@ export default function StockPage() {
       {showFilters && (
         <Card className="mb-3 border-slate-200">
           <CardContent className="p-3 space-y-2.5">
-            <div>
-              <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Brand</label>
-              <select
-                value={selectedBrand}
-                onChange={(e) => setSelectedBrand(e.target.value)}
-                className="mt-0.5 flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-              >
-                <option value="">All Brands ({brands.length})</option>
-                {brands.map((b) => (
-                  <option key={b.id} value={b.id}>{b.name} ({b._count.products})</option>
-                ))}
-              </select>
+            <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Brand</label>
+                <select
+                  value={selectedBrand}
+                  onChange={(e) => setSelectedBrand(e.target.value)}
+                  className="mt-0.5 flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                >
+                  <option value="">All Brands ({brands.length})</option>
+                  {brands.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name} ({b._count.products})</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Bin / Location</label>
+                <select
+                  value={selectedBin}
+                  onChange={(e) => setSelectedBin(e.target.value)}
+                  className="mt-0.5 flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                >
+                  <option value="">All Bins ({bins.length})</option>
+                  {bins.map((b) => (
+                    <option key={b.id} value={b.id}>{b.name} ({b._count.products})</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">

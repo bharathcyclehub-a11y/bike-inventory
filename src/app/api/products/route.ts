@@ -24,6 +24,7 @@ export async function GET(req: NextRequest) {
     const type = searchParams.get("type") || undefined;
     const status = searchParams.get("status") || "ACTIVE";
     const size = searchParams.get("size") || undefined;
+    const binId = searchParams.get("binId") || undefined;
 
     const where = {
       ...(search && {
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest) {
       }),
       ...(categoryId && { categoryId }),
       ...(brandId && { brandId }),
+      ...(binId && { binId }),
       ...(type && { type: type as never }),
       ...(status && { status: status as never }),
       ...(size && { size }),
