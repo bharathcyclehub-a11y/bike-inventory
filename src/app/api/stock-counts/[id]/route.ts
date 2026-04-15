@@ -18,7 +18,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         items: {
           include: {
             product: {
-              select: { name: true, sku: true, currentStock: true, category: { select: { name: true } }, bin: { select: { code: true } } },
+              select: { name: true, sku: true, currentStock: true, type: true, category: { select: { name: true } }, brand: { select: { name: true } }, bin: { select: { code: true, location: true } } },
             },
           },
           orderBy: { product: { name: "asc" } },
@@ -47,7 +47,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { id } = await params;
     const body = await req.json();
     const data = stockCountUpdateSchema.parse(body);
@@ -78,6 +78,47 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.notes !== undefined) updateData.notes = data.notes;
       if (data.status === "COMPLETED") updateData.completedAt = new Date();
 
+      // When completing: apply counted quantities to product stock
+      if (data.status === "COMPLETED") {
+        const countedItems = await tx.stockCountItem.findMany({
+          where: { stockCountId: id, countedQty: { not: null } },
+        });
+
+        for (const item of countedItems) {
+          if (item.countedQty === null) continue;
+
+          // Update product stock to the counted quantity
+          const product = await tx.product.findUnique({
+            where: { id: item.productId },
+            select: { currentStock: true },
+          });
+
+          if (product) {
+            await tx.product.update({
+              where: { id: item.productId },
+              data: { currentStock: item.countedQty },
+            });
+
+            // Create an ADJUSTMENT transaction for audit trail
+            const variance = item.countedQty - product.currentStock;
+            if (variance !== 0) {
+              await tx.inventoryTransaction.create({
+                data: {
+                  type: "ADJUSTMENT",
+                  productId: item.productId,
+                  quantity: Math.abs(variance),
+                  previousStock: product.currentStock,
+                  newStock: item.countedQty,
+                  referenceNo: existing.title,
+                  notes: `[STOCK_COUNT] ${variance > 0 ? "Surplus" : "Shortage"} of ${Math.abs(variance)} found during stock count "${existing.title}"`,
+                  userId: user.id,
+                },
+              });
+            }
+          }
+        }
+      }
+
       const updated = await tx.stockCount.update({
         where: { id },
         data: updateData,
@@ -99,7 +140,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { id } = await params;
 
     const stockCount = await prisma.stockCount.findUnique({ where: { id } });

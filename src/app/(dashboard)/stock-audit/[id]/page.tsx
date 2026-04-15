@@ -346,9 +346,9 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
             </p>
           )}
 
-          {items.length === 50 && (
+          {items.length >= 500 && (
             <p className="text-xs text-slate-400 text-center py-2">
-              Showing first 50 results. Use search to find specific items.
+              Showing first 500 results. Use search to find specific items.
             </p>
           )}
         </div>

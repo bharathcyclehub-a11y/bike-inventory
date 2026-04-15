@@ -84,7 +84,7 @@ export const binSchema = z.object({
 
 export const stockCountSchema = z.object({
   title: z.string().min(1, "Title is required"),
-  assignedToId: z.string().min(1, "Assigned user is required"),
+  assignedToId: z.string().optional(),
   dueDate: z.string().min(1, "Due date is required"),
   notes: z.string().optional(),
   productIds: z.array(z.string()).optional(),

@@ -63,25 +63,35 @@ export async function POST(req: NextRequest) {
     let productIds = data.productIds;
     if (!productIds || productIds.length === 0) {
       const binId = body.binId as string | undefined;
-      let allProducts: { id: string }[] = [];
 
-      // Try bin-specific products first
       if (binId) {
-        allProducts = await prisma.product.findMany({
+        // Bin-specific count — only products in this bin
+        const binProducts = await prisma.product.findMany({
           where: { status: "ACTIVE", binId },
           select: { id: true },
         });
-      }
 
-      // If no products in bin (or no bin selected), include all active products
-      if (allProducts.length === 0) {
-        allProducts = await prisma.product.findMany({
+        if (binProducts.length === 0) {
+          return errorResponse(
+            "No products found in this bin. Assign products to this bin first, or choose 'All Products' scope.",
+            400
+          );
+        }
+
+        productIds = binProducts.map((p) => p.id);
+      } else {
+        // All products count
+        const allProducts = await prisma.product.findMany({
           where: { status: "ACTIVE" },
           select: { id: true },
         });
-      }
 
-      productIds = allProducts.map((p) => p.id);
+        if (allProducts.length === 0) {
+          return errorResponse("No active products found.", 400);
+        }
+
+        productIds = allProducts.map((p) => p.id);
+      }
     }
 
     const products = await prisma.product.findMany({
