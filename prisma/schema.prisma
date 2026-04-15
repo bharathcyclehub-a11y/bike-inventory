@@ -256,6 +256,7 @@ model Bin {
 
   products      Product[]
   serialItems   SerialItem[]
+  stockCounts   StockCount[]
 }
 
 model InventoryTransaction {
@@ -295,6 +296,8 @@ model StockCount {
   title         String           // "Weekly Audit - Week 15"
   assignedToId  String
   assignedTo    User             @relation(fields: [assignedToId], references: [id])
+  binId         String?
+  bin           Bin?             @relation(fields: [binId], references: [id])
   status        String           @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED
   dueDate       DateTime
   completedAt   DateTime?

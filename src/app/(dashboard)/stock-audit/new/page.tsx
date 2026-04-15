@@ -124,7 +124,7 @@ export default function NewStockAuditPage() {
               <option value="">Choose a bin...</option>
               {bins.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.code} — {b.name} ({b.location}, {b._count.products} items)
+                  {b.code} — {b.name} ({b.location})
                 </option>
               ))}
             </select>
