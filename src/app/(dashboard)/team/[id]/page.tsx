@@ -23,16 +23,16 @@ const ROLES = [
   { value: "ADMIN", label: "Owner / Director" },
   { value: "SUPERVISOR", label: "Store Supervisor" },
   { value: "MANAGER", label: "Operations Manager" },
-  { value: "INWARDS_CLERK", label: "Purchase & Receiving Executive" },
-  { value: "OUTWARDS_CLERK", label: "Sales & Dispatch Executive" },
+  { value: "INWARDS_CLERK", label: "Inventory & Receiving Lead" },
+  { value: "OUTWARDS_CLERK", label: "Sales & Dispatch Lead" },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
-  ADMIN: ["Full access to all features", "Manage team & roles", "Zoho sync", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Settings"],
-  SUPERVISOR: ["View all data", "Manage stock", "Team view", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights"],
-  MANAGER: ["Day-to-day operations", "Vendors & POs", "Bills & Payments", "Record Payments", "Expenses", "AI Insights", "Inwards & Outwards"],
-  INWARDS_CLERK: ["Record inwards only", "Stock Count", "Barcode Scanner"],
-  OUTWARDS_CLERK: ["Record outwards only", "Stock Count", "Barcode Scanner"],
+  ADMIN: ["Full access to all features", "Manage team & roles", "Zoho sync", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Bin management", "Settings"],
+  SUPERVISOR: ["View all data", "Manage stock", "Team view", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Approve transfers"],
+  MANAGER: ["Reorder dashboard & PO creation", "Vendors & POs", "Bills & Payments", "Record Payments", "Expenses", "AI Insights", "Stock view", "WhatsApp PO share"],
+  INWARDS_CLERK: ["Verify Zoho inwards (putaway)", "Stock Count", "Stock view (no cost price)", "Barcode Scanner"],
+  OUTWARDS_CLERK: ["Verify Zoho outwards (dispatch)", "Stock Count", "Stock view (no cost price)", "Barcode Scanner"],
 };
 
 export default function EditTeamMemberPage({ params }: { params: Promise<{ id: string }> }) {

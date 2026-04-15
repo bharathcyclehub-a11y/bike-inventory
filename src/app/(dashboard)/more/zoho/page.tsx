@@ -166,8 +166,9 @@ export default function ZohoSettingsPage() {
 
   const IMPORT_TYPES = [
     { key: "contacts", label: "Vendors", icon: Users, desc: "Pull vendors from Zoho" },
-    { key: "items", label: "Products", icon: Package, desc: "Pull items from Zoho" },
-    { key: "bills", label: "Bills", icon: Receipt, desc: "Pull bills from Zoho" },
+    { key: "items", label: "Products & Brands", icon: Package, desc: "Pull items + brand details from Zoho (updates existing)" },
+    { key: "bills", label: "Purchase Bills", icon: Receipt, desc: "Pull bills from Zoho (creates inward for verification)" },
+    { key: "invoices", label: "Sales Invoices (Apr 2026+)", icon: Receipt, desc: "Pull sales data from April 2026 FY onwards" },
   ];
 
   return (

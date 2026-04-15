@@ -3,8 +3,9 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { Plus, Receipt } from "lucide-react";
+import { Plus, Receipt, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
@@ -45,6 +46,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("ALL");
   const [totalAmount, setTotalAmount] = useState(0);
+  const [searchText, setSearchText] = useState("");
 
   useEffect(() => {
     setLoading(true);
@@ -91,6 +93,17 @@ export default function ExpensesPage() {
         </Link>
       </div>
 
+      {/* Search */}
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        <Input
+          placeholder="Search description, paid by..."
+          value={searchText}
+          onChange={(e) => setSearchText(e.target.value)}
+          className="pl-9"
+        />
+      </div>
+
       {/* Total */}
       {expenses.length > 0 && (
         <Card className="bg-slate-50 mb-3">
@@ -121,7 +134,11 @@ export default function ExpensesPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {expenses.map((exp) => (
+          {expenses.filter((exp) => {
+            if (!searchText) return true;
+            const q = searchText.toLowerCase();
+            return exp.description.toLowerCase().includes(q) || exp.paidBy.toLowerCase().includes(q);
+          }).map((exp) => (
             <Card key={exp.id} className="mb-2">
               <CardContent className="p-3">
                 <div className="flex items-start justify-between">

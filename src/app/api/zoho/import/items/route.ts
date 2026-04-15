@@ -40,34 +40,84 @@ export async function POST() {
       });
     }
 
+    // Build brand lookup cache — match Zoho brand field to local brands
+    const allBrands = await prisma.brand.findMany();
+    const brandMap = new Map(allBrands.map((b) => [b.name.toLowerCase(), b.id]));
+
     for (const item of items) {
       try {
-        // Check if product already exists by SKU
+        const zohoItem = item as Record<string, unknown>;
+        const sku = (item.sku || `ZOHO-${String(Date.now()).slice(-6)}`).substring(0, 50);
+
+        // Check if product already exists by SKU — update brand/pricing if so
         if (item.sku) {
           const existing = await prisma.product.findFirst({
             where: { sku: item.sku },
           });
           if (existing) {
-            skipped++;
+            // Update with latest Zoho data (brand, pricing, GST)
+            const brandName = String(zohoItem.brand || zohoItem.manufacturer || "").trim();
+            let brandId = existing.brandId;
+            if (brandName) {
+              const existingBrandId = brandMap.get(brandName.toLowerCase());
+              if (existingBrandId) {
+                brandId = existingBrandId;
+              } else {
+                // Create new brand from Zoho data
+                const newBrand = await prisma.brand.create({ data: { name: brandName } });
+                brandMap.set(brandName.toLowerCase(), newBrand.id);
+                brandId = newBrand.id;
+              }
+            }
+            await prisma.product.update({
+              where: { id: existing.id },
+              data: {
+                brandId,
+                costPrice: Number(zohoItem.purchase_rate || existing.costPrice),
+                sellingPrice: Number(zohoItem.rate || existing.sellingPrice),
+                mrp: Number(zohoItem.rate || existing.mrp),
+                gstRate: Number(zohoItem.tax_percentage || existing.gstRate),
+                hsnCode: String(zohoItem.hsn_or_sac || existing.hsnCode || ""),
+              },
+            });
+            skipped++; // counted as "updated existing"
             continue;
           }
         }
 
-        const zohoItem = item as Record<string, unknown>;
-        const sku = (item.sku || `ZOHO-${String(Date.now()).slice(-6)}`).substring(0, 50);
+        // Resolve brand from Zoho item
+        const brandName = String(zohoItem.brand || zohoItem.manufacturer || "").trim();
+        let brandId = defaultBrand.id;
+        if (brandName) {
+          const existingBrandId = brandMap.get(brandName.toLowerCase());
+          if (existingBrandId) {
+            brandId = existingBrandId;
+          } else {
+            const newBrand = await prisma.brand.create({ data: { name: brandName } });
+            brandMap.set(brandName.toLowerCase(), newBrand.id);
+            brandId = newBrand.id;
+          }
+        }
+
+        // Determine product type from Zoho item_type or product_type
+        const zohoType = String(zohoItem.product_type || zohoItem.item_type || "").toLowerCase();
+        let productType: "BICYCLE" | "SPARE_PART" | "ACCESSORY" = "SPARE_PART";
+        if (zohoType.includes("bicycle") || zohoType.includes("cycle")) productType = "BICYCLE";
+        else if (zohoType.includes("accessory")) productType = "ACCESSORY";
 
         await prisma.product.create({
           data: {
             sku,
             name: item.name,
             categoryId: defaultCategory.id,
-            brandId: defaultBrand.id,
-            type: "SPARE_PART",
+            brandId,
+            type: productType,
             costPrice: Number(zohoItem.purchase_rate || 0),
             sellingPrice: Number(zohoItem.rate || 0),
             mrp: Number(zohoItem.rate || 0),
             gstRate: Number(zohoItem.tax_percentage || 18),
             hsnCode: String(zohoItem.hsn_or_sac || ""),
+            currentStock: Number(zohoItem.stock_on_hand || 0),
           },
         });
         imported++;

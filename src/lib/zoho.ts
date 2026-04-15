@@ -129,13 +129,25 @@ export class ZohoClient {
 
   async listItems(page = 1) {
     return this.apiCall<{
-      items: Array<{ item_id: string; sku: string; name: string }>;
+      items: Array<{
+        item_id: string; sku: string; name: string;
+        brand?: string; manufacturer?: string;
+        purchase_rate?: number; rate?: number;
+        tax_percentage?: number; hsn_or_sac?: string;
+        stock_on_hand?: number; product_type?: string; item_type?: string;
+      }>;
       page_context?: { has_more_page: boolean };
     }>("GET", `/items?page=${page}&per_page=200`);
   }
 
-  async listAllItems(): Promise<Array<{ item_id: string; sku: string; name: string }>> {
-    const all: Array<{ item_id: string; sku: string; name: string }> = [];
+  async listAllItems() {
+    const all: Array<{
+      item_id: string; sku: string; name: string;
+      brand?: string; manufacturer?: string;
+      purchase_rate?: number; rate?: number;
+      tax_percentage?: number; hsn_or_sac?: string;
+      stock_on_hand?: number; product_type?: string; item_type?: string;
+    }> = [];
     let page = 1;
     while (true) {
       const data = await this.listItems(page);
@@ -291,7 +303,8 @@ export class ZohoClient {
     }>("GET", `/bills/${billId}`);
   }
 
-  async listInvoices(page = 1) {
+  async listInvoices(page = 1, dateFrom?: string) {
+    const dateParam = dateFrom ? `&date_start=${dateFrom}` : "";
     return this.apiCall<{
       invoices: Array<{
         invoice_id: string;
@@ -302,7 +315,20 @@ export class ZohoClient {
         balance: number;
         status: string;
       }>;
-    }>("GET", `/invoices?page=${page}&per_page=200`);
+      page_context?: { has_more_page: boolean };
+    }>("GET", `/invoices?page=${page}&per_page=200${dateParam}`);
+  }
+
+  async listAllInvoices(dateFrom?: string) {
+    const all: Array<{ invoice_id: string; invoice_number: string; customer_name: string; date: string; total: number; balance: number; status: string }> = [];
+    let page = 1;
+    while (true) {
+      const data = await this.listInvoices(page, dateFrom);
+      all.push(...(data.invoices || []));
+      if (!data.page_context?.has_more_page) break;
+      page++;
+    }
+    return all;
   }
 
   async getInvoice(invoiceId: string) {

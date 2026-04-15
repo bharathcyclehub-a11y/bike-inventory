@@ -50,9 +50,9 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "MANAGER":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/expenses", label: "Expenses", icon: Receipt, key: "expenses" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
+        { href: "/reorder", label: "Reorder", icon: ArrowDownCircle, key: "reorder" },
+        { href: "/expenses", label: "Expenses", icon: Receipt, key: "expenses" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "INWARDS_CLERK":
