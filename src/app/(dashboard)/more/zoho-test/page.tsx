@@ -3,18 +3,31 @@
 import { useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Loader2, AlertTriangle, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { exportToExcel, type ExportColumn } from "@/lib/export";
+
+const IMPORT_COLS: ExportColumn[] = [
+  { header: "SKU", key: "sku" },
+  { header: "Product Name", key: "name" },
+  { header: "Brand", key: "brand" },
+  { header: "Cost Price", key: "costPrice" },
+  { header: "Selling Price", key: "sellingPrice" },
+  { header: "Stock", key: "stock" },
+  { header: "GST %", key: "gst" },
+  { header: "HSN", key: "hsn" },
+  { header: "Type", key: "type" },
+];
 
 export default function ZohoTestPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ totalItemsInPage: number; hasMore: boolean; samples: Array<Record<string, unknown>> } | null>(null);
+  const [result, setResult] = useState<{ totalActiveInPage: number; activeWithStock: number; hasMore: boolean; samples: Array<Record<string, unknown>> } | null>(null);
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null);
+  const [importResult, setImportResult] = useState<{ zohoTotal: number; activeWithStock: number; imported: number; failed: number; importedItems: Array<Record<string, unknown>> } | null>(null);
   const [importError, setImportError] = useState("");
 
   if (role !== "ADMIN") {
@@ -98,11 +111,17 @@ export default function ZohoTestPage() {
               <CardContent className="p-2">
                 <p className="text-xs font-semibold text-green-800 mb-1">Import Complete</p>
                 <div className="grid grid-cols-2 gap-1 text-xs text-green-700">
-                  <div>Zoho Total: <span className="font-medium">{String(importResult.zohoTotal)}</span></div>
-                  <div>Active (stock&gt;0): <span className="font-medium">{String(importResult.activeWithStock)}</span></div>
-                  <div>Imported: <span className="font-medium">{String(importResult.imported)}</span></div>
-                  <div>Failed: <span className="font-medium">{String(importResult.failed)}</span></div>
+                  <div>Zoho Total: <span className="font-medium">{importResult.zohoTotal}</span></div>
+                  <div>Active (stock&gt;0): <span className="font-medium">{importResult.activeWithStock}</span></div>
+                  <div>Imported: <span className="font-medium">{importResult.imported}</span></div>
+                  <div>Failed: <span className="font-medium">{importResult.failed}</span></div>
                 </div>
+                {importResult.importedItems?.length > 0 && (
+                  <Button variant="outline" size="sm" className="w-full mt-2"
+                    onClick={() => exportToExcel(importResult.importedItems, IMPORT_COLS, `zoho-import-${new Date().toISOString().slice(0, 10)}`)}>
+                    <Download className="h-3.5 w-3.5 mr-1" /> Download Import Log (Excel)
+                  </Button>
+                )}
               </CardContent>
             </Card>
           )}
@@ -142,7 +161,7 @@ export default function ZohoTestPage() {
       {result && (
         <div className="space-y-3">
           <p className="text-xs font-medium text-slate-700">
-            Sample Results ({result.samples.length} items with stock &gt; 0)
+            Active in page: {result.totalActiveInPage} | With stock: {result.activeWithStock} | Showing {result.samples.length} samples
           </p>
 
           {(result.samples || []).map((item, i) => (

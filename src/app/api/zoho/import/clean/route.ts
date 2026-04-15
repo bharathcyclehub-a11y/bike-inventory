@@ -5,6 +5,18 @@ import { ZohoClient } from "@/lib/zoho";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
+interface ImportedItem {
+  sku: string;
+  name: string;
+  brand: string;
+  costPrice: number;
+  sellingPrice: number;
+  stock: number;
+  gst: number;
+  hsn: string;
+  type: string;
+}
+
 export async function POST() {
   try {
     const user = await requireAuth(["ADMIN"]);
@@ -17,25 +29,23 @@ export async function POST() {
       data: { syncType: "clean-import", status: "running", triggeredBy: user.id },
     });
 
-    // Step 1: Pull ALL items from Zoho
-    const allItems = await zoho.listAllItems();
+    // Step 1: Pull only ACTIVE items from Zoho
+    const allItems = await zoho.listAllItems("active");
 
-    // Step 2: Filter — only active items with stock > 0
+    // Step 2: Filter — stock > 0
     const activeItems = allItems.filter((item) => {
-      const stock = Number(item.stock_on_hand || 0);
-      return stock > 0;
+      return Number(item.stock_on_hand || 0) > 0;
     });
 
-    // Step 3: Delete all existing products (cascade: serial items, transactions, stock count items, PO items)
+    // Step 3: Delete all existing products and related data
     await prisma.$transaction(async (tx) => {
       await tx.serialTransactionItem.deleteMany({});
       await tx.serialItem.deleteMany({});
       await tx.stockCountItem.deleteMany({});
+      await tx.stockCount.deleteMany({});
       await tx.inventoryTransaction.deleteMany({});
       await tx.purchaseOrderItem.deleteMany({});
       await tx.product.deleteMany({});
-      // Clean up brands (except "General") and categories (except "General")
-      // Keep all brands/categories — they'll be re-created as needed
     });
 
     // Step 4: Ensure default category exists
@@ -50,17 +60,17 @@ export async function POST() {
     const allBrands = await prisma.brand.findMany();
     const brandMap = new Map(allBrands.map((b) => [b.name.toLowerCase(), b.id]));
 
-    // Ensure a fallback brand exists
     let defaultBrand = await prisma.brand.findFirst({ where: { name: "Unbranded" } });
     if (!defaultBrand) {
       defaultBrand = await prisma.brand.create({ data: { name: "Unbranded" } });
       brandMap.set("unbranded", defaultBrand.id);
     }
 
-    // Step 6: Import active items
+    // Step 6: Import active items and record each one
     let imported = 0;
     let failed = 0;
     const errors: string[] = [];
+    const importedItems: ImportedItem[] = [];
 
     for (const item of activeItems) {
       try {
@@ -70,7 +80,9 @@ export async function POST() {
         // Resolve brand
         const brandName = String(zohoItem.brand || zohoItem.manufacturer || "").trim();
         let brandId = defaultBrand.id;
+        let resolvedBrand = "Unbranded";
         if (brandName) {
+          resolvedBrand = brandName;
           const existingBrandId = brandMap.get(brandName.toLowerCase());
           if (existingBrandId) {
             brandId = existingBrandId;
@@ -88,6 +100,10 @@ export async function POST() {
         else if (zohoType.includes("accessory")) productType = "ACCESSORY";
 
         const stock = Number(zohoItem.stock_on_hand || 0);
+        const costPrice = Number(zohoItem.purchase_rate || 0);
+        const sellingPrice = Number(zohoItem.rate || 0);
+        const gstRate = Number(zohoItem.tax_percentage || 18);
+        const hsnCode = String(zohoItem.hsn_or_sac || "");
 
         await prisma.product.create({
           data: {
@@ -96,13 +112,25 @@ export async function POST() {
             categoryId: defaultCategory.id,
             brandId,
             type: productType,
-            costPrice: Number(zohoItem.purchase_rate || 0),
-            sellingPrice: Number(zohoItem.rate || 0),
-            mrp: Number(zohoItem.rate || 0),
-            gstRate: Number(zohoItem.tax_percentage || 18),
-            hsnCode: String(zohoItem.hsn_or_sac || ""),
+            costPrice,
+            sellingPrice,
+            mrp: sellingPrice,
+            gstRate,
+            hsnCode,
             currentStock: stock,
           },
+        });
+
+        importedItems.push({
+          sku,
+          name: item.name,
+          brand: resolvedBrand,
+          costPrice,
+          sellingPrice,
+          stock,
+          gst: gstRate,
+          hsn: hsnCode,
+          type: productType,
         });
         imported++;
       } catch (err) {
@@ -133,6 +161,7 @@ export async function POST() {
       imported,
       failed,
       errors: errors.slice(0, 20),
+      importedItems,
     });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);

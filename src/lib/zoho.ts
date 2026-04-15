@@ -127,22 +127,23 @@ export class ZohoClient {
     });
   }
 
-  async listItems(page = 1) {
+  async listItems(page = 1, statusFilter?: string) {
+    const statusParam = statusFilter ? `&status=${statusFilter}` : "";
     return this.apiCall<{
       items: Array<{
-        item_id: string; sku: string; name: string;
+        item_id: string; sku: string; name: string; status?: string;
         brand?: string; manufacturer?: string;
         purchase_rate?: number; rate?: number;
         tax_percentage?: number; hsn_or_sac?: string;
         stock_on_hand?: number; product_type?: string; item_type?: string;
       }>;
       page_context?: { has_more_page: boolean };
-    }>("GET", `/items?page=${page}&per_page=200`);
+    }>("GET", `/items?page=${page}&per_page=200${statusParam}`);
   }
 
-  async listAllItems() {
+  async listAllItems(statusFilter?: string) {
     const all: Array<{
-      item_id: string; sku: string; name: string;
+      item_id: string; sku: string; name: string; status?: string;
       brand?: string; manufacturer?: string;
       purchase_rate?: number; rate?: number;
       tax_percentage?: number; hsn_or_sac?: string;
@@ -150,7 +151,7 @@ export class ZohoClient {
     }> = [];
     let page = 1;
     while (true) {
-      const data = await this.listItems(page);
+      const data = await this.listItems(page, statusFilter);
       all.push(...(data.items || []));
       if (!data.page_context?.has_more_page) break;
       page++;
