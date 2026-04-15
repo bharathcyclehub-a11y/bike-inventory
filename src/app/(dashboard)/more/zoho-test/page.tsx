@@ -24,7 +24,7 @@ export default function ZohoTestPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<{ totalActiveInPage: number; activeWithStock: number; hasMore: boolean; samples: Array<Record<string, unknown>> } | null>(null);
+  const [result, setResult] = useState<{ totalActiveItems: number; willBeImported: number; samples: Array<Record<string, unknown>> } | null>(null);
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ zohoTotal: number; activeWithStock: number; imported: number; failed: number; importedItems: Array<Record<string, unknown>> } | null>(null);
@@ -160,8 +160,22 @@ export default function ZohoTestPage() {
       {/* ---- Sample Results ---- */}
       {result && (
         <div className="space-y-3">
-          <p className="text-xs font-medium text-slate-700">
-            Active in page: {result.totalActiveInPage} | With stock: {result.activeWithStock} | Showing {result.samples.length} samples
+          <Card className="mb-3 border-blue-200 bg-blue-50">
+            <CardContent className="p-2">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-slate-900">{result.totalActiveItems}</p>
+                  <p className="text-[10px] text-slate-500">Total Active in Zoho</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-green-600">{result.willBeImported}</p>
+                  <p className="text-[10px] text-slate-500">Will Be Imported (stock &gt; 0)</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <p className="text-xs font-medium text-slate-700 mb-2">
+            Showing {result.samples.length} samples with full detail:
           </p>
 
           {(result.samples || []).map((item, i) => (
@@ -170,18 +184,21 @@ export default function ZohoTestPage() {
                 <p className="text-sm font-medium text-slate-900 mb-1">{String(item.name)}</p>
                 <div className="grid grid-cols-2 gap-1 text-xs">
                   <div><span className="text-slate-500">SKU:</span> {String(item.sku || "—")}</div>
-                  <div><span className="text-slate-500">Brand:</span> <span className="font-medium text-blue-600">{String(item.brand || "—")}</span></div>
-                  <div><span className="text-slate-500">Manufacturer:</span> <span className="font-medium text-blue-600">{String(item.manufacturer || "—")}</span></div>
                   <div><span className="text-slate-500">Cost:</span> {String(item.cost_price || "—")}</div>
                   <div><span className="text-slate-500">Selling:</span> {String(item.selling_price || "—")}</div>
                   <div><span className="text-slate-500">Stock:</span> <span className="font-medium text-green-600">{String(item.stock_on_hand || "—")}</span></div>
-                  <div><span className="text-slate-500">GST:</span> {String(item.gst || "—")}%</div>
                   <div><span className="text-slate-500">HSN:</span> {String(item.hsn || "—")}</div>
                 </div>
+                <div className="mt-2 p-2 bg-blue-50 rounded text-xs space-y-0.5">
+                  <p className="font-semibold text-blue-800 text-[10px]">DETAIL API FIELDS (fetched per item)</p>
+                  <div><span className="text-slate-500">Brand:</span> <span className="font-bold text-blue-600">{String(item.detail_brand || "—")}</span></div>
+                  <div><span className="text-slate-500">Manufacturer:</span> <span className="font-bold text-blue-600">{String(item.detail_manufacturer || "—")}</span></div>
+                  <div><span className="text-slate-500">Category:</span> <span className="font-bold text-purple-600">{String(item.detail_category || "—")}</span></div>
+                </div>
                 <details className="mt-2">
-                  <summary className="text-[10px] text-slate-400 cursor-pointer">All raw Zoho fields</summary>
-                  <pre className="mt-1 text-[10px] bg-slate-50 p-2 rounded overflow-x-auto max-h-48 whitespace-pre-wrap">
-                    {JSON.stringify(item._raw, null, 2)}
+                  <summary className="text-[10px] text-slate-400 cursor-pointer">Full raw detail from Zoho</summary>
+                  <pre className="mt-1 text-[10px] bg-slate-50 p-2 rounded overflow-x-auto max-h-60 whitespace-pre-wrap">
+                    {JSON.stringify(item._raw_detail || item._raw, null, 2)}
                   </pre>
                 </details>
               </CardContent>

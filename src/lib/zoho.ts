@@ -127,6 +127,12 @@ export class ZohoClient {
     });
   }
 
+  async getItem(itemId: string) {
+    return this.apiCall<{
+      item: Record<string, unknown>;
+    }>("GET", `/items/${itemId}`);
+  }
+
   async listItems(page = 1, statusFilter?: string) {
     const statusParam = statusFilter ? `&status=${statusFilter}` : "";
     return this.apiCall<{
