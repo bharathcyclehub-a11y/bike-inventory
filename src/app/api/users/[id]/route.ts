@@ -21,6 +21,7 @@ export async function GET(
         name: true,
         email: true,
         role: true,
+        accessCode: true,
         isActive: true,
         createdAt: true,
         updatedAt: true,

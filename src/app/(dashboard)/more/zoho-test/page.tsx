@@ -30,7 +30,7 @@ export default function ZohoTestPage() {
   const [importResult, setImportResult] = useState<{ zohoTotal: number; activeWithStock: number; imported: number; failed: number; importedItems: Array<Record<string, unknown>> } | null>(null);
   const [importError, setImportError] = useState("");
   const [enriching, setEnriching] = useState(false);
-  const [enrichResult, setEnrichResult] = useState<{ processed: number; updated: number; failed: number; remaining: number; enriched: Array<{ name: string; brand: string; gst: number }> } | null>(null);
+  const [enrichResult, setEnrichResult] = useState<{ processed: number; updated: number; failed: number; remaining: number; enriched: Array<{ name: string; brand: string; gst: number }>; errors?: string[] } | null>(null);
   const [enrichError, setEnrichError] = useState("");
   const [enrichTotal, setEnrichTotal] = useState(0);
   const [autoEnriching, setAutoEnriching] = useState(false);
@@ -194,6 +194,14 @@ export default function ZohoTestPage() {
                   <div>Remaining: <span className="font-medium text-orange-600">{enrichResult.remaining}</span></div>
                   {enrichTotal > 0 && <div className="col-span-2">Total enriched so far: <span className="font-medium text-green-600">{enrichTotal}</span></div>}
                 </div>
+                {enrichResult.errors && enrichResult.errors.length > 0 && (
+                  <div className="mt-2 space-y-0.5">
+                    <p className="text-[10px] font-medium text-red-600">Errors:</p>
+                    {enrichResult.errors.map((e, i) => (
+                      <p key={i} className="text-[10px] text-red-500 truncate">{e}</p>
+                    ))}
+                  </div>
+                )}
                 {enrichResult.enriched.length > 0 && !autoEnriching && (
                   <div className="mt-2 space-y-0.5">
                     <p className="text-[10px] font-medium text-blue-800">This batch:</p>

@@ -31,36 +31,46 @@ export async function POST() {
       return successResponse({ message: "All products have brands assigned!", updated: 0, remaining: 0 });
     }
 
-    // For products without zohoItemId, we need to find their Zoho item_id by SKU
+    let updated = 0;
+    let failed = 0;
+    const enriched: Array<{ name: string; brand: string; gst: number }> = [];
+    const errors: string[] = [];
+
+    // For products without zohoItemId, find their Zoho item_id by SKU (case-insensitive)
     const needsLookup = products.filter((p) => !p.zohoItemId);
-    let skuToItemId: Map<string, string> | null = null;
+    const hasZohoId = products.filter((p) => p.zohoItemId);
+    errors.push(`DEBUG: ${hasZohoId.length}/${products.length} have zohoItemId, ${needsLookup.length} need lookup`);
 
     if (needsLookup.length > 0) {
-      // Pull all Zoho items once (cached across batches via Zoho pagination)
-      const allZohoItems = await zoho.listAllItems("active");
-      skuToItemId = new Map(allZohoItems.map((z) => [z.sku, z.item_id]));
+      try {
+        const allZohoItems = await zoho.listAllItems("active");
+        errors.push(`DEBUG: Zoho returned ${allZohoItems.length} items for SKU matching`);
+        // Case-insensitive + trimmed SKU matching
+        const skuToItemId = new Map(
+          allZohoItems.map((z) => [z.sku?.trim().toLowerCase(), z.item_id])
+        );
 
-      // Backfill zohoItemId for matched products
-      for (const p of needsLookup) {
-        const zohoId = skuToItemId.get(p.sku);
-        if (zohoId) {
-          await prisma.product.update({
-            where: { id: p.id },
-            data: { zohoItemId: zohoId },
-          });
-          p.zohoItemId = zohoId;
+        let matched = 0;
+        for (const p of needsLookup) {
+          const zohoId = skuToItemId.get(p.sku?.trim().toLowerCase());
+          if (zohoId) {
+            await prisma.product.update({
+              where: { id: p.id },
+              data: { zohoItemId: zohoId },
+            });
+            p.zohoItemId = zohoId;
+            matched++;
+          }
         }
+        errors.push(`DEBUG: SKU matched ${matched}/${needsLookup.length}`);
+      } catch (lookupErr) {
+        errors.push(`SKU lookup failed: ${lookupErr instanceof Error ? lookupErr.message : "Unknown"}`);
       }
     }
 
     // Build brand cache
     const allBrands = await prisma.brand.findMany();
     const brandMap = new Map(allBrands.map((b) => [b.name.toLowerCase(), b.id]));
-
-    let updated = 0;
-    let failed = 0;
-    const enriched: Array<{ name: string; brand: string; gst: number }> = [];
-    const errors: string[] = [];
 
     for (let i = 0; i < products.length; i++) {
       const product = products[i];
