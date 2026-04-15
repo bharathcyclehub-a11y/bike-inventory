@@ -39,8 +39,8 @@ const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "Owner / Director",
   SUPERVISOR: "Store Supervisor",
   MANAGER: "Operations Manager",
-  INWARDS_CLERK: "Purchase & Receiving Executive",
-  OUTWARDS_CLERK: "Sales & Dispatch Executive",
+  INWARDS_CLERK: "Inventory & Receiving Lead",
+  OUTWARDS_CLERK: "Sales & Dispatch Lead",
 };
 
 const menuItems: MenuItem[] = [
@@ -96,7 +96,7 @@ const menuItems: MenuItem[] = [
     label: "Bins & Locations",
     icon: Warehouse,
     href: "/more/bins",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN"],
   },
   {
     label: "Barcode Scanner",

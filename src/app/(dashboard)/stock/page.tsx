@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { Search, MapPin, Loader2 } from "lucide-react";
+import { Search, MapPin, Loader2, LayoutGrid } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -52,7 +52,7 @@ const FILTER_CHIPS: { key: StockFilter; label: string }[] = [
   { key: "INACTIVE", label: "Inactive" },
 ];
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 100;
 
 function getStockVariant(p: ProductItem) {
   if (p.currentStock <= 0) return "danger";
@@ -145,10 +145,16 @@ export default function StockPage() {
     <div>
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Stock</h1>
-        <ExportButtons
-          onExcel={() => exportToExcel(filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
-          onPDF={() => exportToPDF("Stock Inventory", filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
-        />
+        <div className="flex items-center gap-2">
+          <Link href="/stock/by-brand"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-600 text-xs font-medium hover:bg-slate-200 transition-colors">
+            <LayoutGrid className="h-3.5 w-3.5" /> Brand View
+          </Link>
+          <ExportButtons
+            onExcel={() => exportToExcel(filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
+            onPDF={() => exportToPDF("Stock Inventory", filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
+          />
+        </div>
       </div>
 
       <div className="relative mb-3">

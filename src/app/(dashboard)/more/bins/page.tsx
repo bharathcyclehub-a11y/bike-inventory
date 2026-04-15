@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
 import { ArrowLeft, Warehouse, Plus, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -15,6 +16,10 @@ interface Bin {
 }
 
 export default function BinsPage() {
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string })?.role || "";
+  const isAdmin = role === "ADMIN";
+
   const [bins, setBins] = useState<Bin[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
@@ -86,9 +91,11 @@ export default function BinsPage() {
       <div className="flex items-center gap-3 mb-4">
         <Link href="/more" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <h1 className="text-lg font-bold text-slate-900 flex-1">Bins & Locations</h1>
-        <Button size="sm" onClick={() => setShowAdd(!showAdd)} variant={showAdd ? "outline" : "default"}>
-          <Plus className="h-4 w-4 mr-1" /> {showAdd ? "Cancel" : "Add Bin"}
-        </Button>
+        {isAdmin && (
+          <Button size="sm" onClick={() => setShowAdd(!showAdd)} variant={showAdd ? "outline" : "default"}>
+            <Plus className="h-4 w-4 mr-1" /> {showAdd ? "Cancel" : "Add Bin"}
+          </Button>
+        )}
       </div>
 
       {showAdd && (
@@ -125,13 +132,15 @@ export default function BinsPage() {
                   <p className="text-sm font-medium text-slate-900">{bin.name}</p>
                   {bin.location && <p className="text-xs text-slate-500">{bin.location}</p>}
                 </div>
-                <button
-                  onClick={() => handleDelete(bin.id, bin.code)}
-                  disabled={deleting === bin.id}
-                  className="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                {isAdmin && (
+                  <button
+                    onClick={() => handleDelete(bin.id, bin.code)}
+                    disabled={deleting === bin.id}
+                    className="p-2 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                )}
               </CardContent>
             </Card>
           ))}

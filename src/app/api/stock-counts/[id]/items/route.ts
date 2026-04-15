@@ -41,7 +41,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         },
       },
       orderBy: { product: { name: "asc" } },
-      take: 50,
+      take: 200,
     });
 
     return successResponse(items);

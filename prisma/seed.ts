@@ -70,20 +70,24 @@ async function main() {
 
   console.log(`Created ${brands.length} brands`);
 
-  // Create bins
+  // Create bins — real locations for Bharath Cycle Hub & Centre
   const binData = [
-    { code: "A-01-01", name: "Aisle A Rack 1 Shelf 1", location: "Store", zone: "A" },
-    { code: "A-01-02", name: "Aisle A Rack 1 Shelf 2", location: "Store", zone: "A" },
-    { code: "A-02-01", name: "Aisle A Rack 2 Shelf 1", location: "Store", zone: "A" },
-    { code: "A-02-02", name: "Aisle A Rack 2 Shelf 2", location: "Store", zone: "A" },
-    { code: "B-01-01", name: "Aisle B Rack 1 Shelf 1", location: "Store", zone: "B" },
-    { code: "B-01-02", name: "Aisle B Rack 1 Shelf 2", location: "Store", zone: "B" },
-    { code: "B-02-01", name: "Aisle B Rack 2 Shelf 1", location: "Store", zone: "B" },
-    { code: "W-01-01", name: "Warehouse Rack 1 Shelf 1", location: "Warehouse", zone: "W1" },
-    { code: "W-01-02", name: "Warehouse Rack 1 Shelf 2", location: "Warehouse", zone: "W1" },
-    { code: "W-02-01", name: "Warehouse Rack 2 Shelf 1", location: "Warehouse", zone: "W2" },
-    { code: "W-02-02", name: "Warehouse Rack 2 Shelf 2", location: "Warehouse", zone: "W2" },
-    { code: "W-03-01", name: "Warehouse Rack 3 Shelf 1", location: "Warehouse", zone: "W2" },
+    // Bharath Cycle Hub — Ground Floor
+    { code: "BCH-GF-01", name: "Assembly Bin", location: "Bharath Cycle Hub - Ground Floor", zone: "BCH-GF" },
+    { code: "BCH-GF-02", name: "Second Hand Bin", location: "Bharath Cycle Hub - Ground Floor", zone: "BCH-GF" },
+    { code: "BCH-GF-03", name: "Electric Cycle Bin", location: "Bharath Cycle Hub - Ground Floor", zone: "BCH-GF" },
+    { code: "BCH-GF-04", name: "Hybrid Bin", location: "Bharath Cycle Hub - Ground Floor", zone: "BCH-GF" },
+    { code: "BCH-GF-05", name: "Road Bin", location: "Bharath Cycle Hub - Ground Floor", zone: "BCH-GF" },
+    // Bharath Cycle Hub — First Floor
+    { code: "BCH-FF-01", name: "Gear MTB Bin", location: "Bharath Cycle Hub - First Floor", zone: "BCH-FF" },
+    { code: "BCH-FF-02", name: "Non-Gear MTB Bin", location: "Bharath Cycle Hub - First Floor", zone: "BCH-FF" },
+    { code: "BCH-FF-03", name: "Ladies Cycle Bin", location: "Bharath Cycle Hub - First Floor", zone: "BCH-FF" },
+    { code: "BCH-FF-04", name: "Kids Cycle Bin", location: "Bharath Cycle Hub - First Floor", zone: "BCH-FF" },
+    // Bharath Cycle Centre
+    { code: "BCC-01", name: "Bharath Cycle Centre - Main", location: "Bharath Cycle Centre", zone: "BCC" },
+    // Warehouses
+    { code: "G1-01", name: "Warehouse G1", location: "Warehouse G1", zone: "G1" },
+    { code: "G2-01", name: "Warehouse G2", location: "Warehouse G2", zone: "G2" },
   ];
 
   const bins = await Promise.all(

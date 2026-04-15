@@ -57,18 +57,18 @@ function getTabsForRole(role: Role): TabConfig[] {
       ];
     case "INWARDS_CLERK":
       return [
-        { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
-        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
-        { href: "/scanner", label: "Scanner", icon: QrCode, key: "scanner" },
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/inwards", label: "Verify", icon: ArrowDownCircle, key: "inwards" },
         { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "OUTWARDS_CLERK":
       return [
-        { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards" },
-        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
-        { href: "/scanner", label: "Scanner", icon: QrCode, key: "scanner" },
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/outwards", label: "Verify", icon: ArrowUpCircle, key: "outwards" },
         { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     default:

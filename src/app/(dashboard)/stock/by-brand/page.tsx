@@ -1,0 +1,186 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { ArrowLeft, ChevronDown, ChevronRight, Search, AlertTriangle, Package } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { useDebounce } from "@/lib/utils";
+
+interface BrandProduct {
+  id: string;
+  name: string;
+  sku: string;
+  type: string;
+  currentStock: number;
+  reorderLevel: number;
+  sellingPrice: number;
+  mrp: number;
+  category: { name: string } | null;
+  bin: { code: string; name: string; location: string } | null;
+}
+
+interface BrandStock {
+  id: string;
+  name: string;
+  contactPhone: string | null;
+  whatsappNumber: string | null;
+  productCount: number;
+  totalStock: number;
+  lowStockCount: number;
+  outOfStockCount: number;
+  totalValue: number;
+  products: BrandProduct[];
+}
+
+export default function BrandStockPage() {
+  const [brands, setBrands] = useState<BrandStock[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search);
+
+  useEffect(() => {
+    fetch("/api/stock/by-brand")
+      .then((r) => r.json())
+      .then((res) => { if (res.success) setBrands(res.data); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filtered = debouncedSearch
+    ? brands.filter((b) =>
+        b.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+        b.products.some((p) =>
+          p.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
+          p.sku.toLowerCase().includes(debouncedSearch.toLowerCase())
+        )
+      )
+    : brands;
+
+  const totalProducts = filtered.reduce((s, b) => s + b.productCount, 0);
+  const totalStock = filtered.reduce((s, b) => s + b.totalStock, 0);
+  const totalLow = filtered.reduce((s, b) => s + b.lowStockCount, 0);
+
+  function toggle(id: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-3">
+        <Link href="/stock" className="p-1">
+          <ArrowLeft className="h-5 w-5 text-slate-600" />
+        </Link>
+        <div className="flex-1">
+          <h1 className="text-lg font-bold text-slate-900">Stock by Brand</h1>
+          <p className="text-xs text-slate-500">
+            {totalProducts} products | {totalStock.toLocaleString("en-IN")} units | {totalLow} low stock
+          </p>
+        </div>
+      </div>
+
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        <Input
+          placeholder="Search brand, product, or SKU..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="pl-9"
+        />
+      </div>
+
+      {loading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="p-4 border border-slate-100 rounded-lg animate-pulse">
+              <div className="h-4 bg-slate-200 rounded w-1/3 mb-2" />
+              <div className="h-3 bg-slate-200 rounded w-1/2" />
+            </div>
+          ))}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="text-center py-12">
+          <Package className="h-10 w-10 text-slate-300 mx-auto mb-2" />
+          <p className="text-sm text-slate-400">No brands found</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((brand) => {
+            const isExpanded = expanded.has(brand.id);
+
+            return (
+              <Card key={brand.id}>
+                <CardContent className="p-0">
+                  <button
+                    onClick={() => toggle(brand.id)}
+                    className="w-full p-3 flex items-center gap-3 text-left"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-slate-900">{brand.name}</p>
+                        {brand.lowStockCount > 0 && (
+                          <Badge variant="warning" className="text-[10px]">
+                            <AlertTriangle className="h-2.5 w-2.5 mr-0.5" />
+                            {brand.lowStockCount} low
+                          </Badge>
+                        )}
+                        {brand.outOfStockCount > 0 && (
+                          <Badge variant="danger" className="text-[10px]">
+                            {brand.outOfStockCount} out
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {brand.productCount} products | {brand.totalStock.toLocaleString("en-IN")} units
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0 mr-1">
+                      <p className="text-sm font-bold text-slate-700">
+                        {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(brand.totalValue)}
+                      </p>
+                    </div>
+                    {isExpanded ? (
+                      <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                    )}
+                  </button>
+
+                  {isExpanded && (
+                    <div className="border-t border-slate-100 px-3 pb-3">
+                      {brand.products.map((p) => (
+                        <Link key={p.id} href={`/stock/${p.id}`}>
+                          <div className="flex items-center gap-2 py-2 border-b border-slate-50 last:border-0 hover:bg-slate-50 -mx-1 px-1 rounded">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-slate-800 truncate">{p.name}</p>
+                              <p className="text-[10px] text-slate-400">
+                                {p.sku} | {p.category?.name || ""} {p.bin ? `| ${p.bin.code}` : ""}
+                              </p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className={`text-sm font-bold ${
+                                p.currentStock <= 0 ? "text-red-600" :
+                                p.currentStock <= p.reorderLevel ? "text-yellow-600" : "text-green-600"
+                              }`}>{p.currentStock}</p>
+                            </div>
+                          </div>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
