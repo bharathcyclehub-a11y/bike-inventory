@@ -170,7 +170,8 @@ export default function ZohoTestPage() {
           <p className="text-sm font-semibold text-slate-900 mb-1">Step 3: Enrich Brands from Zoho</p>
           <div className="text-xs text-slate-500 mb-3">
             <p>Fetches brand, manufacturer & GST from Zoho detail API for &quot;Unbranded&quot; items.</p>
-            <p>15 items per batch with throttling. Use &quot;Auto-Enrich All&quot; to run hands-free.</p>
+            <p>5 items per batch (3s gap each). Zoho limit: 1500 API calls/day.</p>
+            <p className="text-orange-600 font-medium">Auto-enrich waits 60s between batches to stay within limits.</p>
           </div>
 
           {enrichError && (
@@ -252,7 +253,7 @@ export default function ZohoTestPage() {
                 }
               }}
             >
-              {enriching ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Enriching...</> : "Next 15"}
+              {enriching ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Enriching...</> : "Next 5"}
             </Button>
 
             {!autoEnriching ? (
@@ -299,8 +300,8 @@ export default function ZohoTestPage() {
                           break;
                         }
 
-                        // Wait 3s between batches to be safe with rate limits
-                        await new Promise((r) => setTimeout(r, 3000));
+                        // Wait 60s between batches — Zoho limit is 1500 calls/day
+                        await new Promise((r) => setTimeout(r, 60000));
                       } else {
                         setEnrichError(data.error || "Batch failed");
                         setAutoEnrichLog((prev) => [...prev, `Error at batch ${batch}: ${data.error}`]);

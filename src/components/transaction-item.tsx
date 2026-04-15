@@ -35,7 +35,7 @@ export function TransactionItem({
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-slate-900 truncate">
+        <p className="text-sm font-medium text-slate-900">
           {productName}
         </p>
         <p className="text-xs text-slate-500">

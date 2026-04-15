@@ -58,7 +58,6 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
   const [loadingItems, setLoadingItems] = useState(false);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
-  const [filter, setFilter] = useState("all");
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
@@ -73,12 +72,15 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       .finally(() => setLoadingSummary(false));
   }, [id]);
 
-  // Fetch items with search + filter (server-side, max 50)
+  // Fetch items: show counted items by default, all items when searching
   const fetchItems = useCallback(() => {
     setLoadingItems(true);
     const params = new URLSearchParams();
-    if (debouncedSearch) params.set("search", debouncedSearch);
-    if (filter !== "all") params.set("filter", filter);
+    if (debouncedSearch) {
+      params.set("search", debouncedSearch);
+    } else {
+      params.set("filter", "counted");
+    }
 
     fetch(`/api/stock-counts/${id}/items?${params}`)
       .then((r) => r.json())
@@ -99,7 +101,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       })
       .catch(() => {})
       .finally(() => setLoadingItems(false));
-  }, [id, debouncedSearch, filter]);
+  }, [id, debouncedSearch]);
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchItems(); }, [fetchItems]);
@@ -280,23 +282,6 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         />
       </div>
 
-      {/* Filter Chips */}
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1">
-        {[
-          { key: "all", label: `All (${summary.totalItems})` },
-          { key: "uncounted", label: `Uncounted (${summary.totalItems - summary.countedItems})` },
-          { key: "counted", label: `Counted (${summary.countedItems})` },
-          { key: "variance", label: `Variance (${summary.itemsWithVariance})` },
-        ].map((f) => (
-          <button key={f.key} onClick={() => setFilter(f.key)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === f.key ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-            }`}>
-            {f.label}
-          </button>
-        ))}
-      </div>
-
       {/* Items */}
       {loadingItems ? (
         <div className="flex items-center justify-center py-8">
@@ -314,7 +299,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
                 <CardContent className="p-3">
                   <div className="flex items-start justify-between mb-1">
                     <div className="flex-1 min-w-0 mr-2">
-                      <p className="text-sm font-medium text-slate-900 truncate">{item.product.name}</p>
+                      <p className="text-sm font-medium text-slate-900">{item.product.name}</p>
                       <p className="text-xs text-slate-500">
                         {item.product.sku}
                         {item.product.brand ? ` | ${item.product.brand.name}` : ""}
@@ -362,7 +347,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
 
           {items.length === 0 && !loadingItems && (
             <p className="text-sm text-slate-400 text-center py-8">
-              {search ? "No items match your search" : "No items in this filter"}
+              {search ? "No items match your search" : "Search for items to count"}
             </p>
           )}
 

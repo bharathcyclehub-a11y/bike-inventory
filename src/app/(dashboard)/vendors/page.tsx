@@ -128,7 +128,7 @@ export default function VendorsPage() {
                     <div className="flex-1 min-w-0 mr-3">
                       <div className="flex items-center gap-2">
                         <Building2 className="h-4 w-4 text-slate-400 shrink-0" />
-                        <p className="text-sm font-medium text-slate-900 truncate">{v.name}</p>
+                        <p className="text-sm font-medium text-slate-900">{v.name}</p>
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5 ml-6">
                         {v.code} {v.city ? `| ${v.city}` : ""}

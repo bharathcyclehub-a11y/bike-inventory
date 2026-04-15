@@ -175,7 +175,7 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
               <tr key={item.id} className={`border-t border-slate-100 ${item.variance && item.variance !== 0 ? "bg-red-50" : ""}`}>
                 <td className="p-2 text-slate-400">{i + 1}</td>
                 <td className="p-2">
-                  <p className="font-medium text-slate-900 truncate max-w-[180px]">{item.product.name}</p>
+                  <p className="font-medium text-slate-900">{item.product.name}</p>
                   <p className="text-[10px] text-slate-400">{item.product.sku}</p>
                 </td>
                 <td className="p-2 text-slate-600">{item.product.brand?.name || "—"}</td>

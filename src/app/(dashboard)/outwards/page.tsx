@@ -209,7 +209,7 @@ export default function OutwardsPage() {
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-900 truncate">{t.product.name}</p>
+                      <p className="text-sm font-medium text-slate-900">{t.product.name}</p>
                       <p className="text-xs text-slate-500">
                         {t.product.sku} {t.referenceNo ? `| ${t.referenceNo}` : ""}
                         {customer ? ` | ${customer}` : ""}

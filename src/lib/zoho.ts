@@ -66,7 +66,7 @@ export class ZohoClient {
     return new Promise((r) => setTimeout(r, ms));
   }
 
-  async apiCall<T>(method: string, endpoint: string, body?: Record<string, unknown>, _retried = false): Promise<T> {
+  async apiCall<T>(method: string, endpoint: string, body?: Record<string, unknown>, _attempt = 0): Promise<T> {
     if (!this.accessToken || !this.organizationId) {
       throw new Error("Zoho client not initialized");
     }
@@ -90,12 +90,12 @@ export class ZohoClient {
     let res = await fetch(url, buildOptions());
 
     // Token expired mid-request — refresh and retry once
-    if (res.status === 401 && !_retried) {
+    if (res.status === 401 && _attempt === 0) {
       const config = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
       if (config?.clientId && config?.clientSecret && config?.refreshToken) {
         const refreshed = await this.refreshAccessToken(config.clientId, config.clientSecret, config.refreshToken);
         if (refreshed) {
-          return this.apiCall<T>(method, endpoint, body, true);
+          return this.apiCall<T>(method, endpoint, body, _attempt + 1);
         }
       }
       throw new Error("Zoho authentication failed. Please reconnect.");
@@ -103,14 +103,13 @@ export class ZohoClient {
 
     if (res.status === 429) {
       // Retry with exponential backoff (up to 3 attempts)
-      const retryAfter = parseInt(res.headers.get("Retry-After") || "0", 10);
-      const attempts = _retried ? 3 : 1; // track via _retried flag
-      if (attempts < 3) {
-        const delay = retryAfter > 0 ? retryAfter * 1000 : Math.min(2000 * Math.pow(2, attempts), 10000);
+      if (_attempt < 3) {
+        const retryAfter = parseInt(res.headers.get("Retry-After") || "0", 10);
+        const delay = retryAfter > 0 ? retryAfter * 1000 : Math.min(5000 * Math.pow(2, _attempt), 60000);
         await new Promise((r) => setTimeout(r, delay));
-        return this.apiCall<T>(method, endpoint, body, true);
+        return this.apiCall<T>(method, endpoint, body, _attempt + 1);
       }
-      throw new Error("Zoho API rate limit exceeded after retries. Wait 1-2 minutes and try again.");
+      throw new Error("Zoho API rate limit exceeded after 3 retries. Wait 2 minutes and try again.");
     }
 
     const data = await res.json();

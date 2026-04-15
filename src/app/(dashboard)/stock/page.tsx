@@ -327,7 +327,7 @@ export default function StockPage() {
                   <CardContent className="p-3">
                     <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0 mr-3">
-                        <p className="text-sm font-medium text-slate-900 truncate">{p.name}</p>
+                        <p className="text-sm font-medium text-slate-900">{p.name}</p>
                         <div className="flex items-center gap-1 mt-0.5 flex-wrap">
                           <span className="text-xs text-slate-400">{p.sku}</span>
                           {p.brand && (

@@ -99,7 +99,7 @@ export default function MovementPage() {
               <CardContent className="p-3">
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0 mr-2">
-                    <p className="text-sm font-medium text-slate-900 truncate">{p.name}</p>
+                    <p className="text-sm font-medium text-slate-900">{p.name}</p>
                     <p className="text-xs text-slate-500">{p.sku} | {p.category} | Stock: {p.currentStock}</p>
                   </div>
                   <Badge variant={CLASSIFICATION_STYLE[p.classification] as "success" | "warning" | "danger"}>

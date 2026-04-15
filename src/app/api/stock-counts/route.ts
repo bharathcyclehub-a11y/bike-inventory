@@ -8,12 +8,16 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status") || undefined;
 
+    // Clerks can only see their own assigned stock counts
+    const isClerk = ["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role);
+
     const where = {
       ...(status && { status }),
+      ...(isClerk && { assignedToId: user.id }),
     };
 
     const [counts, total] = await Promise.all([

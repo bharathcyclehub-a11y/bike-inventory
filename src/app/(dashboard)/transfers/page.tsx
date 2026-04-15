@@ -132,7 +132,7 @@ export default function TransfersPage() {
                 <CardContent className="p-3">
                   <div className="flex items-start justify-between mb-2">
                     <div className="flex-1 min-w-0 mr-2">
-                      <p className="text-sm font-medium text-slate-900 truncate">{t.product.name}</p>
+                      <p className="text-sm font-medium text-slate-900">{t.product.name}</p>
                       <p className="text-xs text-slate-500">{t.product.sku} | Qty: <span className="font-semibold">{t.quantity}</span></p>
                     </div>
                     <Badge variant={parsed.status === "APPROVED" ? "success" : parsed.status === "PENDING" ? "warning" : "danger"}>

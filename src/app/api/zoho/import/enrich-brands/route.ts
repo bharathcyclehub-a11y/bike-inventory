@@ -5,7 +5,7 @@ import { ZohoClient } from "@/lib/zoho";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
-const BATCH_SIZE = 15; // 15 items × 500ms delay = ~7.5s + processing, well within Vercel's 60s timeout
+const BATCH_SIZE = 5; // 5 items × 3s delay = ~15s + processing. Zoho free plan = 1500 API calls/day.
 
 export async function POST() {
   try {
@@ -36,16 +36,16 @@ export async function POST() {
     const enriched: Array<{ name: string; brand: string; gst: number }> = [];
     const errors: string[] = [];
 
-    // For products without zohoItemId, find their Zoho item_id by SKU (case-insensitive)
+    // Only do expensive listAllItems if some products lack zohoItemId
     const needsLookup = products.filter((p) => !p.zohoItemId);
     const hasZohoId = products.filter((p) => p.zohoItemId);
     errors.push(`DEBUG: ${hasZohoId.length}/${products.length} have zohoItemId, ${needsLookup.length} need lookup`);
 
     if (needsLookup.length > 0) {
       try {
+        // This costs ~13 API calls (paginated). Only run when actually needed.
         const allZohoItems = await zoho.listAllItems("active");
         errors.push(`DEBUG: Zoho returned ${allZohoItems.length} items for SKU matching`);
-        // Case-insensitive + trimmed SKU matching
         const skuToItemId = new Map(
           allZohoItems.map((z) => [z.sku?.trim().toLowerCase(), z.item_id])
         );
@@ -66,6 +66,8 @@ export async function POST() {
       } catch (lookupErr) {
         errors.push(`SKU lookup failed: ${lookupErr instanceof Error ? lookupErr.message : "Unknown"}`);
       }
+    } else {
+      errors.push(`DEBUG: All items have zohoItemId, skipping listAllItems (saves ~13 API calls)`);
     }
 
     // Build brand cache
@@ -80,8 +82,8 @@ export async function POST() {
         continue;
       }
 
-      // Throttle: 500ms between Zoho detail API calls to avoid rate limit
-      if (i > 0) await zoho.delay(500);
+      // Throttle: 3s between Zoho detail API calls (1500 calls/day limit)
+      if (i > 0) await zoho.delay(3000);
 
       try {
         const detail = await zoho.getItem(product.zohoItemId);

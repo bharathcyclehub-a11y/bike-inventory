@@ -338,7 +338,7 @@ export default function ReorderDashboardPage() {
                           <div className="flex-1 min-w-0 mr-2">
                             <button onClick={() => toggleSelectForPO(product.id)}
                               className="text-left">
-                              <p className="text-sm font-medium text-slate-900 truncate">{product.name}</p>
+                              <p className="text-sm font-medium text-slate-900">{product.name}</p>
                               <p className="text-[10px] text-slate-500">{product.sku}</p>
                             </button>
                           </div>
