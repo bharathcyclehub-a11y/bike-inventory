@@ -8,13 +8,21 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { id } = await params;
+
+    // Clerks can only view their assigned stock counts
+    if (["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role)) {
+      const check = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
+      if (!check) return errorResponse("Stock count not found", 404);
+      if (check.assignedToId !== user.id) return errorResponse("You can only access stock counts assigned to you", 403);
+    }
 
     const stockCount = await prisma.stockCount.findUnique({
       where: { id },
       include: {
         assignedTo: { select: { name: true } },
+        approvedBy: { select: { name: true } },
         bin: { select: { code: true, name: true, location: true } },
         items: {
           include: {
@@ -56,18 +64,37 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const existing = await prisma.stockCount.findUnique({ where: { id } });
     if (!existing) return errorResponse("Stock count not found", 404);
 
+    // Clerks can only update their assigned stock counts
+    if (["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role)) {
+      if (existing.assignedToId !== user.id) return errorResponse("You can only update stock counts assigned to you", 403);
+    }
+
+    // Only ADMIN/ACCOUNTS_MANAGER can approve or reject
+    if (data.status === "APPROVED" || data.status === "REJECTED") {
+      if (!["ADMIN", "ACCOUNTS_MANAGER"].includes(user.role)) {
+        return errorResponse("Only Admin or Accounts Manager can approve/reject stock counts", 403);
+      }
+    }
+
+    // ADMIN cannot start or complete counts — only approve/reject
+    if (user.role === "ADMIN" && (data.status === "IN_PROGRESS" || data.status === "COMPLETED")) {
+      return errorResponse("Admin can only approve or reject stock counts, not initiate or complete them", 403);
+    }
+
     // Status transition guards
     if (data.status) {
       const VALID_TRANSITIONS: Record<string, string[]> = {
         PENDING: ["IN_PROGRESS"],
         IN_PROGRESS: ["COMPLETED"],
-        COMPLETED: [], // Cannot transition from COMPLETED
+        COMPLETED: ["APPROVED", "REJECTED"],
+        REJECTED: ["IN_PROGRESS"], // Can re-start after rejection
+        APPROVED: [], // Final state
       };
       const allowed = VALID_TRANSITIONS[existing.status] || [];
       if (!allowed.includes(data.status)) {
         return errorResponse(
           `Cannot change status from ${existing.status} to ${data.status}. ${
-            existing.status === "COMPLETED" ? "This stock count is already completed." : `Must be ${allowed.join(" or ")} next.`
+            existing.status === "APPROVED" ? "This stock count is already approved." : `Must be ${allowed.join(" or ")} next.`
           }`,
           400
         );
@@ -96,40 +123,80 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       const updateData: Record<string, unknown> = {};
       if (data.status) updateData.status = data.status;
       if (data.notes !== undefined) updateData.notes = data.notes;
-      if (data.status === "COMPLETED") updateData.completedAt = new Date();
-
-      // When completing: apply counted quantities to product stock
       if (data.status === "COMPLETED") {
-        const BASELINE_END = new Date("2026-04-19T23:59:59+05:30");
+        updateData.completedAt = new Date();
+
+        // Baseline mode: auto-set uncounted items to countedQty=0 (not found = 0 stock)
+        const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
+        if (new Date() <= BASELINE_END) {
+          const uncountedItems = await tx.stockCountItem.findMany({
+            where: { stockCountId: id, countedQty: null },
+            select: { id: true, systemQty: true },
+          });
+          for (const item of uncountedItems) {
+            await tx.stockCountItem.update({
+              where: { id: item.id },
+              data: { countedQty: 0, variance: 0 - item.systemQty, countedAt: new Date() },
+            });
+          }
+        }
+      }
+      if (data.status === "APPROVED") {
+        updateData.approvedById = user.id;
+        updateData.approvedAt = new Date();
+      }
+      if (data.status === "REJECTED") {
+        updateData.rejectionReason = data.rejectionReason || null;
+      }
+
+      // When APPROVED: apply counted quantities to product stock + brands
+      if (data.status === "APPROVED") {
+        const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
         const isBaselinePeriod = new Date() <= BASELINE_END;
 
         const countedItems = await tx.stockCountItem.findMany({
           where: { stockCountId: id, countedQty: { not: null } },
+          include: { product: { select: { brandId: true, brand: { select: { name: true } } } } },
         });
 
         for (const item of countedItems) {
-          if (item.countedQty === null || item.countedQty === 0) continue;
+          if (item.countedQty === null) continue;
 
           const product = await tx.product.findUnique({
             where: { id: item.productId },
-            select: { id: true, currentStock: true, binId: true },
+            select: { id: true, currentStock: true, binId: true, brandId: true, brand: { select: { name: true } } },
           });
 
           if (!product) continue;
 
+          // Apply suggested brand if item's current brand is Imported/Unbranded/missing
+          let brandUpdate: Record<string, string> = {};
+          if (item.suggestedBrand && (!product.brand || ["Imported", "Unbranded", "General"].includes(product.brand.name))) {
+            const targetBrand = await tx.brand.findFirst({
+              where: { name: { equals: item.suggestedBrand, mode: "insensitive" } },
+            });
+            if (targetBrand) {
+              brandUpdate = { brandId: targetBrand.id };
+            } else {
+              // Create new brand
+              const newBrand = await tx.brand.create({ data: { name: item.suggestedBrand } });
+              brandUpdate = { brandId: newBrand.id };
+            }
+          }
+
           if (isBaselinePeriod) {
-            // --- BASELINE MODE (Apr 14-19): Stock count = INWARD + PUTAWAY ---
-            // 1. Set product stock to counted quantity
+            // --- BASELINE MODE (until May 31): Stock count = INWARD + PUTAWAY ---
+            // Only assign bin if item was actually found (count > 0)
+            const assignBin = existing.binId && item.countedQty > 0;
             await tx.product.update({
               where: { id: product.id },
               data: {
                 currentStock: item.countedQty,
-                // 2. PUTAWAY: assign product to this bin
-                ...(existing.binId && { binId: existing.binId }),
+                ...(assignBin && { binId: existing.binId }),
+                ...brandUpdate,
               },
             });
 
-            // 3. Create INWARD transaction (this is inventory intake, not an audit)
             await tx.inventoryTransaction.create({
               data: {
                 type: "INWARD",
@@ -138,13 +205,12 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
                 previousStock: product.currentStock,
                 newStock: item.countedQty,
                 referenceNo: existing.title,
-                notes: `[STOCK_COUNT] [BASELINE] Counted ${item.countedQty} units${existing.binId ? " — placed in bin" : ""} during "${existing.title}"`,
+                notes: `[STOCK_COUNT] [BASELINE] Counted ${item.countedQty} units${existing.binId ? " — placed in bin" : ""}${item.suggestedBrand ? ` — brand: ${item.suggestedBrand}` : ""} during "${existing.title}"`,
                 userId: user.id,
               },
             });
           } else {
-            // --- VERIFICATION MODE (after Apr 19): Stock count = AUDIT ---
-            // Compare counted vs system, create adjustment only for variance
+            // --- VERIFICATION MODE (after May 31): Stock count = AUDIT ---
             const variance = item.countedQty - product.currentStock;
 
             await tx.product.update({
@@ -152,6 +218,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
               data: {
                 currentStock: item.countedQty,
                 ...(existing.binId && { binId: existing.binId }),
+                ...brandUpdate,
               },
             });
 
@@ -194,14 +261,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
     const { id } = await params;
 
     const stockCount = await prisma.stockCount.findUnique({ where: { id } });
     if (!stockCount) return errorResponse("Stock count not found", 404);
 
+    if (stockCount.status === "APPROVED") {
+      return errorResponse("Cannot delete an approved stock count", 403);
+    }
+
     if (stockCount.status === "COMPLETED") {
-      // Only ADMIN can delete completed stock counts (with full reversal)
+      // Only ADMIN can delete completed stock counts
       if (user.role !== "ADMIN") {
         return errorResponse("Only ADMIN can delete a completed stock count", 403);
       }

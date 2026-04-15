@@ -12,8 +12,8 @@ const ROLES = [
   { value: "SUPERVISOR", label: "Supervisor — View all, manage stock" },
   { value: "PURCHASE_MANAGER", label: "Purchase Manager — Reorder, POs, vendors" },
   { value: "ACCOUNTS_MANAGER", label: "Accounts Manager — Expenses, bills, payments, audit" },
-  { value: "INWARDS_CLERK", label: "Inwards Clerk — Record inwards only" },
-  { value: "OUTWARDS_CLERK", label: "Outwards Clerk — Record outwards only" },
+  { value: "INWARDS_CLERK", label: "Inventory & Receiving Lead — Verify inwards, stock count" },
+  { value: "OUTWARDS_CLERK", label: "Sales & Dispatch Lead — Verify outwards, stock count" },
 ];
 
 export default function NewTeamMemberPage() {

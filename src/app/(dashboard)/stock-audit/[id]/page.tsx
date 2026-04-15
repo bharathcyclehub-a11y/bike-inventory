@@ -1,9 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback, use } from "react";
+import { useState, useEffect, useCallback, useRef, use } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Play, CheckCircle2, Save, Search, Loader2, Trash2, Table } from "lucide-react";
+import {
+  ArrowLeft, Play, CheckCircle2, Save, Search, Loader2, Trash2, Table,
+  ShieldCheck, XCircle, RefreshCw, Plus, Minus, Zap, AlertTriangle,
+  Info,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -14,6 +19,7 @@ interface StockCountItemData {
   systemQty: number;
   countedQty: number | null;
   variance: number | null;
+  suggestedBrand: string | null;
   notes: string | null;
   countedAt: string | null;
   product: {
@@ -33,6 +39,9 @@ interface StockCountSummary {
   status: string;
   dueDate: string;
   completedAt: string | null;
+  approvedAt: string | null;
+  approvedBy: { name: string } | null;
+  rejectionReason: string | null;
   notes: string | null;
   assignedTo: { name: string };
   bin: { code: string; name: string; location: string } | null;
@@ -46,24 +55,60 @@ const STATUS_STYLE: Record<string, string> = {
   PENDING: "warning",
   IN_PROGRESS: "info",
   COMPLETED: "success",
+  APPROVED: "success",
+  REJECTED: "danger",
 };
+
+// Simple fuzzy match — check if each character of query appears in order in target
+function fuzzyMatch(query: string, target: string): boolean {
+  const q = query.toLowerCase();
+  const t = target.toLowerCase();
+  if (t.includes(q)) return true;
+  let qi = 0;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) qi++;
+  }
+  return qi === q.length;
+}
+
+// Baseline mode: until May 31 2026, counted stock IS actual stock
+const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
 
 export default function StockAuditDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const { data: session } = useSession();
+  const userRole = (session?.user as { role?: string } | undefined)?.role;
+  const canApprove = userRole === "ADMIN" || userRole === "ACCOUNTS_MANAGER";
+  const isAdmin = userRole === "ADMIN";
   const [summary, setSummary] = useState<StockCountSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [brands, setBrands] = useState<Record<string, string>>({});
+  const [brandList, setBrandList] = useState<string[]>([]);
   const [items, setItems] = useState<StockCountItemData[]>([]);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [loadingItems, setLoadingItems] = useState(false);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
-  const [counts, setCounts] = useState<Record<string, string>>({});
+  const [counts, setCounts] = useState<Record<string, number | null>>({});
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
-  const [savedCount, setSavedCount] = useState(0);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [tab, setTab] = useState<"uncounted" | "counted" | "all">("uncounted");
+  const [tabCounts, setTabCounts] = useState({ total: 0, counted: 0, uncounted: 0 });
+  const [staleCount, setStaleCount] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
+  const [quickMode, setQuickMode] = useState(false);
+  const [showRejectModal, setShowRejectModal] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dirtyRef = useRef<Set<string>>(new Set());
 
-  // Fetch summary (lightweight — no items)
+  const isBaseline = new Date() < BASELINE_END;
+
+  // Fetch summary
   const fetchSummary = useCallback(() => {
     fetch(`/api/stock-counts/${id}`)
       .then((r) => r.json())
@@ -72,61 +117,134 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       .finally(() => setLoadingSummary(false));
   }, [id]);
 
-  // Fetch items: show counted items by default, all items when searching
+  // Fetch items with tab filter
   const fetchItems = useCallback(() => {
     setLoadingItems(true);
     const params = new URLSearchParams();
     if (debouncedSearch) {
       params.set("search", debouncedSearch);
     } else {
-      params.set("filter", "counted");
+      params.set("filter", tab);
     }
 
     fetch(`/api/stock-counts/${id}/items?${params}`)
       .then((r) => r.json())
       .then((res) => {
         if (res.success) {
-          setItems(res.data);
-          // Preserve existing local counts, load server counts for new items
-          setCounts((prev) => {
-            const merged = { ...prev };
-            res.data.forEach((item: StockCountItemData) => {
-              if (!(item.id in merged) && item.countedQty !== null) {
-                merged[item.id] = String(item.countedQty);
-              }
+          let fetchedItems: StockCountItemData[] = res.data.items || res.data;
+          // Client-side fuzzy fallback if API returns 0 results and we have a search term
+          if (debouncedSearch && fetchedItems.length === 0) {
+            // Re-fetch all items and filter client-side
+            fetch(`/api/stock-counts/${id}/items?filter=all`)
+              .then((r2) => r2.json())
+              .then((res2) => {
+                if (res2.success) {
+                  const allItems: StockCountItemData[] = res2.data.items || res2.data;
+                  const fuzzyResults = allItems.filter((item) =>
+                    fuzzyMatch(debouncedSearch, item.product.name) ||
+                    fuzzyMatch(debouncedSearch, item.product.sku) ||
+                    (item.product.brand && fuzzyMatch(debouncedSearch, item.product.brand.name)) ||
+                    (item.product.category && fuzzyMatch(debouncedSearch, item.product.category.name))
+                  );
+                  setItems(fuzzyResults);
+                  mergeServerCounts(fuzzyResults);
+                }
+              })
+              .catch(() => {})
+              .finally(() => setLoadingItems(false));
+            return;
+          }
+
+          setItems(fetchedItems);
+          mergeServerCounts(fetchedItems);
+          // Update tab counts
+          if (res.data.totalCount !== undefined) {
+            setTabCounts({
+              total: res.data.totalCount,
+              counted: res.data.countedCount,
+              uncounted: res.data.uncountedCount,
             });
-            return merged;
-          });
+          }
+          if (res.data.staleCount !== undefined) {
+            setStaleCount(res.data.staleCount);
+          }
         }
       })
       .catch(() => {})
       .finally(() => setLoadingItems(false));
-  }, [id, debouncedSearch]);
+  }, [id, debouncedSearch, tab]);
+
+  function mergeServerCounts(fetchedItems: StockCountItemData[]) {
+    setCounts((prev) => {
+      const merged = { ...prev };
+      fetchedItems.forEach((item) => {
+        if (!(item.id in merged) && item.countedQty !== null) {
+          merged[item.id] = item.countedQty;
+        }
+      });
+      return merged;
+    });
+  }
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchItems(); }, [fetchItems]);
+  useEffect(() => {
+    fetch("/api/brands").then((r) => r.json()).then((res) => {
+      if (res.success) setBrandList(res.data.map((b: { name: string }) => b.name));
+    }).catch(() => {});
+  }, []);
 
-  const handleStatusChange = async (newStatus: string) => {
-    setActionLoading(true);
-    try {
-      await fetch(`/api/stock-counts/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      fetchSummary();
-    } catch { /* */ }
-    finally { setActionLoading(false); }
-  };
+  // Auto-save: whenever counts change, debounce 2s then save (not for ADMIN)
+  useEffect(() => {
+    if (isAdmin || dirtyRef.current.size === 0) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(() => {
+      doAutoSave();
+    }, 2000);
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  }, [counts]);
 
-  const handleSaveBatch = async () => {
-    const batch = Object.entries(counts)
-      .filter(([, val]) => val !== "")
-      .map(([itemId, val]) => ({ id: itemId, countedQty: parseInt(val, 10) }))
-      .filter((i) => !isNaN(i.countedQty));
+  const doAutoSave = async () => {
+    const dirty = Array.from(dirtyRef.current);
+    if (dirty.length === 0) return;
+
+    const batch = dirty
+      .filter((itemId) => counts[itemId] !== undefined && counts[itemId] !== null)
+      .map((itemId) => ({
+        id: itemId,
+        countedQty: counts[itemId]!,
+        ...(brands[itemId] ? { suggestedBrand: brands[itemId] } : {}),
+      }));
 
     if (batch.length === 0) return;
 
+    setAutoSaveStatus("saving");
+    try {
+      const res = await fetch(`/api/stock-counts/${id}/items`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: batch }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        dirtyRef.current = new Set();
+        setAutoSaveStatus("saved");
+        setTimeout(() => setAutoSaveStatus("idle"), 2000);
+        fetchSummary();
+      }
+    } catch { /* */ }
+  };
+
+  const handleManualSave = async () => {
+    const batch = Object.entries(counts)
+      .filter(([, val]) => val !== null && val !== undefined)
+      .map(([itemId, val]) => ({
+        id: itemId,
+        countedQty: val!,
+        ...(brands[itemId] ? { suggestedBrand: brands[itemId] } : {}),
+      }));
+
+    if (batch.length === 0) return;
     setSaving(true);
     try {
       const res = await fetch(`/api/stock-counts/${id}/items`, {
@@ -136,8 +254,9 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       });
       const data = await res.json();
       if (data.success) {
-        setSavedCount(data.data.updated);
-        setTimeout(() => setSavedCount(0), 2000);
+        dirtyRef.current = new Set();
+        setAutoSaveStatus("saved");
+        setTimeout(() => setAutoSaveStatus("idle"), 2000);
         fetchSummary();
         fetchItems();
       }
@@ -145,20 +264,63 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
     finally { setSaving(false); }
   };
 
+  const handleStatusChange = async (newStatus: string, extras?: Record<string, string>) => {
+    setActionLoading(true);
+    try {
+      await fetch(`/api/stock-counts/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus, ...extras }),
+      });
+      fetchSummary();
+    } catch { /* */ }
+    finally { setActionLoading(false); }
+  };
+
+  const handleRefreshSystemQty = async () => {
+    setRefreshing(true);
+    try {
+      await fetch(`/api/stock-counts/${id}/items`, { method: "PATCH" });
+      setStaleCount(0);
+      fetchItems();
+    } catch { /* */ }
+    finally { setRefreshing(false); }
+  };
+
   const handleDelete = async () => {
-    if (!confirm("Delete this stock audit permanently? This cannot be undone.")) return;
     setDeleting(true);
     try {
       const res = await fetch(`/api/stock-counts/${id}`, { method: "DELETE" });
       const data = await res.json();
-      if (data.success) {
-        router.push("/stock-audit");
-      } else {
-        alert(data.error || "Failed to delete");
-      }
+      if (data.success) router.push("/stock-audit");
+      else alert(data.error || "Failed to delete");
     } catch { alert("Failed to delete"); }
     finally { setDeleting(false); }
   };
+
+  const handleReject = () => {
+    handleStatusChange("REJECTED", { rejectionReason: rejectReason });
+    setShowRejectModal(false);
+    setRejectReason("");
+  };
+
+  const setCount = (itemId: string, value: number | null) => {
+    setCounts((prev) => ({ ...prev, [itemId]: value }));
+    if (value !== null) {
+      dirtyRef.current.add(itemId);
+    }
+  };
+
+  const increment = (itemId: string) => {
+    const current = counts[itemId] ?? 0;
+    setCount(itemId, current + 1);
+  };
+
+  const decrement = (itemId: string) => {
+    const current = counts[itemId] ?? 0;
+    if (current > 0) setCount(itemId, current - 1);
+  };
+
 
   if (loadingSummary) {
     return (
@@ -183,10 +345,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
   }
 
   const progress = summary.totalItems > 0 ? Math.round((summary.countedItems / summary.totalItems) * 100) : 0;
-  const unsavedCount = Object.entries(counts).filter(([itemId, val]) => {
-    const item = items.find((i) => i.id === itemId);
-    return val !== "" && item && String(item.countedQty ?? "") !== val;
-  }).length;
+  const remaining = summary.totalItems - summary.countedItems;
 
   return (
     <div>
@@ -202,22 +361,53 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
             {summary.bin && ` | ${summary.bin.name} (${summary.bin.location})`}
           </p>
         </div>
-        <Badge variant={STATUS_STYLE[summary.status] as "warning" | "info" | "success"}>
+        <Badge variant={STATUS_STYLE[summary.status] as "warning" | "info" | "success" | "danger"}>
           {summary.status === "IN_PROGRESS" ? "In Progress" : summary.status.charAt(0) + summary.status.slice(1).toLowerCase()}
         </Badge>
-        <button onClick={handleDelete} disabled={deleting}
-          className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg disabled:opacity-50"
-          title="Delete audit">
-          <Trash2 className="h-4.5 w-4.5" />
+        <button onClick={() => setShowDeleteConfirm(true)} disabled={deleting}
+          className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg disabled:opacity-50">
+          <Trash2 className="h-4 w-4" />
         </button>
       </div>
+
+      {/* Baseline / Verification Banner */}
+      {summary.status === "IN_PROGRESS" && (
+        <Card className={`mb-3 ${isBaseline ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-slate-50"}`}>
+          <CardContent className="p-2.5 flex items-center gap-2">
+            <Info className={`h-4 w-4 shrink-0 ${isBaseline ? "text-blue-600" : "text-slate-500"}`} />
+            <p className={`text-xs ${isBaseline ? "text-blue-800" : "text-slate-600"}`}>
+              {isBaseline
+                ? "Baseline Count — only count items you physically find. Uncounted items will be set to 0."
+                : "Audit Count — only variances will create stock adjustments"}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Movement Warning Banner */}
+      {staleCount > 0 && summary.status === "IN_PROGRESS" && (
+        <Card className="mb-3 border-amber-200 bg-amber-50">
+          <CardContent className="p-2.5 flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+            <p className="text-xs text-amber-800 flex-1">
+              {staleCount} item{staleCount > 1 ? "s" : ""} had stock movements since count started
+            </p>
+            <button onClick={handleRefreshSystemQty} disabled={refreshing}
+              className="shrink-0 flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-100 px-2.5 py-1 rounded-lg disabled:opacity-50">
+              <RefreshCw className={`h-3 w-3 ${refreshing ? "animate-spin" : ""}`} /> Refresh
+            </button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Progress */}
       <Card className="mb-3">
         <CardContent className="p-3">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-xs text-slate-500">Progress</span>
-            <span className="text-xs font-medium text-slate-700">{summary.countedItems}/{summary.totalItems} ({progress}%)</span>
+            <span className="text-xs font-medium text-slate-700">
+              {summary.countedItems} of {summary.totalItems} counted{remaining > 0 ? ` — ${remaining} left` : " — all done!"}
+            </span>
           </div>
           <div className="w-full bg-slate-200 rounded-full h-2 mb-2">
             <div
@@ -227,13 +417,39 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
           </div>
           <div className="flex gap-4 text-xs">
             <span className="text-slate-500">Variance: <span className="font-medium text-slate-700">{summary.itemsWithVariance}</span></span>
-            <span className="text-slate-500">Total: <span className={`font-medium ${summary.totalVariance !== 0 ? "text-red-600" : "text-green-600"}`}>{summary.totalVariance > 0 ? "+" : ""}{summary.totalVariance}</span></span>
+            <span className="text-slate-500">Net: <span className={`font-medium ${summary.totalVariance !== 0 ? "text-red-600" : "text-green-600"}`}>{summary.totalVariance > 0 ? "+" : ""}{summary.totalVariance}</span></span>
           </div>
         </CardContent>
       </Card>
 
+      {/* Status Banners */}
+      {summary.status === "APPROVED" && (
+        <Card className="mb-3 border-green-200 bg-green-50">
+          <CardContent className="p-3 flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-green-600 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-green-900">Approved</p>
+              <p className="text-[10px] text-green-700">
+                By {summary.approvedBy?.name} on {summary.approvedAt ? new Date(summary.approvedAt).toLocaleDateString("en-IN") : "—"}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      {summary.status === "REJECTED" && (
+        <Card className="mb-3 border-red-200 bg-red-50">
+          <CardContent className="p-3 flex items-center gap-2">
+            <XCircle className="h-5 w-5 text-red-600 shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-red-900">Rejected</p>
+              {summary.rejectionReason && <p className="text-[10px] text-red-700">{summary.rejectionReason}</p>}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Action Buttons */}
-      {summary.status === "COMPLETED" && (
+      {(summary.status === "COMPLETED" || summary.status === "APPROVED") && (
         <Link href={`/stock-audit/${id}/review`}>
           <button className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white py-2.5 rounded-lg text-sm font-medium mb-3">
             <Table className="h-4 w-4" /> Review Table View
@@ -241,27 +457,47 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         </Link>
       )}
 
-      {summary.status === "PENDING" && (
+      {summary.status === "COMPLETED" && canApprove && (
+        <div className="flex gap-2 mb-3">
+          <button onClick={() => handleStatusChange("APPROVED")} disabled={actionLoading}
+            className="flex-1 flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+            <ShieldCheck className="h-4 w-4" /> {actionLoading ? "..." : "Approve & Apply Stock"}
+          </button>
+          <button onClick={() => setShowRejectModal(true)}
+            className="flex-1 flex items-center justify-center gap-2 bg-red-600 text-white py-2.5 rounded-lg text-sm font-medium">
+            <XCircle className="h-4 w-4" /> Reject
+          </button>
+        </div>
+      )}
+
+      {summary.status === "REJECTED" && !isAdmin && (
+        <button onClick={() => handleStatusChange("IN_PROGRESS")} disabled={actionLoading}
+          className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium mb-3 disabled:opacity-50">
+          <Play className="h-4 w-4" /> {actionLoading ? "Starting..." : "Re-start Counting"}
+        </button>
+      )}
+
+      {summary.status === "PENDING" && !isAdmin && (
         <button onClick={() => handleStatusChange("IN_PROGRESS")} disabled={actionLoading}
           className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium mb-3 disabled:opacity-50">
           <Play className="h-4 w-4" /> {actionLoading ? "Starting..." : "Start Counting"}
         </button>
       )}
 
-      {summary.status === "IN_PROGRESS" && (
+      {summary.status === "IN_PROGRESS" && !isAdmin && (
         <div className="flex gap-2 mb-3">
-          <button onClick={handleSaveBatch} disabled={saving || unsavedCount === 0}
+          <button onClick={handleManualSave} disabled={saving || dirtyRef.current.size === 0}
             className="flex-1 flex items-center justify-center gap-2 bg-slate-900 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <Save className="h-4 w-4" />
-            {saving ? "Saving..." : savedCount > 0 ? `Saved ${savedCount}!` : unsavedCount > 0 ? `Save (${unsavedCount})` : "Save All"}
+            {saving ? "Saving..." : autoSaveStatus === "saved" ? "Saved ✓" : `Save (${dirtyRef.current.size})`}
           </button>
           <button onClick={async () => {
-            const uncountedCount = summary.totalItems - summary.countedItems - unsavedCount;
-            if (unsavedCount > 0) {
-              await handleSaveBatch();
-            }
-            if (uncountedCount > 0) {
-              if (!confirm(`${uncountedCount} item(s) have not been counted yet. Their stock will not be updated. Complete anyway?`)) return;
+            if (dirtyRef.current.size > 0) await handleManualSave();
+            if (remaining > 0) {
+              const msg = isBaseline
+                ? `You've counted ${summary.countedItems} item(s). The remaining ${remaining} uncounted item(s) will be set to 0 stock. Continue?`
+                : `${remaining} item(s) haven't been counted yet. Their stock will remain unchanged. Complete anyway?`;
+              if (!confirm(msg)) return;
             }
             handleStatusChange("COMPLETED");
           }} disabled={actionLoading || saving}
@@ -271,15 +507,47 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         </div>
       )}
 
-      {/* Smart Search */}
-      <div className="relative mb-2">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-        <Input
-          placeholder="Search by name, SKU, brand, or category..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
+      {/* Auto-save indicator */}
+      {autoSaveStatus !== "idle" && summary.status === "IN_PROGRESS" && (
+        <p className={`text-xs text-center mb-2 ${autoSaveStatus === "saving" ? "text-slate-400" : "text-green-600"}`}>
+          {autoSaveStatus === "saving" ? "Auto-saving..." : "Auto-saved ✓"}
+        </p>
+      )}
+
+      {/* Tabs: Uncounted / Counted / All */}
+      <div className="flex bg-slate-100 rounded-lg p-0.5 mb-2">
+        {(["uncounted", "counted", "all"] as const).map((t) => {
+          const count = t === "uncounted" ? tabCounts.uncounted : t === "counted" ? tabCounts.counted : tabCounts.total;
+          return (
+            <button key={t} onClick={() => { setTab(t); setSearch(""); }}
+              className={`flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                tab === t ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+              }`}>
+              {t.charAt(0).toUpperCase() + t.slice(1)} ({count})
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Search + Quick Mode Toggle */}
+      <div className="flex gap-2 mb-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Input
+            placeholder="Search name, SKU, brand (typos ok)..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        {summary.status === "IN_PROGRESS" && (
+          <button onClick={() => setQuickMode(!quickMode)}
+            className={`shrink-0 flex items-center gap-1 px-3 rounded-lg text-xs font-medium border ${
+              quickMode ? "bg-purple-50 border-purple-300 text-purple-700" : "bg-white border-slate-200 text-slate-600"
+            }`}>
+            <Zap className="h-3.5 w-3.5" /> Quick
+          </button>
+        )}
       </div>
 
       {/* Items */}
@@ -290,12 +558,58 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       ) : (
         <div className="space-y-2">
           {items.map((item) => {
-            const val = counts[item.id] ?? "";
-            const variance = val !== "" ? parseInt(val, 10) - item.systemQty : null;
-            const isCounted = item.countedQty !== null || val !== "";
+            const val = counts[item.id];
+            const displayVal = val ?? item.countedQty;
+            const variance = displayVal !== null && displayVal !== undefined ? displayVal - item.systemQty : null;
+            const isCounted = displayVal !== null && displayVal !== undefined;
 
+            if (quickMode && summary.status === "IN_PROGRESS") {
+              // Quick Count Mode — compact row with +/- buttons
+              return (
+                <div key={item.id} ref={(el) => { itemRefs.current[item.id] = el; }}
+                  className={`flex items-center gap-2 p-2 rounded-lg border ${isCounted ? "border-green-200 bg-green-50/50" : "border-slate-200"}`}>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-slate-900 truncate">{item.product.name}</p>
+                    <p className="text-[10px] text-slate-400">{item.product.sku} {item.product.brand ? `| ${item.product.brand.name}` : ""}</p>
+                  </div>
+                  <div className="text-right shrink-0 mr-1">
+                    <p className="text-[10px] text-slate-400">Sys</p>
+                    <p className="text-xs font-medium text-slate-600">{item.systemQty}</p>
+                  </div>
+                  <div className="flex items-center gap-0 shrink-0">
+                    <button onClick={() => decrement(item.id)}
+                      className="h-9 w-9 flex items-center justify-center bg-slate-100 rounded-l-lg border border-slate-200 active:bg-slate-200">
+                      <Minus className="h-4 w-4 text-slate-600" />
+                    </button>
+                    <button
+                      onClick={() => {
+                        const input = prompt("Enter count:", String(displayVal ?? 0));
+                        if (input !== null) {
+                          const n = parseInt(input, 10);
+                          if (!isNaN(n) && n >= 0) setCount(item.id, n);
+                        }
+                      }}
+                      className="h-9 min-w-[44px] flex items-center justify-center bg-white border-y border-slate-200 text-sm font-bold text-slate-900">
+                      {displayVal ?? 0}
+                    </button>
+                    <button onClick={() => increment(item.id)}
+                      className="h-9 w-9 flex items-center justify-center bg-blue-50 rounded-r-lg border border-blue-200 active:bg-blue-100">
+                      <Plus className="h-4 w-4 text-blue-600" />
+                    </button>
+                  </div>
+                  {variance !== null && (
+                    <p className={`text-xs font-bold shrink-0 min-w-[30px] text-right ${variance === 0 ? "text-green-600" : "text-red-600"}`}>
+                      {variance > 0 ? "+" : ""}{variance}
+                    </p>
+                  )}
+                </div>
+              );
+            }
+
+            // Card View (default)
             return (
-              <Card key={item.id} className={`${isCounted ? "border-l-4 border-l-green-400" : ""}`}>
+              <div key={item.id} ref={(el: HTMLDivElement | null) => { if (el) itemRefs.current[item.id] = el; }}>
+              <Card className={`${isCounted ? "border-l-4 border-l-green-400" : ""}`}>
                 <CardContent className="p-3">
                   <div className="flex items-start justify-between mb-1">
                     <div className="flex-1 min-w-0 mr-2">
@@ -314,22 +628,62 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
                   </div>
 
                   {summary.status === "IN_PROGRESS" ? (
-                    <div className="flex items-center gap-3 mt-2">
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min="0"
-                        placeholder="Physical count"
-                        value={val}
-                        onChange={(e) => setCounts((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                        className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                      />
-                      {variance !== null && !isNaN(variance) && (
-                        <div className={`text-right shrink-0 min-w-[60px] ${variance === 0 ? "text-green-600" : "text-red-600"}`}>
-                          <p className="text-xs">Var</p>
-                          <p className="text-sm font-bold">{variance > 0 ? "+" : ""}{variance}</p>
+                    <div className="space-y-2 mt-2">
+                      {/* Plus/Minus Counter */}
+                      <div className="flex items-center gap-3">
+                        <div className="flex items-center flex-1">
+                          <button onClick={() => decrement(item.id)}
+                            className="h-10 w-12 flex items-center justify-center bg-slate-100 rounded-l-lg border border-slate-200 active:bg-slate-200">
+                            <Minus className="h-5 w-5 text-slate-600" />
+                          </button>
+                          <button
+                            onClick={() => {
+                              const input = prompt("Enter count:", String(displayVal ?? 0));
+                              if (input !== null) {
+                                const n = parseInt(input, 10);
+                                if (!isNaN(n) && n >= 0) setCount(item.id, n);
+                              }
+                            }}
+                            className="h-10 flex-1 flex items-center justify-center bg-white border-y border-slate-200 text-lg font-bold text-slate-900 min-w-[60px]">
+                            {displayVal ?? 0}
+                          </button>
+                          <button onClick={() => increment(item.id)}
+                            className="h-10 w-12 flex items-center justify-center bg-blue-50 rounded-r-lg border border-blue-200 active:bg-blue-100">
+                            <Plus className="h-5 w-5 text-blue-600" />
+                          </button>
                         </div>
-                      )}
+                        {variance !== null && (
+                          <div className={`text-right shrink-0 min-w-[50px] ${variance === 0 ? "text-green-600" : "text-red-600"}`}>
+                            <p className="text-xs">Var</p>
+                            <p className="text-sm font-bold">{variance > 0 ? "+" : ""}{variance}</p>
+                          </div>
+                        )}
+                      </div>
+                      <div className="mt-1">
+                        <label className="text-[10px] text-slate-400 mb-0.5 block">
+                          Brand {item.product.brand ? `(current: ${item.product.brand.name})` : ""}
+                        </label>
+                        <select
+                          value={brands[item.id] ?? item.suggestedBrand ?? ""}
+                          onChange={(e) => {
+                            if (e.target.value === "__custom__") {
+                              const custom = prompt("Enter new brand name:");
+                              if (custom && custom.trim()) {
+                                setBrands((prev) => ({ ...prev, [item.id]: custom.trim() }));
+                                dirtyRef.current.add(item.id);
+                              }
+                            } else {
+                              setBrands((prev) => ({ ...prev, [item.id]: e.target.value }));
+                              if (e.target.value) dirtyRef.current.add(item.id);
+                            }
+                          }}
+                          className="w-full rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+                        >
+                          <option value="">— Keep current —</option>
+                          {brandList.map((b) => <option key={b} value={b}>{b}</option>)}
+                          <option value="__custom__">+ Add new brand...</option>
+                        </select>
+                      </div>
                     </div>
                   ) : item.countedQty !== null ? (
                     <div className="flex items-center gap-4 mt-2 text-xs">
@@ -342,12 +696,13 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
                   ) : null}
                 </CardContent>
               </Card>
+              </div>
             );
           })}
 
           {items.length === 0 && !loadingItems && (
             <p className="text-sm text-slate-400 text-center py-8">
-              {search ? "No items match your search" : "Search for items to count"}
+              {search ? "No items match — try a different spelling" : tab === "counted" ? "No items counted yet — tap + on items you find" : tab === "uncounted" ? "All items have been counted!" : "No items in this count"}
             </p>
           )}
 
@@ -356,6 +711,61 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
               Showing first 500 results. Use search to find specific items.
             </p>
           )}
+        </div>
+      )}
+
+      {/* Removed floating "Next" button — not useful for baseline counting */}
+
+      {/* Rejection Bottom Sheet Modal */}
+      {showRejectModal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setShowRejectModal(false)}>
+          <div className="w-full max-w-lg bg-white rounded-t-2xl p-4 pb-8 safe-bottom" onClick={(e) => e.stopPropagation()}>
+            <div className="w-10 h-1 bg-slate-300 rounded-full mx-auto mb-4" />
+            <h3 className="text-base font-bold text-slate-900 mb-3">Reject Stock Count</h3>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {["Counts seem off", "Missing items", "Recount needed", "Wrong bin"].map((r) => (
+                <button key={r} onClick={() => setRejectReason(r)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                    rejectReason === r ? "bg-red-50 border-red-300 text-red-700" : "bg-white border-slate-200 text-slate-600"
+                  }`}>
+                  {r}
+                </button>
+              ))}
+            </div>
+            <textarea
+              placeholder="Add details (optional)..."
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 min-h-[80px] mb-3"
+            />
+            <div className="flex gap-2">
+              <button onClick={() => setShowRejectModal(false)}
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700">
+                Cancel
+              </button>
+              <button onClick={handleReject} disabled={!rejectReason}
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-red-600 text-white disabled:opacity-50">
+                Reject
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="bg-white rounded-2xl p-5 mx-4 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-slate-900 mb-2">Delete Stock Count?</h3>
+            <p className="text-sm text-slate-500 mb-4">This cannot be undone. All counted data will be lost.</p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-slate-100 text-slate-700">Cancel</button>
+              <button onClick={() => { setShowDeleteConfirm(false); handleDelete(); }} disabled={deleting}
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-red-600 text-white disabled:opacity-50">
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

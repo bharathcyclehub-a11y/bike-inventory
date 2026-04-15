@@ -271,9 +271,61 @@ export async function GET(req: NextRequest) {
       allErrors.push(`Bills step failed: ${e instanceof Error ? e.message : "Unknown"}`);
     }
 
-    // --- Step 4: Sales Invoices → Outward Transactions ---
-    // DISABLED until stock count baseline is complete.
-    results.invoices = { imported: 0, skipped: 0, failed: 0 };
+    // --- Step 4: Sales Invoices → Delivery Records ---
+    try {
+      const invoices = await zoho.listAllInvoices(yesterday);
+      let imported = 0, skipped = 0, failed = 0;
+
+      for (const invoice of invoices) {
+        try {
+          const existing = await prisma.delivery.findFirst({
+            where: { invoiceNo: invoice.invoice_number },
+          });
+          if (existing) { skipped++; continue; }
+
+          // Skip unpaid invoices
+          if (invoice.balance > 0) { skipped++; continue; }
+
+          // Fetch invoice detail for line items
+          let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number; serialNumbers: string[] }> = [];
+          try {
+            await zoho.delay(1000);
+            const detail = await zoho.getInvoice(invoice.invoice_id);
+            lineItems = (detail.invoice.line_items || []).map((item) => ({
+              name: item.name,
+              sku: item.sku,
+              quantity: item.quantity,
+              rate: item.rate,
+              itemTotal: item.item_total,
+              serialNumbers: item.serial_numbers || [],
+            }));
+          } catch {
+            allErrors.push(`Invoice ${invoice.invoice_number}: failed to fetch line items`);
+          }
+
+          await prisma.delivery.create({
+            data: {
+              invoiceNo: invoice.invoice_number,
+              zohoInvoiceId: invoice.invoice_id,
+              invoiceDate: new Date(invoice.date),
+              invoiceAmount: invoice.total,
+              customerName: invoice.customer_name,
+              customerPhone: invoice.phone || null,
+              status: "PENDING",
+              lineItems: lineItems.length > 0 ? lineItems : undefined,
+            },
+          });
+          imported++;
+        } catch (e) {
+          failed++;
+          allErrors.push(`Invoice ${invoice.invoice_number}: ${e instanceof Error ? e.message : "Unknown"}`);
+        }
+      }
+      results.invoices = { imported, skipped, failed };
+    } catch (e) {
+      results.invoices = { imported: 0, skipped: 0, failed: -1 };
+      allErrors.push(`Invoices step failed: ${e instanceof Error ? e.message : "Unknown"}`);
+    }
 
     // --- Finalize sync log ---
     const totalImported = Object.values(results).reduce((s, r) => s + r.imported, 0);

@@ -40,7 +40,6 @@ export async function GET(req: NextRequest) {
       orderBy: groupBy === "brand"
         ? [{ brand: { name: "asc" } }, { name: "asc" }]
         : [{ category: { name: "asc" } }, { name: "asc" }],
-      take: 500,
     });
 
     // For "low" filter: currentStock <= reorderLevel (can't compare two fields in Prisma)
@@ -48,11 +47,11 @@ export async function GET(req: NextRequest) {
       products = products.filter((p) => p.reorderLevel > 0 && p.currentStock <= p.reorderLevel);
     }
 
-    // Group products
+    // Group products (handle null brand/category)
     const groups: Record<string, { id: string; name: string; products: typeof products }> = {};
     for (const p of products) {
-      const key = groupBy === "brand" ? p.brand.id : p.category.id;
-      const name = groupBy === "brand" ? p.brand.name : p.category.name;
+      const key = groupBy === "brand" ? (p.brand?.id || "unbranded") : (p.category?.id || "uncategorized");
+      const name = groupBy === "brand" ? (p.brand?.name || "Unbranded") : (p.category?.name || "Uncategorized");
       if (!groups[key]) groups[key] = { id: key, name, products: [] };
       groups[key].products.push(p);
     }

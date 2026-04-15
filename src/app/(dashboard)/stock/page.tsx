@@ -54,7 +54,7 @@ const QUICK_CHIPS: { key: QuickFilter; label: string }[] = [
 const BICYCLE_SIZES = ['12"', '14"', '16"', '20"', '24"', '26"', '27.5"', '29"'];
 
 const PAGE_SIZE = 100;
-const REFRESH_INTERVAL = 30_000; // 30 seconds
+const REFRESH_INTERVAL = 120_000; // 2 minutes
 
 function getStockColor(p: ProductItem) {
   if (p.currentStock <= 0) return "text-red-600";
@@ -185,6 +185,18 @@ export default function StockPage() {
             onPDF={() => exportToPDF("Stock Inventory", filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
           />
         </div>
+      </div>
+
+      {/* Quick Views */}
+      <div className="flex gap-2 mb-3">
+        <Link href="/stock/by-brand"
+          className="flex-1 flex items-center justify-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 py-2 rounded-lg text-xs font-medium">
+          By Brand
+        </Link>
+        <Link href="/stock/by-bin"
+          className="flex-1 flex items-center justify-center gap-1.5 bg-purple-50 border border-purple-200 text-purple-700 py-2 rounded-lg text-xs font-medium">
+          <MapPin className="h-3 w-3" /> By Bin
+        </Link>
       </div>
 
       {/* Search */}

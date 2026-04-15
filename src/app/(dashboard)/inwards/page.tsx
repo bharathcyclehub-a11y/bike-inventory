@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
 
 const INWARD_COLUMNS: ExportColumn[] = [
   { header: "Product", key: "product.name" },
@@ -196,8 +197,11 @@ export default function InwardsPage() {
               const verified = isVerified(t.notes);
               const vendor = getVendor(t.notes);
 
+              const unverified = zoho && !verified;
+              const aging = unverified ? getAging(t.createdAt) : null;
+
               return (
-                <div key={t.id} className="border-b border-slate-100 last:border-0">
+                <div key={t.id} className={`border-b border-slate-100 last:border-0 ${aging ? AGING_COLORS[aging.level] : ""}`}>
                   <div className="flex items-center gap-3 py-3">
                     <div className={`rounded-full p-2 ${zoho ? "bg-blue-50" : "bg-blue-50"}`}>
                       {zoho ? (
@@ -216,6 +220,11 @@ export default function InwardsPage() {
                     <div className="text-right shrink-0">
                       <p className="text-sm font-semibold text-blue-600">+{t.quantity}</p>
                       <p className="text-xs text-slate-400">{formatTime(t.createdAt)}</p>
+                      {aging && aging.level !== "ok" && (
+                        <span className={`inline-block mt-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full ${AGING_BADGE[aging.level]}`}>
+                          {aging.text}
+                        </span>
+                      )}
                     </div>
                   </div>
 

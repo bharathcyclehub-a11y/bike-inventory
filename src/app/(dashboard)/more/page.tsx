@@ -23,6 +23,9 @@ import {
   RefreshCw,
   HandCoins,
   AlertCircle,
+  Bell,
+  Truck,
+  Wrench,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -48,6 +51,12 @@ const ROLE_LABELS: Record<Role, string> = {
 
 // Ordered by frequency of use — tailored per role
 const menuItems: MenuItem[] = [
+  {
+    label: "Service Tickets",
+    icon: Wrench,
+    href: "/service",
+    roles: ["ADMIN", "ACCOUNTS_MANAGER", "OUTWARDS_CLERK"],
+  },
   {
     label: "Bills & Payments",
     icon: FileText,
@@ -144,6 +153,18 @@ const menuItems: MenuItem[] = [
     href: "#",
     roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
     comingSoon: true,
+  },
+  {
+    label: "Deliveries",
+    icon: Truck,
+    href: "/deliveries",
+    roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"],
+  },
+  {
+    label: "Alert Config",
+    icon: Bell,
+    href: "/more/alerts",
+    roles: ["ADMIN"],
   },
   {
     label: "Zoho Books Sync",

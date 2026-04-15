@@ -6,56 +6,56 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET() {
   try {
-    const user = await requireAuth();
-    const isAdmin = user.role === "ADMIN";
+    await requireAuth();
 
-    const brands = await prisma.brand.findMany({
-      orderBy: { name: "asc" },
-      include: {
-        products: {
-          where: { status: "ACTIVE" },
-          select: {
-            id: true,
-            name: true,
-            sku: true,
-            type: true,
-            currentStock: true,
-            reorderLevel: true,
-            sellingPrice: true,
-            costPrice: isAdmin,
-            mrp: true,
-            category: { select: { name: true } },
-            bin: { select: { code: true, name: true, location: true } },
-          },
-          orderBy: { name: "asc" },
+    // Fetch brand summaries using groupBy — no need to load all 2765 products
+    const [brands, brandStats] = await Promise.all([
+      prisma.brand.findMany({
+        orderBy: { name: "asc" },
+        select: {
+          id: true,
+          name: true,
+          contactPhone: true,
+          whatsappNumber: true,
+          _count: { select: { products: { where: { status: "ACTIVE" } } } },
         },
-      },
-    });
+      }),
+      // Aggregate stock metrics per brand in a single query
+      prisma.$queryRaw<Array<{
+        brandId: string;
+        total_stock: number;
+        low_stock: number;
+        out_of_stock: number;
+        total_value: number;
+      }>>`
+        SELECT
+          "brandId",
+          COALESCE(SUM("currentStock"), 0)::int as total_stock,
+          COUNT(*) FILTER (WHERE "reorderLevel" > 0 AND "currentStock" <= "reorderLevel")::int as low_stock,
+          COUNT(*) FILTER (WHERE "currentStock" <= 0)::int as out_of_stock,
+          COALESCE(SUM("currentStock" * "sellingPrice"), 0)::float as total_value
+        FROM "Product"
+        WHERE status = 'ACTIVE' AND "brandId" IS NOT NULL
+        GROUP BY "brandId"
+      `,
+    ]);
+
+    const statsMap = new Map(brandStats.map((s) => [s.brandId, s]));
 
     const data = brands
-      .filter((b) => b.products.length > 0)
+      .filter((b) => b._count.products > 0)
       .map((b) => {
-        const totalStock = b.products.reduce((s, p) => s + p.currentStock, 0);
-        const lowStockCount = b.products.filter(
-          (p) => p.reorderLevel > 0 && p.currentStock <= p.reorderLevel
-        ).length;
-        const outOfStockCount = b.products.filter((p) => p.currentStock <= 0).length;
-        const totalValue = b.products.reduce(
-          (s, p) => s + p.currentStock * p.sellingPrice,
-          0
-        );
-
+        const stats = statsMap.get(b.id);
         return {
           id: b.id,
           name: b.name,
           contactPhone: b.contactPhone,
           whatsappNumber: b.whatsappNumber,
-          productCount: b.products.length,
-          totalStock,
-          lowStockCount,
-          outOfStockCount,
-          totalValue,
-          products: b.products,
+          productCount: b._count.products,
+          totalStock: stats?.total_stock || 0,
+          lowStockCount: stats?.low_stock || 0,
+          outOfStockCount: stats?.out_of_stock || 0,
+          totalValue: stats?.total_value || 0,
         };
       });
 

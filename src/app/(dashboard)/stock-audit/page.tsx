@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { Plus, ClipboardCheck } from "lucide-react";
+import { Plus, ClipboardCheck, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
@@ -23,9 +24,14 @@ const STATUS_STYLE: Record<string, string> = {
   PENDING: "warning",
   IN_PROGRESS: "info",
   COMPLETED: "success",
+  APPROVED: "success",
+  REJECTED: "danger",
 };
 
 export default function StockAuditPage() {
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string })?.role || "";
+  const canCreate = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
   const [counts, setCounts] = useState<StockCountItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("ALL");
@@ -40,18 +46,39 @@ export default function StockAuditPage() {
       .finally(() => setLoading(false));
   }, [filter]);
 
+  // Sort: overdue first, then by created date desc
+  const sortedCounts = useMemo(() => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    return [...counts].sort((a, b) => {
+      const aOverdue = ["PENDING", "IN_PROGRESS"].includes(a.status) && new Date(a.dueDate) < now;
+      const bOverdue = ["PENDING", "IN_PROGRESS"].includes(b.status) && new Date(b.dueDate) < now;
+      if (aOverdue && !bOverdue) return -1;
+      if (!aOverdue && bOverdue) return 1;
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
+  }, [counts]);
+
+  const isOverdue = (c: StockCountItem) => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    return ["PENDING", "IN_PROGRESS"].includes(c.status) && new Date(c.dueDate) < now;
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-lg font-bold text-slate-900">Stock Audit</h1>
-        <Link href="/stock-audit/new"
-          className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-medium">
-          <Plus className="h-4 w-4" /> New Audit
-        </Link>
+        {canCreate && (
+          <Link href="/stock-audit/new"
+            className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-medium">
+            <Plus className="h-4 w-4" /> New Audit
+          </Link>
+        )}
       </div>
 
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1">
-        {["ALL", "PENDING", "IN_PROGRESS", "COMPLETED"].map((s) => (
+        {["ALL", "PENDING", "IN_PROGRESS", "COMPLETED", "APPROVED", "REJECTED"].map((s) => (
           <button key={s} onClick={() => setFilter(s)}
             className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
               filter === s ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
@@ -65,27 +92,35 @@ export default function StockAuditPage() {
         <div className="flex items-center justify-center py-12">
           <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
         </div>
-      ) : counts.length === 0 ? (
+      ) : sortedCounts.length === 0 ? (
         <div className="text-center py-12">
           <ClipboardCheck className="h-10 w-10 text-slate-300 mx-auto mb-2" />
           <p className="text-sm text-slate-400">No stock audits found</p>
         </div>
       ) : (
         <div className="space-y-2">
-          {counts.map((c) => {
+          {sortedCounts.map((c) => {
             const progress = c.totalItems > 0 ? Math.round((c.countedItems / c.totalItems) * 100) : 0;
+            const overdue = isOverdue(c);
             return (
               <Link key={c.id} href={`/stock-audit/${c.id}`}>
-                <Card className="mb-2">
+                <Card className={`mb-2 ${overdue ? "border-red-300 bg-red-50/30" : ""}`}>
                   <CardContent className="p-3">
                     <div className="flex items-start justify-between mb-1">
                       <div className="flex-1 min-w-0 mr-2">
-                        <p className="text-sm font-medium text-slate-900 truncate">{c.title}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-medium text-slate-900 truncate">{c.title}</p>
+                          {overdue && (
+                            <Badge variant="danger" className="shrink-0 flex items-center gap-0.5 text-[10px] px-1.5 py-0">
+                              <AlertTriangle className="h-2.5 w-2.5" /> Overdue
+                            </Badge>
+                          )}
+                        </div>
                         <p className="text-xs text-slate-500">
                           Assigned: {c.assignedTo.name} | Due: {new Date(c.dueDate).toLocaleDateString("en-IN")}
                         </p>
                       </div>
-                      <Badge variant={STATUS_STYLE[c.status] as "warning" | "info" | "success"}>
+                      <Badge variant={STATUS_STYLE[c.status] as "warning" | "info" | "success" | "danger"}>
                         {c.status === "IN_PROGRESS" ? "In Progress" : c.status.charAt(0) + c.status.slice(1).toLowerCase()}
                       </Badge>
                     </div>

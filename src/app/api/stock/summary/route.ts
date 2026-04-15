@@ -14,7 +14,9 @@ export async function GET() {
       totalProducts,
       todayInwards,
       todayOutwards,
-      products,
+      stockAgg,
+      categoryBreakdownRaw,
+      lowStockProducts,
     ] = await Promise.all([
       prisma.product.count({ where: { status: "ACTIVE" } }),
       prisma.inventoryTransaction.aggregate({
@@ -27,26 +29,29 @@ export async function GET() {
         _sum: { quantity: true },
         _count: true,
       }),
-      prisma.product.findMany({
+      // Use raw SQL to compute stock value in DB instead of loading 2765 products
+      prisma.$queryRaw<[{ value: number }]>`
+        SELECT COALESCE(SUM("currentStock" * "costPrice"), 0)::float as value
+        FROM "Product" WHERE status = 'ACTIVE'
+      `,
+      prisma.product.groupBy({
+        by: ["categoryId"],
         where: { status: "ACTIVE" },
-        select: { currentStock: true, costPrice: true, reorderLevel: true, categoryId: true },
+        _count: true,
       }),
+      // Low stock count via raw SQL (compare two fields)
+      prisma.$queryRaw<[{ count: number }]>`
+        SELECT COUNT(*)::int as count FROM "Product"
+        WHERE status = 'ACTIVE' AND "reorderLevel" > 0 AND "currentStock" <= "reorderLevel"
+      `,
     ]);
 
-    // Filter low stock in JS (Prisma can't compare two fields)
-    const lowStockCount = products.filter(
-      (p) => p.reorderLevel > 0 && p.currentStock <= p.reorderLevel
-    ).length;
-
-    const totalStockValue = products.reduce(
-      (sum, p) => sum + p.currentStock * p.costPrice,
-      0
-    );
+    const totalStockValue = stockAgg[0]?.value || 0;
+    const lowStockCount = lowStockProducts[0]?.count || 0;
 
     const categoryBreakdown: Record<string, number> = {};
-    for (const p of products) {
-      categoryBreakdown[p.categoryId] =
-        (categoryBreakdown[p.categoryId] || 0) + 1;
+    for (const c of categoryBreakdownRaw) {
+      categoryBreakdown[c.categoryId] = c._count;
     }
 
     return successResponse({

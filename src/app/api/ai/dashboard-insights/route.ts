@@ -1,4 +1,4 @@
-export const dynamic = "force-dynamic";
+export const revalidate = 120; // cache insights 2 minutes
 
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
@@ -15,18 +15,21 @@ export async function GET() {
     const weekStart = new Date(todayStart.getTime() - 7 * 24 * 60 * 60 * 1000);
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
-    // Single product query instead of 3 separate ones (PERF: saves 2 DB round-trips)
+    // Use raw SQL aggregations instead of loading all 2765 products into memory
     const [
-      allProducts,
+      stockMetrics,
       todaySales,
       yesterdaySales,
       topSellerWeek,
-      deadStockTxns,
+      deadStockCount,
     ] = await Promise.all([
-      prisma.product.findMany({
-        where: { status: "ACTIVE" },
-        select: { id: true, currentStock: true, costPrice: true, reorderLevel: true, maxStock: true },
-      }),
+      prisma.$queryRaw<[{ reorder_count: number; overstock_count: number; stock_value: number }]>`
+        SELECT
+          COUNT(*) FILTER (WHERE "reorderLevel" > 0 AND "currentStock" <= "reorderLevel")::int as reorder_count,
+          COUNT(*) FILTER (WHERE "maxStock" > 0 AND "currentStock" > "maxStock")::int as overstock_count,
+          COALESCE(SUM("currentStock" * "costPrice"), 0)::float as stock_value
+        FROM "Product" WHERE status = 'ACTIVE'
+      `,
       prisma.inventoryTransaction.aggregate({
         where: { type: "OUTWARD", createdAt: { gte: todayStart } },
         _sum: { quantity: true },
@@ -44,19 +47,21 @@ export async function GET() {
         orderBy: { _sum: { quantity: "desc" } },
         take: 1,
       }),
-      prisma.inventoryTransaction.groupBy({
-        by: ["productId"],
-        where: { type: "OUTWARD", createdAt: { gte: ninetyDaysAgo } },
-        _sum: { quantity: true },
-      }),
+      // Count products with NO outward transactions in 90 days
+      prisma.$queryRaw<[{ count: number }]>`
+        SELECT COUNT(*)::int as count FROM "Product" p
+        WHERE p.status = 'ACTIVE'
+        AND NOT EXISTS (
+          SELECT 1 FROM "InventoryTransaction" t
+          WHERE t."productId" = p.id AND t.type = 'OUTWARD' AND t."createdAt" >= ${ninetyDaysAgo}
+        )
+      `,
     ]);
 
-    // Derive all metrics from single product array
-    const reorderNum = allProducts.filter((p) => p.currentStock <= p.reorderLevel).length;
-    const overstockCount = allProducts.filter((p) => p.maxStock > 0 && p.currentStock > p.maxStock).length;
-    const totalStockValue = allProducts.reduce((sum, p) => sum + (p.currentStock * p.costPrice), 0);
-    const productsWithSales = new Set(deadStockTxns.map((t) => t.productId));
-    const deadStockCount = allProducts.filter((p) => !productsWithSales.has(p.id)).length;
+    const reorderNum = stockMetrics[0]?.reorder_count || 0;
+    const overstockCount = stockMetrics[0]?.overstock_count || 0;
+    const totalStockValue = stockMetrics[0]?.stock_value || 0;
+    const deadStock = deadStockCount[0]?.count || 0;
 
     let topSellerName = "None this week";
     if (topSellerWeek.length > 0) {
@@ -98,9 +103,9 @@ export async function GET() {
       },
       {
         type: "dead_stock",
-        title: `${deadStockCount} product${deadStockCount !== 1 ? "s" : ""} with no sales in 90 days`,
-        severity: deadStockCount > 10 ? "danger" : deadStockCount > 0 ? "warning" : "success",
-        value: deadStockCount,
+        title: `${deadStock} product${deadStock !== 1 ? "s" : ""} with no sales in 90 days`,
+        severity: deadStock > 10 ? "danger" : deadStock > 0 ? "warning" : "success",
+        value: deadStock,
       },
       {
         type: "stock_value",

@@ -13,6 +13,7 @@ import {
   ClipboardCheck,
   Building2,
   Receipt,
+  Truck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types";
@@ -74,7 +75,7 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "OUTWARDS_CLERK":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/outwards", label: "Verify", icon: ArrowUpCircle, key: "outwards" },
+        { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
         { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },

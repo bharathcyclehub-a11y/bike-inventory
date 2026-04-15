@@ -44,9 +44,12 @@ interface ProductDetail {
   hsnCode: string | null;
   size: string | null;
   tags: string[];
-  category: { name: string } | null;
-  brand: { name: string } | null;
-  bin: { code: string; name: string; location: string } | null;
+  categoryId: string | null;
+  category: { id: string; name: string } | null;
+  brandId: string | null;
+  brand: { id: string; name: string } | null;
+  binId: string | null;
+  bin: { id: string; code: string; name: string; location: string } | null;
   serialItems: SerialItem[];
   transactions: Transaction[];
 }
@@ -69,7 +72,22 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [editData, setEditData] = useState({ name: "", color: "", size: "", sellingPrice: 0, mrp: 0, reorderLevel: 0 });
+  const [editData, setEditData] = useState<Record<string, unknown>>({ name: "", color: "", size: "", sellingPrice: 0, mrp: 0, reorderLevel: 0, brandId: "", categoryId: "", binId: "" });
+  const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
+  const [bins, setBins] = useState<{ id: string; code: string; name: string; location: string }[]>([]);
+
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/brands").then((r) => r.json()),
+      fetch("/api/categories").then((r) => r.json()),
+      fetch("/api/bins").then((r) => r.json()),
+    ]).then(([bRes, cRes, binRes]) => {
+      if (bRes.success) setBrands(bRes.data);
+      if (cRes.success) setCategories(cRes.data);
+      if (binRes.success) setBins(binRes.data);
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch(`/api/products/${id}`)
@@ -106,6 +124,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       sellingPrice: product!.sellingPrice,
       mrp: product!.mrp,
       reorderLevel: product!.reorderLevel,
+      brandId: product!.brandId || "",
+      categoryId: product!.categoryId || "",
+      binId: product!.binId || "",
     });
     setEditing(true);
   }
@@ -113,14 +134,19 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   async function handleSave() {
     setSaving(true);
     try {
+      // Only send fields that changed
+      const payload: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(editData)) {
+        if (v !== "" && v !== undefined) payload[k] = v;
+      }
       const res = await fetch(`/api/products/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editData),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (data.success) {
-        setProduct({ ...product!, ...editData });
+        setProduct(data.data);
         setEditing(false);
       }
     } catch { /* */ }
@@ -145,30 +171,56 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             <p className="text-xs font-semibold text-blue-800 mb-1">Edit Product</p>
             <div>
               <label className="text-[10px] text-slate-500">Name</label>
-              <Input value={editData.name} onChange={(e) => setEditData({ ...editData, name: e.target.value })} />
+              <Input value={editData.name as string} onChange={(e) => setEditData({ ...editData, name: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-slate-500">Brand</label>
+                <select value={editData.brandId as string} onChange={(e) => setEditData({ ...editData, brandId: e.target.value })}
+                  className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">No brand</option>
+                  {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500">Category</label>
+                <select value={editData.categoryId as string} onChange={(e) => setEditData({ ...editData, categoryId: e.target.value })}
+                  className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="">No category</option>
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500">Bin / Location</label>
+              <select value={editData.binId as string} onChange={(e) => setEditData({ ...editData, binId: e.target.value })}
+                className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">No bin</option>
+                {bins.map((b) => <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>)}
+              </select>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="text-[10px] text-slate-500">Size</label>
-                <Input value={editData.size} onChange={(e) => setEditData({ ...editData, size: e.target.value })} placeholder='e.g. 26"' />
+                <Input value={editData.size as string} onChange={(e) => setEditData({ ...editData, size: e.target.value })} placeholder='e.g. 26"' />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500">Color</label>
-                <Input value={editData.color} onChange={(e) => setEditData({ ...editData, color: e.target.value })} placeholder="e.g. Red" />
+                <Input value={editData.color as string} onChange={(e) => setEditData({ ...editData, color: e.target.value })} placeholder="e.g. Red" />
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div>
                 <label className="text-[10px] text-slate-500">Selling Price</label>
-                <Input type="number" value={editData.sellingPrice} onChange={(e) => setEditData({ ...editData, sellingPrice: Number(e.target.value) })} />
+                <Input type="number" value={editData.sellingPrice as number} onChange={(e) => setEditData({ ...editData, sellingPrice: Number(e.target.value) })} />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500">MRP</label>
-                <Input type="number" value={editData.mrp} onChange={(e) => setEditData({ ...editData, mrp: Number(e.target.value) })} />
+                <Input type="number" value={editData.mrp as number} onChange={(e) => setEditData({ ...editData, mrp: Number(e.target.value) })} />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500">Reorder Level</label>
-                <Input type="number" value={editData.reorderLevel} onChange={(e) => setEditData({ ...editData, reorderLevel: Number(e.target.value) })} />
+                <Input type="number" value={editData.reorderLevel as number} onChange={(e) => setEditData({ ...editData, reorderLevel: Number(e.target.value) })} />
               </div>
             </div>
             <div className="flex gap-2">

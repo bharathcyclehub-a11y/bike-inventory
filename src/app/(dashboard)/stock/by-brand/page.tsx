@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { ArrowLeft, ChevronDown, ChevronRight, Search, AlertTriangle, Package } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronRight, Search, AlertTriangle, Package, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -31,13 +31,14 @@ interface BrandStock {
   lowStockCount: number;
   outOfStockCount: number;
   totalValue: number;
-  products: BrandProduct[];
+  products?: BrandProduct[];
 }
 
 export default function BrandStockPage() {
   const [brands, setBrands] = useState<BrandStock[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [loadingBrands, setLoadingBrands] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
 
@@ -49,13 +50,28 @@ export default function BrandStockPage() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Lazy-load products for a brand when expanded
+  const loadBrandProducts = useCallback(async (brandId: string) => {
+    setLoadingBrands((prev) => new Set(prev).add(brandId));
+    try {
+      const res = await fetch(`/api/products?brandId=${brandId}&status=ACTIVE&limit=500&sortBy=name&sortOrder=asc`);
+      const data = await res.json();
+      if (data.success) {
+        setBrands((prev) => prev.map((b) =>
+          b.id === brandId ? { ...b, products: data.data } : b
+        ));
+      }
+    } catch {}
+    setLoadingBrands((prev) => {
+      const next = new Set(prev);
+      next.delete(brandId);
+      return next;
+    });
+  }, []);
+
   const filtered = debouncedSearch
     ? brands.filter((b) =>
-        b.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-        b.products.some((p) =>
-          p.name.toLowerCase().includes(debouncedSearch.toLowerCase()) ||
-          p.sku.toLowerCase().includes(debouncedSearch.toLowerCase())
-        )
+        b.name.toLowerCase().includes(debouncedSearch.toLowerCase())
       )
     : brands;
 
@@ -66,8 +82,16 @@ export default function BrandStockPage() {
   function toggle(id: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        // Lazy-load products if not already loaded
+        const brand = brands.find((b) => b.id === id);
+        if (brand && !brand.products) {
+          loadBrandProducts(id);
+        }
+      }
       return next;
     });
   }
@@ -89,7 +113,7 @@ export default function BrandStockPage() {
       <div className="relative mb-3">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
         <Input
-          placeholder="Search brand, product, or SKU..."
+          placeholder="Search brand..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="pl-9"
@@ -114,6 +138,7 @@ export default function BrandStockPage() {
         <div className="space-y-2">
           {filtered.map((brand) => {
             const isExpanded = expanded.has(brand.id);
+            const isLoadingProducts = loadingBrands.has(brand.id);
 
             return (
               <Card key={brand.id}>
@@ -155,24 +180,31 @@ export default function BrandStockPage() {
 
                   {isExpanded && (
                     <div className="border-t border-slate-100 px-3 pb-3">
-                      {brand.products.map((p) => (
-                        <Link key={p.id} href={`/stock/${p.id}`}>
-                          <div className="flex items-center gap-2 py-2 border-b border-slate-50 last:border-0 hover:bg-slate-50 -mx-1 px-1 rounded">
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs font-medium text-slate-800 truncate">{p.name}</p>
-                              <p className="text-[10px] text-slate-400">
-                                {p.sku} | {p.category?.name || ""} {p.bin ? `| ${p.bin.code}` : ""}
-                              </p>
+                      {isLoadingProducts ? (
+                        <div className="flex items-center justify-center py-4 gap-2">
+                          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                          <span className="text-xs text-slate-400">Loading products...</span>
+                        </div>
+                      ) : brand.products ? (
+                        brand.products.map((p) => (
+                          <Link key={p.id} href={`/stock/${p.id}`}>
+                            <div className="flex items-center gap-2 py-2 border-b border-slate-50 last:border-0 hover:bg-slate-50 -mx-1 px-1 rounded">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-xs font-medium text-slate-800 truncate">{p.name}</p>
+                                <p className="text-[10px] text-slate-400">
+                                  {p.sku} | {p.category?.name || ""} {p.bin ? `| ${p.bin.code}` : ""}
+                                </p>
+                              </div>
+                              <div className="text-right shrink-0">
+                                <p className={`text-sm font-bold ${
+                                  p.currentStock <= 0 ? "text-red-600" :
+                                  p.reorderLevel > 0 && p.currentStock <= p.reorderLevel ? "text-yellow-600" : "text-green-600"
+                                }`}>{p.currentStock}</p>
+                              </div>
                             </div>
-                            <div className="text-right shrink-0">
-                              <p className={`text-sm font-bold ${
-                                p.currentStock <= 0 ? "text-red-600" :
-                                p.currentStock <= p.reorderLevel ? "text-yellow-600" : "text-green-600"
-                              }`}>{p.currentStock}</p>
-                            </div>
-                          </div>
-                        </Link>
-                      ))}
+                          </Link>
+                        ))
+                      ) : null}
                     </div>
                   )}
                 </CardContent>

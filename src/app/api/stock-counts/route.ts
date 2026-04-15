@@ -60,23 +60,50 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
     const body = await req.json();
     const data = stockCountSchema.parse(body);
 
+    // Must assign to someone (ADMIN cannot self-assign)
+    if (!data.assignedToId) return errorResponse("You must assign the stock count to a team member", 400);
+    if (data.assignedToId === user.id) return errorResponse("You cannot assign a stock count to yourself", 400);
+
     let productIds = data.productIds;
     const binId = body.binId as string | undefined;
+    const locationScope = body.location as string | undefined;
+    const productType = data.productType || undefined;
 
     if (!productIds || productIds.length === 0) {
-      // Both "By Bin" and "All Products" load all active products.
-      // The bin is just a reference for where the physical count happens.
+      // Location-level scope: find all bins in that location, then get products from those bins
+      let binIds: string[] | undefined;
+      if (locationScope) {
+        const locationBins = await prisma.bin.findMany({
+          where: { location: locationScope, isActive: true },
+          select: { id: true },
+        });
+        binIds = locationBins.map((b) => b.id);
+        if (binIds.length === 0) {
+          return errorResponse("No active bins found for this location.", 400);
+        }
+      }
+
+      // Baseline mode: include ALL active products for bin/location counts
+      // so clerks can count what's physically there (items may not be assigned to a bin yet)
+      const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
+      const isBaseline = new Date() <= BASELINE_END;
+
       const allProducts = await prisma.product.findMany({
-        where: { status: "ACTIVE" },
+        where: {
+          status: "ACTIVE",
+          ...(productType && { type: productType }),
+          ...(!isBaseline && binId && { binId }),
+          ...(!isBaseline && binIds && { binId: { in: binIds } }),
+        },
         select: { id: true },
       });
 
       if (allProducts.length === 0) {
-        return errorResponse("No active products found.", 400);
+        return errorResponse("No active products found for this filter.", 400);
       }
 
       productIds = allProducts.map((p) => p.id);
@@ -92,6 +119,8 @@ export async function POST(req: NextRequest) {
         title: data.title,
         assignedToId: data.assignedToId || user.id,
         binId: binId || null,
+        location: locationScope || null,
+        productType: productType || null,
         dueDate: new Date(data.dueDate),
         notes: data.notes,
         items: {

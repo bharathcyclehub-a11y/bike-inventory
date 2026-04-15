@@ -332,6 +332,8 @@ export class ZohoClient {
         invoice_id: string;
         invoice_number: string;
         customer_name: string;
+        customer_id: string;
+        phone?: string;
         date: string;
         total: number;
         balance: number;
@@ -342,7 +344,7 @@ export class ZohoClient {
   }
 
   async listAllInvoices(dateFrom?: string) {
-    const all: Array<{ invoice_id: string; invoice_number: string; customer_name: string; date: string; total: number; balance: number; status: string }> = [];
+    const all: Array<{ invoice_id: string; invoice_number: string; customer_name: string; customer_id: string; phone?: string; date: string; total: number; balance: number; status: string }> = [];
     let page = 1;
     while (true) {
       const data = await this.listInvoices(page, dateFrom);

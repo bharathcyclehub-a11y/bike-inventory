@@ -151,6 +151,13 @@ model User {
   recordedExpenses Expense[]        @relation("ExpenseRecordedBy")
   recordedCustomerPayments CustomerPayment[] @relation("CustomerPaymentRecordedBy")
   createdIssues    VendorIssue[]    @relation("IssueCreatedBy")
+  approvedStockCounts StockCount[] @relation("StockCountApprovedBy")
+  verifiedDeliveries  Delivery[]   @relation("DeliveryVerifiedBy")
+
+  // Service tickets
+  createdTickets    ServiceTicket[]     @relation("TicketCreatedBy")
+  assignedTickets   ServiceTicket[]     @relation("TicketAssignedTo")
+  ticketNotes       ServiceTicketNote[]
 }
 
 model Category {
@@ -233,6 +240,8 @@ model Product {
   @@index([type])
   @@index([status, type])
   @@index([status, categoryId])
+  @@index([status, brandId])
+  @@index([status, currentStock])
   @@index([sku])
   @@index([name])
 }
@@ -330,36 +339,45 @@ model InventoryTransaction {
   @@index([userId])
   @@index([type])
   @@index([createdAt])
+  @@index([type, createdAt])
+  @@index([productId, type])
 }
 
 model StockCount {
-  id            String           @id @default(cuid())
-  title         String           // "Weekly Audit - Week 15"
-  assignedToId  String
-  assignedTo    User             @relation(fields: [assignedToId], references: [id])
-  binId         String?
-  bin           Bin?             @relation(fields: [binId], references: [id])
-  status        String           @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED
-  dueDate       DateTime
-  completedAt   DateTime?
-  notes         String?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  id              String           @id @default(cuid())
+  title           String           // "Weekly Audit - Week 15"
+  assignedToId    String
+  assignedTo      User             @relation(fields: [assignedToId], references: [id])
+  binId           String?
+  bin             Bin?             @relation(fields: [binId], references: [id])
+  status          String           @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, APPROVED, REJECTED
+  dueDate         DateTime
+  completedAt     DateTime?
+  approvedById    String?
+  approvedBy      User?            @relation("StockCountApprovedBy", fields: [approvedById], references: [id])
+  approvedAt      DateTime?
+  rejectionReason String?
+  notes           String?
+  productType     String?          // Filter: BICYCLE, SPARE_PART, ACCESSORY, or null=all
+  location        String?          // Location-level scope: "BCH-GF", "BCH-FF", etc. Null = single bin or all
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
-  items         StockCountItem[]
+  items           StockCountItem[]
 }
 
 model StockCountItem {
-  id            String     @id @default(cuid())
-  stockCountId  String
-  stockCount    StockCount @relation(fields: [stockCountId], references: [id])
-  productId     String
-  product       Product    @relation(fields: [productId], references: [id])
-  systemQty     Int
-  countedQty    Int?
-  variance      Int?
-  notes         String?
-  countedAt     DateTime?
+  id              String     @id @default(cuid())
+  stockCountId    String
+  stockCount      StockCount @relation(fields: [stockCountId], references: [id])
+  productId       String
+  product         Product    @relation(fields: [productId], references: [id])
+  systemQty       Int
+  countedQty      Int?
+  variance        Int?
+  suggestedBrand  String?    // Staff suggests brand for "Imported" items
+  notes           String?
+  countedAt       DateTime?
 }
 
 model Vendor {
@@ -664,4 +682,144 @@ model VendorIssue {
   @@index([status])
   @@index([priority])
   @@index([createdAt])
+}
+
+enum DeliveryStatus {
+  PENDING
+  VERIFIED
+  WALK_OUT
+  SCHEDULED
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FLAGGED
+  PREBOOKED
+}
+
+model Delivery {
+  id              String          @id @default(cuid())
+  invoiceNo       String          @unique
+  zohoInvoiceId   String?
+  invoiceDate     DateTime
+  invoiceAmount   Float
+
+  customerName    String
+  customerPhone   String?
+  customerAddress String?
+  customerArea    String?
+  customerPincode String?
+
+  status          DeliveryStatus  @default(PENDING)
+  verifiedAt      DateTime?
+  verifiedById    String?
+  verifiedBy      User?           @relation("DeliveryVerifiedBy", fields: [verifiedById], references: [id])
+
+  scheduledDate   DateTime?
+  dispatchedAt    DateTime?
+  deliveredAt     DateTime?
+
+  expectedReadyDate DateTime?
+  prebookNotes    String?
+
+  flagReason      String?
+  flaggedAt       DateTime?
+  flagResolvedAt  DateTime?
+  flagResolvedBy  String?
+
+  lineItems       Json?
+  notes           String?
+  deliveryNotes   String?
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([status])
+  @@index([invoiceDate])
+  @@index([customerArea])
+  @@index([scheduledDate])
+}
+
+// ─── Service Tickets (replaces TeleCRM) ───────────────────────
+
+model ServiceTicket {
+  id                String    @id @default(cuid())
+  ticketNo          String    @unique // Auto: BCH-SVC-0001
+
+  // Customer
+  customerName      String
+  customerPhone     String
+  alternatePhone    String?
+  customerAddress   String?
+  pincode           String?
+
+  // Product & Issue
+  productName       String
+  invoiceNo         String?
+  issueBrief        String
+
+  // Department & Assignment
+  department        String    // Bangalore Delivery, OB Delivery, In store service, EM Service, General Issues
+  assignedMechanic  String?   // mujahid, appi, harisha, iqbal, baba, ranju r
+  salesPerson       String?
+
+  // Status
+  status            String    @default("TICKET_ISSUED") // TICKET_ISSUED, ESCALATED, RESOLVED, RESOLUTION_DELAYED
+  emTicketStatus    String?   // OPEN, APPROVAL_PENDING, EVIDENCE_PENDING, DISPATCH_PENDING, IN_TRANSIT_TO_BCH, DELIVERED_TO_BCH, IN_TRANSIT_TO_CUSTOMER, CLOSED
+  ticketPendingFrom String?   // EM, CLIENT, BCH
+
+  // Delay reason (when RESOLUTION_DELAYED)
+  delayReason       String?   // client not responding, rejected for warranty, not ready to support, manager delay, order cancelled
+
+  // Delivery
+  deliveryZone      String?   // 9 Bangalore zones
+  deliveryAddress   String?
+  estimatedDelivery String?   // Today, Tomorrow, After 3 days, After a week
+  reversePickup     Boolean   @default(false)
+
+  // Accessories & Replacement
+  freeAccessories   String?
+  receivedReplacement String?
+
+  // Tracking
+  createdById       String
+  createdBy         User      @relation("TicketCreatedBy", fields: [createdById], references: [id])
+  assignedToId      String?
+  assignedTo        User?     @relation("TicketAssignedTo", fields: [assignedToId], references: [id])
+
+  priority          String    @default("NORMAL") // LOW, NORMAL, HIGH, URGENT
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  resolvedAt        DateTime?
+  closedAt          DateTime?
+
+  notes             ServiceTicketNote[]
+
+  @@index([status])
+  @@index([department])
+  @@index([emTicketStatus])
+  @@index([createdById])
+  @@index([assignedToId])
+  @@index([createdAt])
+  @@index([priority])
+  @@index([ticketNo])
+}
+
+model ServiceTicketNote {
+  id            String         @id @default(cuid())
+  ticketId      String
+  ticket        ServiceTicket  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  content       String
+  type          String         @default("NOTE") // NOTE, STATUS_CHANGE, ASSIGNMENT, ESCALATION
+  createdById   String
+  createdBy     User           @relation(fields: [createdById], references: [id])
+  createdAt     DateTime       @default(now())
+
+  @@index([ticketId])
+  @@index([createdAt])
+}
+
+model AlertConfig {
+  id            String   @id @default("singleton")
+  redFlagPhones String?
+  updatedAt     DateTime @updatedAt
 }

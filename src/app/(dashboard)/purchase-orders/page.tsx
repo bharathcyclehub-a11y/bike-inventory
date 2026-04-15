@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
-import { useDebounce } from "@/lib/utils";
+import { useDebounce, getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
 
 const PO_COLUMNS: ExportColumn[] = [
   { header: "PO Number", key: "poNumber" },
@@ -130,9 +130,12 @@ export default function PurchaseOrdersPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {orders.map((po) => (
+          {orders.map((po) => {
+            const needsTracking = ["SENT_TO_VENDOR", "PARTIALLY_RECEIVED"].includes(po.status);
+            const aging = needsTracking ? getAging(po.orderDate) : null;
+            return (
             <Link key={po.id} href={`/purchase-orders/${po.id}`}>
-              <Card className="hover:border-slate-300 transition-colors mb-2">
+              <Card className={`hover:border-slate-300 transition-colors mb-2 ${aging ? AGING_COLORS[aging.level] : ""}`}>
                 <CardContent className="p-3">
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0 mr-3">
@@ -149,12 +152,18 @@ export default function PurchaseOrdersPage() {
                       <Badge variant={statusVariant(po.status)} className="text-[10px] mt-1">
                         {po.status.replace(/_/g, " ")}
                       </Badge>
+                      {aging && aging.level !== "ok" && (
+                        <span className={`block text-[9px] font-medium px-1.5 py-0.5 rounded-full mt-1 ${AGING_BADGE[aging.level]}`}>
+                          {aging.text}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </CardContent>
               </Card>
             </Link>
-          ))}
+            );
+          })}
 
           {orders.length === 0 && (
             <div className="text-center py-12">
