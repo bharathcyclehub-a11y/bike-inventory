@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
@@ -13,6 +13,9 @@ export default function ZohoTestPage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{ totalItemsInPage: number; hasMore: boolean; samples: Array<Record<string, unknown>> } | null>(null);
   const [error, setError] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<Record<string, unknown> | null>(null);
+  const [importError, setImportError] = useState("");
 
   if (role !== "ADMIN") {
     return (
@@ -100,6 +103,76 @@ export default function ZohoTestPage() {
           ))}
         </div>
       )}
+      {/* Clean Import Section */}
+      <div className="mt-6 pt-6 border-t border-slate-200">
+        <h2 className="text-base font-bold text-slate-900 mb-2">Clean Import from Zoho</h2>
+        <Card className="mb-3 border-yellow-200 bg-yellow-50">
+          <CardContent className="p-3">
+            <div className="flex gap-2">
+              <AlertTriangle className="h-4 w-4 text-yellow-600 shrink-0 mt-0.5" />
+              <div className="text-xs text-yellow-800">
+                <p className="font-semibold mb-1">This will:</p>
+                <ul className="list-disc pl-4 space-y-0.5">
+                  <li>DELETE all products, transactions, serial items, stock count items</li>
+                  <li>Re-import ONLY items from Zoho with stock &gt; 0</li>
+                  <li>Create brands from Zoho brand/manufacturer field</li>
+                </ul>
+                <p className="mt-1 font-semibold">Safe: Users, vendors, POs, bills, payments, bins, expenses</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {importError && (
+          <Card className="mb-3 border-red-200 bg-red-50">
+            <CardContent className="p-3">
+              <p className="text-sm text-red-700 font-medium">Error: {importError}</p>
+            </CardContent>
+          </Card>
+        )}
+
+        {importResult && (
+          <Card className="mb-3 border-green-200 bg-green-50">
+            <CardContent className="p-3">
+              <p className="text-sm font-semibold text-green-800 mb-1">Import Complete</p>
+              <div className="grid grid-cols-2 gap-1 text-xs text-green-700">
+                <div>Zoho Total: <span className="font-medium">{String(importResult.zohoTotal)}</span></div>
+                <div>Active with Stock: <span className="font-medium">{String(importResult.activeWithStock)}</span></div>
+                <div>Imported: <span className="font-medium">{String(importResult.imported)}</span></div>
+                <div>Failed: <span className="font-medium">{String(importResult.failed)}</span></div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Button
+          variant="destructive"
+          className="w-full"
+          disabled={importing}
+          onClick={async () => {
+            if (!confirm("DELETE all products and re-import from Zoho? This cannot be undone.")) return;
+            if (!confirm("Are you SURE? All stock counts, transactions, and serial items will be deleted.")) return;
+            setImporting(true);
+            setImportError("");
+            setImportResult(null);
+            try {
+              const res = await fetch("/api/zoho/import/clean", { method: "POST" });
+              const data = await res.json();
+              if (data.success) {
+                setImportResult(data.data);
+              } else {
+                setImportError(data.error || "Import failed");
+              }
+            } catch (err) {
+              setImportError(err instanceof Error ? err.message : "Failed");
+            } finally {
+              setImporting(false);
+            }
+          }}
+        >
+          {importing ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Importing... (this may take a few minutes)</> : "Delete All & Re-Import from Zoho"}
+        </Button>
+      </div>
     </div>
   );
 }
