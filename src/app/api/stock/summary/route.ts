@@ -1,4 +1,4 @@
-export const dynamic = "force-dynamic";
+export const revalidate = 120; // cache stock summary 2 minutes
 
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
