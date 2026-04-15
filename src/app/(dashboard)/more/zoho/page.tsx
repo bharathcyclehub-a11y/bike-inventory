@@ -3,8 +3,8 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft, Cloud, CloudOff, RefreshCw, CheckCircle2, XCircle,
-  Package, Users, FileText, Receipt, Loader2, Clock, AlertTriangle,
+  ArrowLeft, Cloud, CloudOff, CheckCircle2, XCircle,
+  Package, Users, Receipt, Loader2, Clock, AlertTriangle,
   Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -44,7 +44,6 @@ export default function ZohoSettingsPage() {
   const [status, setStatus] = useState<ZohoStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
-  const [syncing, setSyncing] = useState<string | null>(null);
   const [importing, setImporting] = useState<string | null>(null);
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [logs, setLogs] = useState<SyncLogEntry[]>([]);
@@ -107,28 +106,6 @@ export default function ZohoSettingsPage() {
     } catch { /* ignore */ }
   }
 
-  async function handleSync(type: string) {
-    setSyncing(type);
-    setSyncResult(null);
-    try {
-      const res = await fetch(`/api/zoho/sync/${type}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setSyncResult(data.data);
-        fetchLogs();
-        fetchStatus();
-      } else {
-        setSyncResult({ syncType: type, status: "failed", total: 0, synced: 0, failed: 0, errors: [data.error] });
-      }
-    } catch {
-      setSyncResult({ syncType: type, status: "failed", total: 0, synced: 0, failed: 0, errors: ["Network error"] });
-    } finally { setSyncing(null); }
-  }
-
   async function handleImport(type: string) {
     setImporting(type);
     setSyncResult(null);
@@ -157,18 +134,10 @@ export default function ZohoSettingsPage() {
     } finally { setImporting(null); }
   }
 
-  const SYNC_TYPES = [
-    { key: "items", label: "Products", icon: Package, desc: "Push products to Zoho Items" },
-    { key: "contacts", label: "Vendors", icon: Users, desc: "Push vendors to Zoho Contacts" },
-    { key: "invoices", label: "Sales", icon: FileText, desc: "Push outwards as Zoho Invoices" },
-    { key: "bills", label: "Bills", icon: Receipt, desc: "Push vendor bills to Zoho" },
-  ];
-
   const IMPORT_TYPES = [
     { key: "contacts", label: "Vendors", icon: Users, desc: "Pull vendors from Zoho" },
     { key: "items", label: "Products & Brands", icon: Package, desc: "Pull items + brand details from Zoho (updates existing)" },
     { key: "bills", label: "Purchase Bills", icon: Receipt, desc: "Pull bills from Zoho (creates inward for verification)" },
-    { key: "invoices", label: "Sales Invoices (Apr 2026+)", icon: Receipt, desc: "Pull sales data from April 2026 FY onwards" },
   ];
 
   return (
@@ -210,34 +179,19 @@ export default function ZohoSettingsPage() {
             </CardContent>
           </Card>
 
-          {/* Sync Buttons */}
-          <div className="space-y-2 mb-4">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold text-slate-900">Sync Data</h2>
-              <Button size="sm" variant="outline" onClick={() => handleSync("all")} disabled={syncing !== null}>
-                {syncing === "all" ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
-                Sync All
-              </Button>
-            </div>
-
-            {SYNC_TYPES.map((st) => {
-              const Icon = st.icon;
-              return (
-                <Card key={st.key}>
-                  <CardContent className="p-3 flex items-center gap-3">
-                    <Icon className="h-5 w-5 text-slate-500 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-900">{st.label}</p>
-                      <p className="text-[10px] text-slate-500">{st.desc}</p>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => handleSync(st.key)} disabled={syncing !== null}>
-                      {syncing === st.key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Sync"}
-                    </Button>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
+          {/* Cron Info */}
+          <Card className="mb-4 border-blue-200 bg-blue-50">
+            <CardContent className="p-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Clock className="h-4 w-4 text-blue-600" />
+                <p className="text-xs font-semibold text-blue-900">Auto-Sync: Daily at 1 PM IST</p>
+              </div>
+              <p className="text-[10px] text-blue-700">
+                Pulls yesterday&apos;s vendors, items, and bills from Zoho. ~10-20 API calls/day (of 2,500 limit).
+                Invoices disabled until stock baseline is done.
+              </p>
+            </CardContent>
+          </Card>
 
           {/* Import from Zoho */}
           <div className="space-y-2 mb-4">
@@ -257,7 +211,7 @@ export default function ZohoSettingsPage() {
                       <p className="text-sm font-medium text-slate-900">{it.label}</p>
                       <p className="text-[10px] text-slate-500">{it.desc}</p>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => handleImport(it.key)} disabled={importing !== null || syncing !== null}>
+                    <Button size="sm" variant="outline" onClick={() => handleImport(it.key)} disabled={importing !== null}>
                       {importing === it.key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Import"}
                     </Button>
                   </CardContent>

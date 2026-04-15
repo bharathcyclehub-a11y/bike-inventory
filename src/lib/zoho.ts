@@ -145,8 +145,9 @@ export class ZohoClient {
     }>("GET", `/items/${itemId}`);
   }
 
-  async listItems(page = 1, statusFilter?: string) {
+  async listItems(page = 1, statusFilter?: string, lastModifiedTime?: string) {
     const statusParam = statusFilter ? `&status=${statusFilter}` : "";
+    const modifiedParam = lastModifiedTime ? `&last_modified_time=${lastModifiedTime}` : "";
     return this.apiCall<{
       items: Array<{
         item_id: string; sku: string; name: string; status?: string;
@@ -156,10 +157,10 @@ export class ZohoClient {
         stock_on_hand?: number; product_type?: string; item_type?: string;
       }>;
       page_context?: { has_more_page: boolean };
-    }>("GET", `/items?page=${page}&per_page=200${statusParam}`);
+    }>("GET", `/items?page=${page}&per_page=200${statusParam}${modifiedParam}`);
   }
 
-  async listAllItems(statusFilter?: string) {
+  async listAllItems(statusFilter?: string, lastModifiedTime?: string) {
     const all: Array<{
       item_id: string; sku: string; name: string; status?: string;
       brand?: string; manufacturer?: string;
@@ -169,7 +170,7 @@ export class ZohoClient {
     }> = [];
     let page = 1;
     while (true) {
-      const data = await this.listItems(page, statusFilter);
+      const data = await this.listItems(page, statusFilter, lastModifiedTime);
       all.push(...(data.items || []));
       if (!data.page_context?.has_more_page) break;
       page++;
@@ -244,7 +245,8 @@ export class ZohoClient {
 
   // ---- Pull/Import from Zoho ----
 
-  async listContacts(page = 1) {
+  async listContacts(page = 1, lastModifiedTime?: string) {
+    const modifiedParam = lastModifiedTime ? `&last_modified_time=${lastModifiedTime}` : "";
     return this.apiCall<{
       contacts: Array<{
         contact_id: string;
@@ -256,14 +258,14 @@ export class ZohoClient {
         billing_address?: { city?: string; state?: string };
       }>;
       page_context?: { has_more_page: boolean };
-    }>("GET", `/contacts?contact_type=vendor&page=${page}&per_page=200`);
+    }>("GET", `/contacts?contact_type=vendor&page=${page}&per_page=200${modifiedParam}`);
   }
 
-  async listAllContacts() {
+  async listAllContacts(lastModifiedTime?: string) {
     const all: Array<{ contact_id: string; contact_name: string; contact_type: string; gst_no?: string; email?: string; phone?: string; billing_address?: { city?: string; state?: string } }> = [];
     let page = 1;
     while (true) {
-      const data = await this.listContacts(page);
+      const data = await this.listContacts(page, lastModifiedTime);
       all.push(...(data.contacts || []));
       if (!data.page_context?.has_more_page) break;
       page++;
@@ -271,8 +273,9 @@ export class ZohoClient {
     return all;
   }
 
-  async listBills(page = 1, dateFrom?: string) {
+  async listBills(page = 1, dateFrom?: string, dateTo?: string) {
     const dateParam = dateFrom ? `&date_start=${dateFrom}` : "";
+    const dateEndParam = dateTo ? `&date_end=${dateTo}` : "";
     return this.apiCall<{
       bills: Array<{
         bill_id: string;
@@ -286,14 +289,14 @@ export class ZohoClient {
         status: string;
       }>;
       page_context?: { has_more_page: boolean };
-    }>("GET", `/bills?page=${page}&per_page=200${dateParam}`);
+    }>("GET", `/bills?page=${page}&per_page=200${dateParam}${dateEndParam}`);
   }
 
-  async listAllBills(dateFrom?: string) {
+  async listAllBills(dateFrom?: string, dateTo?: string) {
     const all: Array<{ bill_id: string; bill_number: string; vendor_name: string; vendor_id: string; date: string; due_date: string; total: number; balance: number; status: string }> = [];
     let page = 1;
     while (true) {
-      const data = await this.listBills(page, dateFrom);
+      const data = await this.listBills(page, dateFrom, dateTo);
       all.push(...(data.bills || []));
       if (!data.page_context?.has_more_page) break;
       page++;
