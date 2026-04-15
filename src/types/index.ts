@@ -372,3 +372,70 @@ export interface PaymentFormInput {
   referenceNo: string;
   notes: string;
 }
+
+// ---- Customers & Receivables ----
+
+export type CustomerType = "WALK_IN" | "REGULAR" | "DEALER";
+export type InvoiceStatus = "PENDING" | "PARTIALLY_PAID" | "PAID" | "OVERDUE";
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  type: CustomerType;
+  isActive: boolean;
+  createdAt: string;
+}
+
+export interface CustomerInvoice {
+  id: string;
+  customerId: string;
+  customer?: Customer;
+  invoiceNo: string;
+  invoiceDate: string;
+  dueDate: string;
+  amount: number;
+  paidAmount: number;
+  status: InvoiceStatus;
+  notes?: string;
+  payments?: CustomerPayment[];
+  createdAt: string;
+}
+
+export interface CustomerPayment {
+  id: string;
+  customerId: string;
+  customer?: Customer;
+  invoiceId?: string;
+  amount: number;
+  paymentMode: PaymentMode;
+  paymentDate: string;
+  referenceNo?: string;
+  notes?: string;
+  recordedById: string;
+  createdAt: string;
+}
+
+// ---- Vendor Issues ----
+
+export type IssueType = "QUALITY" | "SHORTAGE" | "DAMAGE" | "WRONG_ITEM" | "BILLING_ERROR" | "DELIVERY_DELAY" | "OTHER";
+export type IssueStatus = "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
+export type IssuePriority = "LOW" | "MEDIUM" | "HIGH" | "URGENT";
+
+export interface VendorIssue {
+  id: string;
+  vendorId: string;
+  vendor?: Vendor;
+  issueNo: string;
+  issueType: IssueType;
+  description: string;
+  status: IssueStatus;
+  priority: IssuePriority;
+  billId?: string;
+  resolution?: string;
+  resolvedAt?: string;
+  createdById: string;
+  createdAt: string;
+}

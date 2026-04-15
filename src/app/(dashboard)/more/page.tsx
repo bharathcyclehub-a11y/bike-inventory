@@ -21,6 +21,8 @@ import {
   Brain,
   ArrowRightLeft,
   RefreshCw,
+  HandCoins,
+  AlertCircle,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -60,6 +62,18 @@ const menuItems: MenuItem[] = [
     label: "Purchase Orders",
     icon: ShoppingCart,
     href: "/purchase-orders",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+  },
+  {
+    label: "Receivables",
+    icon: HandCoins,
+    href: "/receivables",
+    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+  },
+  {
+    label: "Vendor Issues",
+    icon: AlertCircle,
+    href: "/vendor-issues",
     roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
   },
   {

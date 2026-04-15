@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
-import { ArrowLeft, Phone, MessageSquare, FileText, CreditCard, Building2 } from "lucide-react";
+import { ArrowLeft, Phone, MessageSquare, FileText, CreditCard, Building2, AlertCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,13 +16,14 @@ type VendorDetail = Vendor & {
   purchaseOrders: PurchaseOrder[];
   bills: (VendorBill & { payments: Array<{ amount: number }> })[];
   credits: VendorCredit[];
+  _count?: { issues: number };
 };
 
 export default function VendorDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [vendor, setVendor] = useState<VendorDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"overview" | "pos" | "bills" | "credits">("overview");
+  const [tab, setTab] = useState<"overview" | "pos" | "bills" | "credits" | "issues">("overview");
 
   useEffect(() => {
     fetch(`/api/vendors/${id}`)
@@ -59,11 +60,14 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     .filter((b) => b.status !== "PAID")
     .reduce((sum, b) => sum + (b.amount - b.paidAmount), 0);
 
+  const issueCount = vendor._count?.issues ?? 0;
+
   const tabs = [
     { key: "overview", label: "Overview" },
     { key: "pos", label: `POs (${vendor.purchaseOrders.length})` },
     { key: "bills", label: `Bills (${vendor.bills.length})` },
     { key: "credits", label: `Credits (${vendor.credits.length})` },
+    { key: "issues", label: `Issues (${issueCount})` },
   ] as const;
 
   return (
@@ -247,6 +251,30 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
             </Card>
           ))}
           {vendor.credits.length === 0 && <p className="text-sm text-slate-400 text-center py-4">No credit notes</p>}
+        </div>
+      )}
+
+      {/* Issues Tab */}
+      {tab === "issues" && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 text-slate-500" />
+              <p className="text-sm font-medium text-slate-700">
+                {issueCount} issue{issueCount !== 1 ? "s" : ""} recorded
+              </p>
+            </div>
+            <Link href={`/vendor-issues?vendorId=${vendor.id}`}>
+              <Badge variant="info" className="cursor-pointer">View All</Badge>
+            </Link>
+          </div>
+          <Link href={`/vendor-issues/new`}>
+            <Card className="hover:border-slate-300 border-dashed">
+              <CardContent className="p-3 text-center">
+                <p className="text-sm text-blue-600 font-medium">+ Report New Issue</p>
+              </CardContent>
+            </Card>
+          </Link>
         </div>
       )}
     </div>

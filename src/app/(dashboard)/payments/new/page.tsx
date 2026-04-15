@@ -9,6 +9,17 @@ import { Input } from "@/components/ui/input";
 
 interface VendorOption { id: string; name: string; code: string; }
 interface BillOption { id: string; billNo: string; amount: number; paidAmount: number; vendorId: string; }
+interface CdEligibility {
+  eligible: boolean;
+  reason?: string;
+  cdPercentage?: number;
+  cdTermsDays?: number;
+  cdDeadline?: string;
+  discountAmount?: number;
+  daysRemaining?: number;
+  remaining?: number;
+  remainingAfterDiscount?: number;
+}
 
 const PAYMENT_MODES = ["CASH", "CHEQUE", "NEFT", "RTGS", "UPI"];
 
@@ -33,6 +44,8 @@ export default function NewPaymentPage() {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [cdInfo, setCdInfo] = useState<CdEligibility | null>(null);
+  const [applyCd, setApplyCd] = useState(false);
 
   useEffect(() => {
     fetch("/api/vendors?limit=100")
@@ -60,15 +73,29 @@ export default function NewPaymentPage() {
       .catch(() => {});
   }, [vendorId]);
 
+  // Fetch CD eligibility when bill changes
+  useEffect(() => {
+    setCdInfo(null);
+    setApplyCd(false);
+    if (!billId) return;
+    fetch(`/api/bills/${billId}/cd-eligibility`)
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.success) setCdInfo(res.data);
+      })
+      .catch(() => {});
+  }, [billId]);
+
   const selectedBill = bills.find((b) => b.id === billId);
   const billRemaining = selectedBill ? selectedBill.amount - selectedBill.paidAmount : 0;
+  const cdDiscount = applyCd && cdInfo?.eligible && cdInfo.discountAmount ? cdInfo.discountAmount : 0;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!vendorId || !amount || !paymentDate) return;
 
-    if (selectedBill && parseFloat(amount) > billRemaining) {
-      setError(`Amount exceeds bill remaining balance of ${formatCurrency(billRemaining)}`);
+    if (selectedBill && parseFloat(amount) + cdDiscount > billRemaining) {
+      setError(`Payment + discount exceeds bill remaining balance of ${formatCurrency(billRemaining)}`);
       return;
     }
 
@@ -83,6 +110,7 @@ export default function NewPaymentPage() {
           vendorId,
           billId: billId || undefined,
           amount: parseFloat(amount),
+          cdDiscountAmount: cdDiscount > 0 ? cdDiscount : undefined,
           paymentMode,
           paymentDate,
           referenceNo,
@@ -147,6 +175,59 @@ export default function NewPaymentPage() {
           </div>
         )}
 
+        {/* CD Eligibility Info */}
+        {billId && cdInfo && (
+          <div>
+            {cdInfo.eligible ? (
+              <div className="rounded-lg border border-green-200 bg-green-50 p-3">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium text-green-800">
+                    CD Available: {cdInfo.cdPercentage}%
+                  </span>
+                  <span className="text-xs text-green-600">
+                    {cdInfo.daysRemaining} day{cdInfo.daysRemaining !== 1 ? "s" : ""} left
+                  </span>
+                </div>
+                <p className="text-xs text-green-700">
+                  Discount: {formatCurrency(cdInfo.discountAmount || 0)} on bill of {formatCurrency(selectedBill?.amount || 0)}
+                </p>
+                <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={applyCd}
+                    onChange={(e) => {
+                      setApplyCd(e.target.checked);
+                      if (e.target.checked && cdInfo.remainingAfterDiscount !== undefined) {
+                        setAmount(String(cdInfo.remainingAfterDiscount));
+                      } else if (selectedBill) {
+                        setAmount(String(billRemaining));
+                      }
+                    }}
+                    className="h-4 w-4 rounded border-green-300 text-green-600 focus:ring-green-500"
+                  />
+                  <span className="text-sm font-medium text-green-800">Apply CD Discount</span>
+                </label>
+                {applyCd && (
+                  <p className="text-xs text-green-600 mt-1">
+                    Net payment: {formatCurrency(cdInfo.remainingAfterDiscount || 0)} + {formatCurrency(cdInfo.discountAmount || 0)} discount = {formatCurrency(billRemaining)} settled
+                  </p>
+                )}
+              </div>
+            ) : cdInfo.reason === "No CD terms configured" ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs text-slate-500">No CD terms for this vendor</p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                <span className="text-sm font-medium text-red-800">CD Expired</span>
+                <span className="text-xs text-red-500 ml-2">
+                  ({Math.abs(cdInfo.daysRemaining || 0)} days ago)
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">Amount *</label>
           <Input
@@ -161,6 +242,11 @@ export default function NewPaymentPage() {
           {selectedBill && (
             <p className="text-xs text-slate-500 mt-1">
               Bill remaining: {formatCurrency(billRemaining)}
+              {cdDiscount > 0 && (
+                <span className="text-green-600 ml-1">
+                  (includes {formatCurrency(cdDiscount)} CD discount)
+                </span>
+              )}
             </p>
           )}
         </div>

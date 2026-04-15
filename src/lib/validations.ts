@@ -176,6 +176,7 @@ export const vendorPaymentSchema = z.object({
   vendorId: z.string().min(1, "Vendor is required"),
   billId: z.string().optional(),
   amount: z.number().min(0.01, "Amount must be positive"),
+  cdDiscountAmount: z.number().min(0).optional(),
   paymentMode: z.enum(["CASH", "CHEQUE", "NEFT", "RTGS", "UPI", "CREDIT_ADJUSTMENT"]),
   paymentDate: z.string().min(1, "Payment date is required"),
   referenceNo: z.string().optional(),
@@ -206,4 +207,51 @@ export const expenseSchema = z.object({
 export const billFollowUpSchema = z.object({
   nextFollowUpDate: z.string().optional(),
   followUpNotes: z.string().optional(),
+});
+
+// ---- Customers & Receivables ----
+
+export const customerSchema = z.object({
+  name: z.string().min(1, "Name is required").max(200),
+  phone: z.string().optional(),
+  email: z.string().email().optional().or(z.literal("")),
+  address: z.string().optional(),
+  type: z.enum(["WALK_IN", "REGULAR", "DEALER"]).optional(),
+});
+
+export const customerUpdateSchema = customerSchema.partial();
+
+export const customerInvoiceSchema = z.object({
+  customerId: z.string().min(1, "Customer is required"),
+  invoiceNo: z.string().min(1, "Invoice number is required"),
+  invoiceDate: z.string().min(1, "Invoice date is required"),
+  dueDate: z.string().min(1, "Due date is required"),
+  amount: z.number().min(0.01, "Amount must be positive"),
+  notes: z.string().optional(),
+});
+
+export const customerPaymentSchema = z.object({
+  customerId: z.string().min(1, "Customer is required"),
+  invoiceId: z.string().optional(),
+  amount: z.number().min(0.01, "Amount must be positive"),
+  paymentMode: z.enum(["CASH", "CHEQUE", "NEFT", "RTGS", "UPI", "CREDIT_ADJUSTMENT"]),
+  paymentDate: z.string().min(1, "Payment date is required"),
+  referenceNo: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+// ---- Vendor Issues ----
+
+export const vendorIssueSchema = z.object({
+  vendorId: z.string().min(1, "Vendor is required"),
+  issueType: z.enum(["QUALITY", "SHORTAGE", "DAMAGE", "WRONG_ITEM", "BILLING_ERROR", "DELIVERY_DELAY", "OTHER"]),
+  description: z.string().min(1, "Description is required"),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
+  billId: z.string().optional(),
+});
+
+export const vendorIssueUpdateSchema = z.object({
+  status: z.enum(["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"]).optional(),
+  priority: z.enum(["LOW", "MEDIUM", "HIGH", "URGENT"]).optional(),
+  resolution: z.string().optional(),
 });

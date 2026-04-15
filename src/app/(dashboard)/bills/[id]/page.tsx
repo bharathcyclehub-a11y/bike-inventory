@@ -25,10 +25,19 @@ interface BillDetail {
   payments: Array<{
     id: string;
     amount: number;
+    cdDiscountAmount?: number;
     paymentMode: string;
     paymentDate: string;
     referenceNo?: string;
   }>;
+}
+
+interface CdEligibility {
+  eligible: boolean;
+  reason?: string;
+  cdPercentage?: number;
+  daysRemaining?: number;
+  discountAmount?: number;
 }
 
 function formatCurrency(amount: number) {
@@ -43,6 +52,7 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const [followUpDate, setFollowUpDate] = useState("");
   const [followUpNotes, setFollowUpNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [cdInfo, setCdInfo] = useState<CdEligibility | null>(null);
 
   useEffect(() => {
     fetch(`/api/bills/${id}`)
@@ -56,6 +66,14 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+
+    // Fetch CD eligibility
+    fetch(`/api/bills/${id}/cd-eligibility`)
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.success) setCdInfo(res.data);
+      })
+      .catch(() => {});
   }, [id]);
 
   async function saveFollowUp() {
@@ -116,6 +134,23 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           {isOverdue ? "OVERDUE" : bill.status.replace(/_/g, " ")}
         </Badge>
       </div>
+
+      {/* CD Status */}
+      {cdInfo && cdInfo.eligible && (
+        <div className="mb-3 rounded-lg border border-green-200 bg-green-50 px-3 py-2 flex items-center justify-between">
+          <span className="text-xs font-medium text-green-800">
+            CD: {cdInfo.cdPercentage}% ({cdInfo.daysRemaining}d left)
+          </span>
+          <span className="text-xs text-green-600">
+            Save {formatCurrency(cdInfo.discountAmount || 0)}
+          </span>
+        </div>
+      )}
+      {cdInfo && !cdInfo.eligible && !cdInfo.reason && (
+        <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <span className="text-xs text-slate-500">CD Expired</span>
+        </div>
+      )}
 
       {/* Amount Card */}
       <Card className={`mb-4 ${isOverdue ? "border-red-200 bg-red-50/50" : ""}`}>
@@ -225,7 +260,14 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           <Card key={p.id} className="mb-2">
             <CardContent className="p-3 flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-green-700">{formatCurrency(p.amount)}</p>
+                <p className="text-sm font-medium text-green-700">
+                  {formatCurrency(p.amount)}
+                  {p.cdDiscountAmount && p.cdDiscountAmount > 0 && (
+                    <span className="text-xs text-green-500 ml-1">
+                      + {formatCurrency(p.cdDiscountAmount)} CD
+                    </span>
+                  )}
+                </p>
                 <p className="text-xs text-slate-500">
                   {p.paymentMode} | {new Date(p.paymentDate).toLocaleDateString("en-IN")}
                   {p.referenceNo ? ` | Ref: ${p.referenceNo}` : ""}

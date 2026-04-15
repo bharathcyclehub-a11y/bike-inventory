@@ -76,6 +76,43 @@ enum ProductStatus {
   DISCONTINUED
 }
 
+enum CustomerType {
+  WALK_IN
+  REGULAR
+  DEALER
+}
+
+enum InvoiceStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+}
+
+enum IssueType {
+  QUALITY
+  SHORTAGE
+  DAMAGE
+  WRONG_ITEM
+  BILLING_ERROR
+  DELIVERY_DELAY
+  OTHER
+}
+
+enum IssueStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum IssuePriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
 enum ProductCondition {
   NEW
   REFURBISHED_EXCELLENT
@@ -111,6 +148,8 @@ model User {
   approvedPOs      PurchaseOrder[]  @relation("POApprovedBy")
   recordedPayments VendorPayment[]  @relation("PaymentRecordedBy")
   recordedExpenses Expense[]        @relation("ExpenseRecordedBy")
+  recordedCustomerPayments CustomerPayment[] @relation("CustomerPaymentRecordedBy")
+  createdIssues    VendorIssue[]    @relation("IssueCreatedBy")
 }
 
 model Category {
@@ -350,6 +389,7 @@ model Vendor {
   bills           VendorBill[]
   payments        VendorPayment[]
   credits         VendorCredit[]
+  issues          VendorIssue[]
 
   @@index([name])
 }
@@ -436,6 +476,7 @@ model VendorBill {
   updatedAt        DateTime       @updatedAt
 
   payments         VendorPayment[]
+  issues           VendorIssue[]
 
   @@unique([vendorId, billNo])
   @@index([vendorId])
@@ -444,21 +485,22 @@ model VendorBill {
 }
 
 model VendorPayment {
-  id            String        @id @default(cuid())
-  vendorId      String
-  vendor        Vendor        @relation(fields: [vendorId], references: [id])
-  billId        String?
-  bill          VendorBill?   @relation(fields: [billId], references: [id])
-  amount        Float
-  paymentMode   PaymentMode
-  paymentDate   DateTime
-  referenceNo   String?
-  notes         String?
-  creditId      String?
-  credit        VendorCredit? @relation(fields: [creditId], references: [id])
-  recordedById  String
-  recordedBy    User          @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
-  createdAt     DateTime      @default(now())
+  id                String        @id @default(cuid())
+  vendorId          String
+  vendor            Vendor        @relation(fields: [vendorId], references: [id])
+  billId            String?
+  bill              VendorBill?   @relation(fields: [billId], references: [id])
+  amount            Float
+  cdDiscountAmount  Float         @default(0) // Cash discount applied
+  paymentMode       PaymentMode
+  paymentDate       DateTime
+  referenceNo       String?
+  notes             String?
+  creditId          String?
+  credit            VendorCredit? @relation(fields: [creditId], references: [id])
+  recordedById      String
+  recordedBy        User          @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  createdAt         DateTime      @default(now())
 
   @@index([vendorId])
   @@index([billId])
@@ -534,4 +576,91 @@ model SyncLog {
 
   @@index([syncType])
   @@index([startedAt])
+}
+
+// ---- Customers & Receivables ----
+
+model Customer {
+  id            String         @id @default(cuid())
+  name          String
+  phone         String?
+  email         String?
+  address       String?
+  type          CustomerType   @default(WALK_IN)
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  invoices      CustomerInvoice[]
+  payments      CustomerPayment[]
+
+  @@index([name])
+  @@index([phone])
+}
+
+model CustomerInvoice {
+  id            String         @id @default(cuid())
+  customerId    String
+  customer      Customer       @relation(fields: [customerId], references: [id])
+  invoiceNo     String         @unique
+  invoiceDate   DateTime
+  dueDate       DateTime
+  amount        Float
+  paidAmount    Float          @default(0)
+  status        InvoiceStatus  @default(PENDING)
+  notes         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  payments      CustomerPayment[]
+
+  @@index([customerId])
+  @@index([status])
+  @@index([dueDate])
+}
+
+model CustomerPayment {
+  id            String           @id @default(cuid())
+  customerId    String
+  customer      Customer         @relation(fields: [customerId], references: [id])
+  invoiceId     String?
+  invoice       CustomerInvoice? @relation(fields: [invoiceId], references: [id])
+  amount        Float
+  paymentMode   PaymentMode
+  paymentDate   DateTime
+  referenceNo   String?
+  notes         String?
+  recordedById  String
+  recordedBy    User             @relation("CustomerPaymentRecordedBy", fields: [recordedById], references: [id])
+  createdAt     DateTime         @default(now())
+
+  @@index([customerId])
+  @@index([invoiceId])
+  @@index([paymentDate])
+}
+
+// ---- Vendor Issues ----
+
+model VendorIssue {
+  id            String         @id @default(cuid())
+  vendorId      String
+  vendor        Vendor         @relation(fields: [vendorId], references: [id])
+  issueNo       String         @unique // ISS-YYYYMM-NNNN
+  issueType     IssueType
+  description   String
+  status        IssueStatus    @default(OPEN)
+  priority      IssuePriority  @default(MEDIUM)
+  billId        String?
+  bill          VendorBill?    @relation(fields: [billId], references: [id])
+  resolution    String?
+  resolvedAt    DateTime?
+  createdById   String
+  createdBy     User           @relation("IssueCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([vendorId])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
 }

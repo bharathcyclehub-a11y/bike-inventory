@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Package, TrendingUp, ShoppingCart, Receipt, Calendar, ChevronRight } from "lucide-react";
+import { Package, TrendingUp, ShoppingCart, Receipt, Calendar, Percent, ChevronRight } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 
 const reports = [
@@ -36,6 +36,14 @@ const reports = [
     icon: Receipt,
     color: "bg-orange-50 text-orange-600 border-orange-200",
     iconBg: "bg-orange-100",
+  },
+  {
+    title: "CD Discount Summary",
+    description: "Cash discount earned, missed, and eligible by vendor",
+    href: "/reports/cd-summary",
+    icon: Percent,
+    color: "bg-teal-50 text-teal-600 border-teal-200",
+    iconBg: "bg-teal-100",
   },
   {
     title: "Daily Activity",

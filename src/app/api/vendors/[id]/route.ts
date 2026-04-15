@@ -17,6 +17,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         purchaseOrders: { orderBy: { createdAt: "desc" }, take: 10, include: { items: true } },
         bills: { orderBy: { dueDate: "asc" }, take: 10, include: { payments: true } },
         credits: { orderBy: { creditDate: "desc" }, take: 10 },
+        _count: { select: { issues: true } },
       },
     });
 

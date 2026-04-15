@@ -45,12 +45,13 @@ export async function POST(req: NextRequest) {
 
     const result = await prisma.$transaction(async (tx) => {
       // Validate bill balance BEFORE creating payment
+      const cdDiscount = data.cdDiscountAmount || 0;
       if (data.billId) {
         const bill = await tx.vendorBill.findUnique({ where: { id: data.billId } });
         if (!bill) throw new Error("Bill not found");
         const remaining = bill.amount - bill.paidAmount;
-        if (data.amount > remaining) {
-          throw new Error(`Payment exceeds bill balance. Remaining: ${remaining}`);
+        if (data.amount + cdDiscount > remaining) {
+          throw new Error(`Payment + discount exceeds bill balance. Remaining: ${remaining}`);
         }
       }
 
@@ -70,6 +71,7 @@ export async function POST(req: NextRequest) {
           vendorId: data.vendorId,
           billId: data.billId || null,
           amount: data.amount,
+          cdDiscountAmount: cdDiscount,
           paymentMode: data.paymentMode,
           paymentDate: new Date(data.paymentDate),
           referenceNo: data.referenceNo,
@@ -80,11 +82,11 @@ export async function POST(req: NextRequest) {
         include: { vendor: { select: { name: true } }, bill: { select: { billNo: true } } },
       });
 
-      // Update bill status
+      // Update bill status (payment + CD discount both settle bill balance)
       if (data.billId) {
         const bill = await tx.vendorBill.findUnique({ where: { id: data.billId } });
         if (bill) {
-          const newPaidAmount = bill.paidAmount + data.amount;
+          const newPaidAmount = bill.paidAmount + data.amount + cdDiscount;
           const newStatus = newPaidAmount >= bill.amount ? "PAID" : "PARTIALLY_PAID";
           await tx.vendorBill.update({
             where: { id: data.billId },
