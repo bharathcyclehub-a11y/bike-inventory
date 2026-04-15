@@ -29,6 +29,10 @@ export default function ZohoTestPage() {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ zohoTotal: number; activeWithStock: number; imported: number; failed: number; importedItems: Array<Record<string, unknown>> } | null>(null);
   const [importError, setImportError] = useState("");
+  const [enriching, setEnriching] = useState(false);
+  const [enrichResult, setEnrichResult] = useState<{ processed: number; updated: number; failed: number; remaining: number; enriched: Array<{ name: string; brand: string; gst: number }> } | null>(null);
+  const [enrichError, setEnrichError] = useState("");
+  const [enrichTotal, setEnrichTotal] = useState(0);
 
   if (role !== "ADMIN") {
     return (
@@ -153,6 +157,76 @@ export default function ZohoTestPage() {
             }}
           >
             {importing ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Importing... (may take minutes)</> : "Delete All & Re-Import from Zoho"}
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* ---- STEP 3: Brand Enrichment ---- */}
+      <Card className="mb-4 border-blue-200">
+        <CardContent className="p-3">
+          <p className="text-sm font-semibold text-slate-900 mb-1">Step 3: Enrich Brands from Zoho</p>
+          <div className="text-xs text-slate-500 mb-3">
+            <p>Fetches brand, manufacturer & GST from Zoho detail API for &quot;Unbranded&quot; items.</p>
+            <p>Processes 25 items per batch (Vercel timeout safe). Tap multiple times until done.</p>
+          </div>
+
+          {enrichError && (
+            <Card className="mb-3 border-red-200 bg-red-50">
+              <CardContent className="p-2">
+                <p className="text-xs text-red-700 font-medium">Error: {enrichError}</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {enrichResult && (
+            <Card className="mb-3 border-blue-200 bg-blue-50">
+              <CardContent className="p-2">
+                <p className="text-xs font-semibold text-blue-800 mb-1">Batch Complete</p>
+                <div className="grid grid-cols-2 gap-1 text-xs text-blue-700">
+                  <div>Processed: <span className="font-medium">{enrichResult.processed}</span></div>
+                  <div>Updated: <span className="font-medium">{enrichResult.updated}</span></div>
+                  <div>Failed: <span className="font-medium">{enrichResult.failed}</span></div>
+                  <div>Remaining: <span className="font-medium text-orange-600">{enrichResult.remaining}</span></div>
+                  {enrichTotal > 0 && <div className="col-span-2">Total enriched so far: <span className="font-medium text-green-600">{enrichTotal}</span></div>}
+                </div>
+                {enrichResult.enriched.length > 0 && (
+                  <div className="mt-2 space-y-0.5">
+                    <p className="text-[10px] font-medium text-blue-800">This batch:</p>
+                    {enrichResult.enriched.map((e, i) => (
+                      <p key={i} className="text-[10px] text-blue-700 truncate">
+                        {e.name} → <span className="font-medium">{e.brand}</span> {e.gst > 0 && `(GST: ${e.gst}%)`}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          <Button
+            size="sm"
+            className="w-full"
+            disabled={enriching}
+            onClick={async () => {
+              setEnriching(true);
+              setEnrichError("");
+              try {
+                const res = await fetch("/api/zoho/import/enrich-brands", { method: "POST" });
+                const data = await res.json();
+                if (data.success) {
+                  setEnrichResult(data.data);
+                  setEnrichTotal((prev) => prev + (data.data.updated || 0));
+                } else {
+                  setEnrichError(data.error || "Enrichment failed");
+                }
+              } catch (err) {
+                setEnrichError(err instanceof Error ? err.message : "Failed");
+              } finally {
+                setEnriching(false);
+              }
+            }}
+          >
+            {enriching ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Enriching... (25 items)</> : "Enrich Next 25 Brands"}
           </Button>
         </CardContent>
       </Card>

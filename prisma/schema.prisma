@@ -147,6 +147,7 @@ model Product {
   sku           String         @unique
   name          String
   description   String?
+  zohoItemId    String?        @unique // Zoho Books item_id for sync
   categoryId    String
   category      Category       @relation(fields: [categoryId], references: [id])
   brandId       String

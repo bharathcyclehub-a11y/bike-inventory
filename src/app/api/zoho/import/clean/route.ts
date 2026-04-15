@@ -109,6 +109,7 @@ export async function POST() {
           data: {
             sku,
             name: item.name,
+            zohoItemId: item.item_id || null,
             categoryId: defaultCategory.id,
             brandId,
             type: productType,
