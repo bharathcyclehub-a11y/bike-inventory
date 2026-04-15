@@ -9,10 +9,10 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 const SEED_USERS = [
   { name: "Syed Ibrahim", email: "syed@bikeinventory.local", role: "ADMIN" as const, accessCode: "SYED123" },
   { name: "Srinu", email: "srinu@bikeinventory.local", role: "SUPERVISOR" as const, accessCode: "SRINU123" },
-  { name: "Sravan", email: "sravan@bikeinventory.local", role: "MANAGER" as const, accessCode: "SRAVAN123" },
+  { name: "Sravan", email: "sravan@bikeinventory.local", role: "ACCOUNTS_MANAGER" as const, accessCode: "SRAVAN123" },
   { name: "Nithin", email: "nithin@bikeinventory.local", role: "INWARDS_CLERK" as const, accessCode: "NITHIN123" },
   { name: "Ranjitha", email: "ranjitha@bikeinventory.local", role: "OUTWARDS_CLERK" as const, accessCode: "RANJITHA123" },
-  { name: "Abhi Gowda", email: "abhi@bikeinventory.local", role: "MANAGER" as const, accessCode: "ABHI123" },
+  { name: "Abhi Gowda", email: "abhi@bikeinventory.local", role: "PURCHASE_MANAGER" as const, accessCode: "ABHI123" },
 ];
 
 export async function POST(_req: NextRequest) {

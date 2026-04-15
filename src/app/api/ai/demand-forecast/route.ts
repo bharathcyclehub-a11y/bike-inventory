@@ -8,7 +8,7 @@ import { calcSalesVelocity, classifyDemand, calcTrend } from "@/lib/ai-calculati
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
 
     const url = new URL(req.url);
     const categoryFilter = url.searchParams.get("category");

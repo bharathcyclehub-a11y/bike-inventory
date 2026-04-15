@@ -111,7 +111,8 @@ export const userSchema = z.object({
   role: z.enum([
     "ADMIN",
     "SUPERVISOR",
-    "MANAGER",
+    "PURCHASE_MANAGER",
+    "ACCOUNTS_MANAGER",
     "INWARDS_CLERK",
     "OUTWARDS_CLERK",
   ]),

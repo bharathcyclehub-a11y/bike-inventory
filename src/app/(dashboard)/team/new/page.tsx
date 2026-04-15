@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 const ROLES = [
   { value: "ADMIN", label: "Admin — Full access" },
   { value: "SUPERVISOR", label: "Supervisor — View all, manage stock" },
-  { value: "MANAGER", label: "Manager — Day-to-day operations" },
+  { value: "PURCHASE_MANAGER", label: "Purchase Manager — Reorder, POs, vendors" },
+  { value: "ACCOUNTS_MANAGER", label: "Accounts Manager — Expenses, bills, payments, audit" },
   { value: "INWARDS_CLERK", label: "Inwards Clerk — Record inwards only" },
   { value: "OUTWARDS_CLERK", label: "Outwards Clerk — Record outwards only" },
 ];

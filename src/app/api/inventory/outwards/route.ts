@@ -8,7 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER", "OUTWARDS_CLERK"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "OUTWARDS_CLERK"]);
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const dateFrom = searchParams.get("dateFrom");
     const dateTo = searchParams.get("dateTo");
@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "MANAGER", "SUPERVISOR", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "SUPERVISOR", "OUTWARDS_CLERK"]);
     const body = await req.json();
     const data = outwardSchema.parse(body);
 

@@ -7,7 +7,7 @@ import { formatINR } from "@/lib/ai-calculations";
 
 export async function GET() {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
 
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());

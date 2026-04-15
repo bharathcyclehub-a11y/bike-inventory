@@ -8,7 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "MANAGER", "SUPERVISOR"]);
+    await requireAuth(["ADMIN", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "SUPERVISOR"]);
     const { id } = await params;
     const body = await req.json();
     const data = billFollowUpSchema.parse(body);

@@ -7,7 +7,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "MANAGER"]);
+    await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
     const { searchParams } = new URL(req.url);
     const groupBy = searchParams.get("groupBy") || "brand"; // brand | category
     const filter = searchParams.get("filter") || "all"; // all | low | zero

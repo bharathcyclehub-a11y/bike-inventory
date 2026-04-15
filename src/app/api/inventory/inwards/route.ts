@@ -9,7 +9,7 @@ import { generateSerialCode, getNextSerialSequence } from "@/lib/barcode";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK"]);
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const dateFrom = searchParams.get("dateFrom");
     const dateTo = searchParams.get("dateTo");
@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "MANAGER", "SUPERVISOR", "INWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "SUPERVISOR", "INWARDS_CLERK"]);
     const body = await req.json();
     const data = inwardSchema.parse(body);
 

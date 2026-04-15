@@ -9,7 +9,7 @@ import type { BillStatus } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
     const { page, limit, skip, search, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status") || undefined;
     const vendorId = searchParams.get("vendorId") || undefined;
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "MANAGER"]);
+    await requireAuth(["ADMIN", "ACCOUNTS_MANAGER", "SUPERVISOR"]);
     const body = await req.json();
     const data = vendorBillSchema.parse(body);
 

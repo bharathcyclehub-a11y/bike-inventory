@@ -8,7 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
     const { id } = await params;
     const expense = await prisma.expense.findUnique({
       where: { id },
@@ -25,7 +25,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "MANAGER"]);
+    await requireAuth(["ADMIN", "ACCOUNTS_MANAGER", "SUPERVISOR"]);
     const { id } = await params;
     const body = await req.json();
     const data = expenseSchema.partial().parse(body);

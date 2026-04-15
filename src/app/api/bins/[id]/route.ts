@@ -7,7 +7,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "MANAGER"]);
+    await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
     const { id } = await params;
 
     const bin = await prisma.bin.findUnique({

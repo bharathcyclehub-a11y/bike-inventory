@@ -7,7 +7,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function PUT(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "MANAGER"]);
+    await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
     const body = await req.json();
 
     if (!body.items || !Array.isArray(body.items)) {

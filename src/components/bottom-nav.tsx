@@ -47,12 +47,20 @@ function getTabsForRole(role: Role): TabConfig[] {
         { href: "/bills", label: "Bills", icon: ArrowDownCircle, key: "bills" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
-    case "MANAGER":
+    case "PURCHASE_MANAGER":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/reorder", label: "Reorder", icon: ArrowDownCircle, key: "reorder" },
+        { href: "/purchase-orders", label: "POs", icon: ArrowDownCircle, key: "pos" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
+    case "ACCOUNTS_MANAGER":
+      return [
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/expenses", label: "Expenses", icon: Receipt, key: "expenses" },
+        { href: "/accounts", label: "Accounts", icon: Building2, key: "accounts" },
+        { href: "/stock-audit", label: "Audit", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "INWARDS_CLERK":

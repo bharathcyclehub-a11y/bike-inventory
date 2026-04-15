@@ -1,7 +1,8 @@
 export type Role =
   | "ADMIN"
   | "SUPERVISOR"
-  | "MANAGER"
+  | "PURCHASE_MANAGER"
+  | "ACCOUNTS_MANAGER"
   | "INWARDS_CLERK"
   | "OUTWARDS_CLERK";
 

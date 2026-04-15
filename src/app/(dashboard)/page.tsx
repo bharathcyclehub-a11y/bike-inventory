@@ -370,7 +370,7 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
   );
 }
 
-function ManagerDashboard() {
+function PurchaseManagerDashboard() {
   const { data, loading, error } = useDashboardData();
   if (loading) {
     return <div className="animate-pulse space-y-3 py-4">{[1,2,3].map(i=><div key={i} className="flex items-center gap-3 py-2 border-b border-slate-100"><div className="h-9 w-9 rounded-full bg-slate-200 shrink-0"/><div className="flex-1 space-y-1.5"><div className="h-4 bg-slate-200 rounded w-2/3"/><div className="h-3 bg-slate-200 rounded w-1/3"/></div></div>)}</div>;
@@ -381,9 +381,48 @@ function ManagerDashboard() {
   return (
     <div className="grid grid-cols-2 gap-3">
       <DashboardCard label="Total Products" value={data.totalProducts} icon={Package} color="bg-blue-100 text-blue-700" />
-      <DashboardCard label="Low Stock" value={data.lowStockCount} icon={AlertTriangle} color="bg-red-100 text-red-600" />
+      <Link href="/reorder"><DashboardCard label="Low Stock" value={data.lowStockCount} icon={AlertTriangle} color="bg-red-100 text-red-600" /></Link>
       <DashboardCard label="Inwards Today" value={data.todayInwards} icon={ArrowDownCircle} color="bg-blue-100 text-blue-600" />
-      <DashboardCard label="Outwards Today" value={data.todayOutwards} icon={ArrowUpCircle} color="bg-orange-100 text-orange-600" />
+      <Link href="/purchase-orders"><DashboardCard label="Pending POs" value="—" icon={Package} color="bg-orange-100 text-orange-600" /></Link>
+    </div>
+  );
+}
+
+function AccountsManagerDashboard() {
+  const [stats, setStats] = useState<{ expenses30d: number; payable: number; overdueBills: number; pendingAudits: number } | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const safeFetch = (url: string) => fetch(url).then((r) => r.ok ? r.json() : { success: false }).catch(() => ({ success: false }));
+    Promise.all([
+      safeFetch("/api/accounts/summary"),
+      safeFetch("/api/stock-counts?status=PENDING&limit=1"),
+    ])
+      .then(([accountsRes, auditsRes]) => {
+        const acct = accountsRes.success ? accountsRes.data : null;
+        setStats({
+          expenses30d: acct?.stats?.totalExpenses30d || 0,
+          payable: acct?.stats?.outstandingPayable || 0,
+          overdueBills: acct?.stats?.overdueBills || 0,
+          pendingAudits: auditsRes.success ? (auditsRes.pagination?.total || 0) : 0,
+        });
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return <div className="animate-pulse space-y-3 py-4">{[1,2,3].map(i=><div key={i} className="flex items-center gap-3 py-2 border-b border-slate-100"><div className="h-9 w-9 rounded-full bg-slate-200 shrink-0"/><div className="flex-1 space-y-1.5"><div className="h-4 bg-slate-200 rounded w-2/3"/><div className="h-3 bg-slate-200 rounded w-1/3"/></div></div>)}</div>;
+  }
+  if (!stats) {
+    return <div className="text-center py-12"><AlertTriangle className="h-8 w-8 text-red-400 mx-auto mb-2" /><p className="text-sm text-slate-500">Failed to load dashboard.</p></div>;
+  }
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <Link href="/expenses"><DashboardCard label="Expenses (30d)" value={formatINR(stats.expenses30d)} icon={IndianRupee} color="bg-green-100 text-green-700" /></Link>
+      <Link href="/accounts"><DashboardCard label="Outstanding Payable" value={formatINR(stats.payable)} icon={IndianRupee} color="bg-red-100 text-red-600" /></Link>
+      <Link href="/bills"><DashboardCard label="Overdue Bills" value={stats.overdueBills} icon={AlertTriangle} color="bg-amber-100 text-amber-600" /></Link>
+      <Link href="/stock-audit"><DashboardCard label="Pending Audits" value={stats.pendingAudits} icon={Package} color="bg-blue-100 text-blue-700" /></Link>
     </div>
   );
 }
@@ -404,7 +443,8 @@ export default function DashboardPage() {
 
       {role === "ADMIN" && <AdminDashboard />}
       {role === "SUPERVISOR" && <SupervisorDashboard />}
-      {role === "MANAGER" && <ManagerDashboard />}
+      {role === "PURCHASE_MANAGER" && <PurchaseManagerDashboard />}
+      {role === "ACCOUNTS_MANAGER" && <AccountsManagerDashboard />}
       {role === "INWARDS_CLERK" && <ClerkDashboard type="inward" />}
       {role === "OUTWARDS_CLERK" && <ClerkDashboard type="outward" />}
     </div>

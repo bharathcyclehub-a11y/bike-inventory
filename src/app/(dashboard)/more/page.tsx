@@ -40,60 +40,61 @@ interface MenuItem {
 const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "Owner / Director",
   SUPERVISOR: "Store Supervisor",
-  MANAGER: "Operations Manager",
+  PURCHASE_MANAGER: "Purchase Manager",
+  ACCOUNTS_MANAGER: "Accounts Manager",
   INWARDS_CLERK: "Inventory & Receiving Lead",
   OUTWARDS_CLERK: "Sales & Dispatch Lead",
 };
 
-// Ordered by frequency of use — Srinu (SUPERVISOR) accesses bills/payments/receivables daily
+// Ordered by frequency of use — tailored per role
 const menuItems: MenuItem[] = [
   {
     label: "Bills & Payments",
     icon: FileText,
     href: "/bills",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"],
   },
   {
     label: "Record Payment",
     icon: CreditCard,
     href: "/payments/new",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"],
   },
   {
     label: "Receivables",
     icon: HandCoins,
     href: "/receivables",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"],
   },
   {
     label: "Vendor Issues",
     icon: AlertCircle,
     href: "/vendor-issues",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"],
   },
   {
     label: "Vendors",
     icon: Building2,
     href: "/vendors",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"],
   },
   {
     label: "Purchase Orders",
     icon: ShoppingCart,
     href: "/purchase-orders",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"],
   },
   {
     label: "Expenses",
     icon: Receipt,
     href: "/expenses",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"],
   },
   {
     label: "Transfers",
     icon: ArrowRightLeft,
     href: "/transfers",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR"],
   },
   {
     label: "Team Management",
@@ -111,19 +112,19 @@ const menuItems: MenuItem[] = [
     label: "Reorder Dashboard",
     icon: RefreshCw,
     href: "/reorder",
-    roles: ["ADMIN", "MANAGER"],
+    roles: ["ADMIN", "PURCHASE_MANAGER"],
   },
   {
     label: "Stock Audit",
     icon: ClipboardCheck,
     href: "/stock-audit",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"],
   },
   {
     label: "Barcode Scanner",
     icon: QrCode,
     href: "/scanner",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
+    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
   },
   {
     label: "Bins & Locations",
@@ -135,13 +136,13 @@ const menuItems: MenuItem[] = [
     label: "AI Insights",
     icon: Brain,
     href: "/ai",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"],
   },
   {
     label: "Team Chat",
     icon: MessageSquare,
     href: "#",
-    roles: ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
+    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
     comingSoon: true,
   },
   {

@@ -64,7 +64,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
   const isAdmin = role === "ADMIN";
-  const canEdit = ["ADMIN", "MANAGER"].includes(role);
+  const canEdit = ["ADMIN", "PURCHASE_MANAGER"].includes(role);
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);

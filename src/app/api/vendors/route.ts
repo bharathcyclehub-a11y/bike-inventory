@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "MANAGER"]);
+    await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
     const body = await req.json();
     const data = vendorSchema.parse(body);
 

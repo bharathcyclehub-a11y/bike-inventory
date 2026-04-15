@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "MANAGER"]);
+    const user = await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
     const body = await req.json();
     const data = productSchema.parse(body);
 

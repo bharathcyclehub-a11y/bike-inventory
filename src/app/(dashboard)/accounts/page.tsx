@@ -56,7 +56,7 @@ function formatCurrency(amount: number) {
 export default function AccountsPage() {
   const { data: session, status: sessionStatus } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAccess = ["ADMIN", "SUPERVISOR", "MANAGER"].includes(role);
+  const canAccess = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
 
   const [data, setData] = useState<AccountsSummary | null>(null);
   const [loading, setLoading] = useState(true);

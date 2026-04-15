@@ -37,6 +37,25 @@ export default function NewPurchaseOrderPage() {
       .catch(() => {});
   }, []);
 
+  // Pick up pre-selected items from Reorder page
+  useEffect(() => {
+    const stored = sessionStorage.getItem("reorder-po-items");
+    if (stored) {
+      try {
+        const poItems = JSON.parse(stored);
+        setItems(poItems.map((item: { productId: string; name: string; sku: string; quantity: number; unitPrice: number }) => ({
+          productId: item.productId,
+          productName: item.name,
+          sku: item.sku,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          gstRate: 0,
+        })));
+        sessionStorage.removeItem("reorder-po-items");
+      } catch { /* ignore */ }
+    }
+  }, []);
+
   useEffect(() => {
     if (productSearch.length < 2) { setProductResults([]); return; }
     fetch(`/api/products/search?q=${encodeURIComponent(productSearch)}`)

@@ -49,7 +49,7 @@ export async function PUT(
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) return errorResponse("User not found", 404);
 
-    const VALID_ROLES = ["ADMIN", "SUPERVISOR", "MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"];
+    const VALID_ROLES = ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"];
 
     const updateData: Record<string, unknown> = {};
     if (body.name && typeof body.name === "string") updateData.name = body.name.trim();

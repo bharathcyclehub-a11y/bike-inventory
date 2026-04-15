@@ -22,7 +22,8 @@ interface UserDetail {
 const ROLES = [
   { value: "ADMIN", label: "Owner / Director" },
   { value: "SUPERVISOR", label: "Store Supervisor" },
-  { value: "MANAGER", label: "Operations Manager" },
+  { value: "PURCHASE_MANAGER", label: "Purchase Manager" },
+  { value: "ACCOUNTS_MANAGER", label: "Accounts Manager" },
   { value: "INWARDS_CLERK", label: "Inventory & Receiving Lead" },
   { value: "OUTWARDS_CLERK", label: "Sales & Dispatch Lead" },
 ];
@@ -30,7 +31,8 @@ const ROLES = [
 const ROLE_PERMISSIONS: Record<string, string[]> = {
   ADMIN: ["Full access to all features", "Manage team & roles", "Zoho sync", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Bin management", "Settings"],
   SUPERVISOR: ["View all data", "Manage stock", "Team view", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Approve transfers"],
-  MANAGER: ["Reorder dashboard & PO creation", "Vendors & POs", "Bills & Payments", "Record Payments", "Expenses", "AI Insights", "Stock view", "WhatsApp PO share"],
+  PURCHASE_MANAGER: ["Reorder dashboard", "Purchase Orders", "Vendors", "Stock view", "AI Insights", "Barcode Scanner", "WhatsApp PO share"],
+  ACCOUNTS_MANAGER: ["Expenses", "Accounts", "Bills & Payments", "Record Payments", "Receivables", "Stock Audit"],
   INWARDS_CLERK: ["Verify Zoho inwards (putaway)", "Stock Count", "Stock view (no cost price)", "Barcode Scanner"],
   OUTWARDS_CLERK: ["Verify Zoho outwards (dispatch)", "Stock Count", "Stock view (no cost price)", "Barcode Scanner"],
 };

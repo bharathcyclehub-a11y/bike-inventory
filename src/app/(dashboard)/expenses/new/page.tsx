@@ -18,7 +18,7 @@ const PAYMENT_MODES = ["CASH", "CHEQUE", "NEFT", "RTGS", "UPI"];
 export default function NewExpensePage() {
   const { data: session, status: sessionStatus } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAccess = ["ADMIN", "SUPERVISOR", "MANAGER"].includes(role);
+  const canAccess = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
 
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);

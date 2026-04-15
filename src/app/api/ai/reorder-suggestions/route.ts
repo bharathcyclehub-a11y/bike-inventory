@@ -7,7 +7,7 @@ import { calcSalesVelocity, calcReorderPoint, calcDaysUntilStockout } from "@/li
 
 export async function GET() {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
 
     const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
 
