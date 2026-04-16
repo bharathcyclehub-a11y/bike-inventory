@@ -69,10 +69,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (existing.assignedToId !== user.id) return errorResponse("You can only update stock counts assigned to you", 403);
     }
 
-    // Only ADMIN/ACCOUNTS_MANAGER can approve or reject
+    // Only ADMIN/SUPERVISOR/ACCOUNTS_MANAGER can approve or reject
     if (data.status === "APPROVED" || data.status === "REJECTED") {
-      if (!["ADMIN", "ACCOUNTS_MANAGER"].includes(user.role)) {
-        return errorResponse("Only Admin or Accounts Manager can approve/reject stock counts", 403);
+      if (!["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(user.role)) {
+        return errorResponse("Only Admin, Supervisor, or Accounts Manager can approve/reject stock counts", 403);
       }
     }
 

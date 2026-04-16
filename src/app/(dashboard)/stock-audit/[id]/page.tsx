@@ -68,7 +68,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
   const router = useRouter();
   const { data: session } = useSession();
   const userRole = (session?.user as { role?: string } | undefined)?.role;
-  const canApprove = userRole === "ADMIN" || userRole === "ACCOUNTS_MANAGER";
+  const canApprove = userRole === "ADMIN" || userRole === "SUPERVISOR" || userRole === "ACCOUNTS_MANAGER";
   const isAdmin = userRole === "ADMIN";
   const [summary, setSummary] = useState<StockCountSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
