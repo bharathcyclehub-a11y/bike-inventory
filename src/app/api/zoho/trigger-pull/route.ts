@@ -243,7 +243,7 @@ export async function POST(req: NextRequest) {
       const errors: string[] = [];
 
       try {
-        const invoices = await zoho.listAllInvoices(yesterdayStr);
+        const invoices = await zoho.listAllInvoices(yesterdayStr, todayStr);
         apiCalls += Math.ceil(invoices.length / 200) || 1;
 
         // Filter to only NEW invoices first

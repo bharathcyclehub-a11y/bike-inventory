@@ -210,7 +210,7 @@ export async function GET(req: NextRequest) {
 
     // ─── STEP 4: Invoices — yesterday only + capped detail calls ───
     try {
-      const invoices = await zoho.listAllInvoices(yesterdayStr);
+      const invoices = await zoho.listAllInvoices(yesterdayStr, todayStr);
       apiCalls += Math.ceil(invoices.length / 200) || 1;
       let detailCalls = 0;
 

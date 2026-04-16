@@ -147,7 +147,8 @@ export class ZohoClient {
 
   async listItems(page = 1, statusFilter?: string, lastModifiedTime?: string) {
     const statusParam = statusFilter ? `&status=${statusFilter}` : "";
-    const modifiedParam = lastModifiedTime ? `&last_modified_time=${lastModifiedTime}` : "";
+    // Zoho expects ISO 8601 with timezone: 2026-04-15T00:00:00+0530
+    const modifiedParam = lastModifiedTime ? `&last_modified_time=${lastModifiedTime}T00:00:00+0530` : "";
     return this.apiCall<{
       items: Array<{
         item_id: string; sku: string; name: string; status?: string;
@@ -246,7 +247,8 @@ export class ZohoClient {
   // ---- Pull/Import from Zoho ----
 
   async listContacts(page = 1, lastModifiedTime?: string) {
-    const modifiedParam = lastModifiedTime ? `&last_modified_time=${lastModifiedTime}` : "";
+    // Zoho expects ISO 8601 with timezone: 2026-04-15T00:00:00+0530
+    const modifiedParam = lastModifiedTime ? `&last_modified_time=${lastModifiedTime}T00:00:00+0530` : "";
     return this.apiCall<{
       contacts: Array<{
         contact_id: string;
@@ -325,8 +327,9 @@ export class ZohoClient {
     }>("GET", `/bills/${billId}`);
   }
 
-  async listInvoices(page = 1, dateFrom?: string) {
+  async listInvoices(page = 1, dateFrom?: string, dateTo?: string) {
     const dateParam = dateFrom ? `&date_start=${dateFrom}` : "";
+    const dateEndParam = dateTo ? `&date_end=${dateTo}` : "";
     return this.apiCall<{
       invoices: Array<{
         invoice_id: string;
@@ -340,14 +343,14 @@ export class ZohoClient {
         status: string;
       }>;
       page_context?: { has_more_page: boolean };
-    }>("GET", `/invoices?page=${page}&per_page=200${dateParam}`);
+    }>("GET", `/invoices?page=${page}&per_page=200${dateParam}${dateEndParam}`);
   }
 
-  async listAllInvoices(dateFrom?: string) {
+  async listAllInvoices(dateFrom?: string, dateTo?: string) {
     const all: Array<{ invoice_id: string; invoice_number: string; customer_name: string; customer_id: string; phone?: string; date: string; total: number; balance: number; status: string }> = [];
     let page = 1;
     while (true) {
-      const data = await this.listInvoices(page, dateFrom);
+      const data = await this.listInvoices(page, dateFrom, dateTo);
       all.push(...(data.invoices || []));
       if (!data.page_context?.has_more_page) break;
       page++;
