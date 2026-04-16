@@ -21,9 +21,9 @@ const MAX_DETAIL_CALLS_PER_ENTITY = 150;
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER"]);
     const body = await req.json();
-    const { step, pullId: existingPullId, fullImport } = body as { step: string; pullId?: string; fullImport?: boolean };
+    const { step, pullId: existingPullId, fullImport, fromDate } = body as { step: string; pullId?: string; fullImport?: boolean; fromDate?: string };
 
     // ─── INIT ───
     if (step === "init") {
@@ -239,7 +239,8 @@ export async function POST(req: NextRequest) {
           return successResponse({ step: "bills", source: "skipped", billsNew: 0, apiCalls: 0, errors: ["Books not connected"] });
         }
 
-        const bills = await zoho.listAllBills(todayStr, todayStr);
+        const billsFromDate = fromDate || todayStr;
+        const bills = await zoho.listAllBills(billsFromDate, todayStr);
         apiCalls += Math.ceil(bills.length / 200) || 1;
 
         const newBills: typeof bills = [];
@@ -327,7 +328,8 @@ export async function POST(req: NextRequest) {
           return successResponse({ step: "invoices", source: "skipped", invoicesNew: 0, apiCalls: 0, errors: ["No source connected"] });
         }
 
-        const invoices = await client.listAllInvoices(todayStr, todayStr);
+        const invoicesFromDate = fromDate || todayStr;
+        const invoices = await client.listAllInvoices(invoicesFromDate, todayStr);
         apiCalls += Math.ceil(invoices.length / 200) || 1;
 
         const newInvoices: typeof invoices = [];

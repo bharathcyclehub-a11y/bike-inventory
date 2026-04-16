@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { FileText, AlertTriangle, Search } from "lucide-react";
+import { FileText, AlertTriangle, Search, Cloud, Loader2, Download } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -32,6 +33,21 @@ interface BillItem {
   vendor: { name: string; code: string };
 }
 
+interface ZohoBillPreview {
+  id: string;
+  zohoId: string;
+  data: {
+    billNumber: string;
+    vendorName: string;
+    date: string;
+    dueDate: string;
+    total: number;
+    balance: number;
+    status: string;
+    lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>;
+  };
+}
+
 const STATUS_FILTERS = ["ALL", "OVERDUE", "PENDING", "PARTIALLY_PAID", "PAID"];
 
 function formatCurrency(amount: number) {
@@ -39,13 +55,24 @@ function formatCurrency(amount: number) {
 }
 
 export default function BillsPage() {
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string })?.role || "";
+  const canFetchBills = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+
   const [bills, setBills] = useState<BillItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("ALL");
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
 
-  useEffect(() => {
+  // Fetch Bills state (same pattern as deliveries Fetch Invoices)
+  const [fetchStep, setFetchStep] = useState<"idle" | "fetching" | "selecting" | "importing">("idle");
+  const [billPreviews, setBillPreviews] = useState<ZohoBillPreview[]>([]);
+  const [selectedBills, setSelectedBills] = useState<Set<string>>(new Set());
+  const [fetchError, setFetchError] = useState("");
+  const [fetchPullId, setFetchPullId] = useState("");
+
+  const fetchData = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
     if (filter === "OVERDUE") {
@@ -62,15 +89,167 @@ export default function BillsPage() {
       .finally(() => setLoading(false));
   }, [filter, debouncedSearch]);
 
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const handleFetchBills = async () => {
+    setFetchStep("fetching");
+    setFetchError("");
+    try {
+      // Step 1: Init
+      const initRes = await fetch("/api/zoho/trigger-pull", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "init" }),
+      }).then(r => r.json());
+      if (!initRes.success) throw new Error(initRes.error || "Init failed");
+      const pullId = initRes.data.pullId;
+      setFetchPullId(pullId);
+
+      // Step 2: Pull bills from April 1
+      const billRes = await fetch("/api/zoho/trigger-pull", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "bills", pullId, fromDate: "2026-04-01" }),
+      }).then(r => r.json());
+      if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
+
+      // Step 3: Finalize
+      await fetch("/api/zoho/trigger-pull", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          step: "finalize", pullId,
+          billsNew: billRes.data.billsNew, apiCalls: billRes.data.apiCalls,
+          allErrors: billRes.data.errors || [],
+        }),
+      });
+
+      // Step 4: Load previews
+      const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
+      if (previewRes.success) {
+        const billItems = (previewRes.data.previews || []).filter(
+          (p: ZohoBillPreview & { entityType: string; status: string }) => p.entityType === "bill" && p.status === "PENDING"
+        );
+        setBillPreviews(billItems);
+        setSelectedBills(new Set(billItems.map((b: ZohoBillPreview) => b.id)));
+        setFetchStep(billItems.length > 0 ? "selecting" : "idle");
+        if (billItems.length === 0) setFetchError("No new bills found from Apr 1");
+      }
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : "Fetch failed");
+      setFetchStep("idle");
+    }
+  };
+
+  const toggleBill = (id: string) => {
+    setSelectedBills(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleImportSelected = async () => {
+    if (selectedBills.size === 0) return;
+    setFetchStep("importing");
+    try {
+      const res = await fetch("/api/zoho/pull-review/approve", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pullId: fetchPullId, action: "approve",
+          entityType: "bill", previewIds: Array.from(selectedBills),
+        }),
+      }).then(r => r.json());
+      if (!res.success) throw new Error(res.error || "Import failed");
+      setFetchStep("idle");
+      setBillPreviews([]);
+      setSelectedBills(new Set());
+      fetchData();
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : "Import failed");
+      setFetchStep("selecting");
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Vendor Bills</h1>
-        <ExportButtons
-          onExcel={() => exportToExcel(bills as unknown as Record<string, unknown>[], BILL_COLUMNS, "vendor-bills")}
-          onPDF={() => exportToPDF("Vendor Bills", bills as unknown as Record<string, unknown>[], BILL_COLUMNS, "vendor-bills")}
-        />
+        <div className="flex items-center gap-2">
+          {canFetchBills && (
+            <button onClick={handleFetchBills} disabled={fetchStep === "fetching" || fetchStep === "importing"}
+              className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+              {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+              {fetchStep === "fetching" ? "Fetching..." : "Fetch Bills"}
+            </button>
+          )}
+          <ExportButtons
+            onExcel={() => exportToExcel(bills as unknown as Record<string, unknown>[], BILL_COLUMNS, "vendor-bills")}
+            onPDF={() => exportToPDF("Vendor Bills", bills as unknown as Record<string, unknown>[], BILL_COLUMNS, "vendor-bills")}
+          />
+        </div>
       </div>
+
+      {/* Fetch Error */}
+      {fetchError && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-2 text-xs text-amber-700">
+          {fetchError}
+          <button onClick={() => setFetchError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
+      {/* Bill Selection Panel */}
+      {fetchStep === "selecting" && billPreviews.length > 0 && (
+        <Card className="mb-3 border-blue-200 bg-blue-50/50">
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-blue-800">
+                {billPreviews.length} new bill{billPreviews.length !== 1 ? "s" : ""} from Zoho (Apr 1 onwards)
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => { setFetchStep("idle"); setBillPreviews([]); }}
+                  className="text-xs text-slate-500 underline">Cancel</button>
+                <button onClick={handleImportSelected} disabled={selectedBills.size === 0}
+                  className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50">
+                  <Download className="h-3 w-3" /> Import {selectedBills.size}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1.5 max-h-64 overflow-y-auto">
+              {billPreviews.map((bill) => (
+                <label key={bill.id}
+                  className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
+                    selectedBills.has(bill.id) ? "bg-blue-100 border border-blue-300" : "bg-white border border-slate-200"
+                  }`}>
+                  <input type="checkbox" checked={selectedBills.has(bill.id)}
+                    onChange={() => toggleBill(bill.id)} className="mt-0.5 rounded" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-slate-900">{bill.data.billNumber}</span>
+                      <span className="text-xs font-semibold text-slate-700">{formatCurrency(bill.data.total)}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600">{bill.data.vendorName}</p>
+                    <p className="text-[10px] text-slate-400">
+                      {new Date(bill.data.date).toLocaleDateString("en-IN")} | Due: {new Date(bill.data.dueDate).toLocaleDateString("en-IN")}
+                    </p>
+                    {bill.data.lineItems.length > 0 && (
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        {bill.data.lineItems.slice(0, 2).map(li => `${li.name} x${li.quantity}`).join(" | ")}
+                        {bill.data.lineItems.length > 2 && ` +${bill.data.lineItems.length - 2}`}
+                      </p>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Importing indicator */}
+      {fetchStep === "importing" && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+          <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+          <span className="text-xs text-blue-700">Importing {selectedBills.size} bills...</span>
+        </div>
+      )}
 
       <div className="relative mb-3">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />

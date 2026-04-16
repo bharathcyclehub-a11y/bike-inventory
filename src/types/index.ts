@@ -215,6 +215,7 @@ export interface Vendor {
   creditLimit: number;
   cdTermsDays?: number;
   cdPercentage?: number;
+  openingBalance?: number;
   isActive: boolean;
   notes?: string;
   contacts?: VendorContact[];

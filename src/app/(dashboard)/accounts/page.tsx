@@ -12,10 +12,11 @@ import {
   Receipt,
   ShoppingCart,
   ChevronRight,
-  TrendingDown,
   HandCoins,
   AlertCircle,
   Plus,
+  FileSpreadsheet,
+  BookOpen,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -89,9 +90,11 @@ export default function AccountsPage() {
   const s = data?.stats;
 
   const quickLinks = [
+    { label: "Vendor Ledger", href: "/accounts/vendor-ledger", icon: BookOpen },
+    { label: "Bank Statement", href: "/accounts/bank-upload", icon: FileSpreadsheet },
     { label: "Vendors", href: "/vendors", icon: Building2, count: s?.activeVendors },
-    { label: "Purchase Orders", href: "/purchase-orders", icon: ShoppingCart, count: s?.pendingPOs },
     { label: "Bills", href: "/bills", icon: FileText, count: s?.pendingBills },
+    { label: "Purchase Orders", href: "/purchase-orders", icon: ShoppingCart, count: s?.pendingPOs },
     { label: "Expenses", href: "/expenses", icon: Receipt },
   ];
 

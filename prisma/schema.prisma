@@ -154,6 +154,7 @@ model User {
   createdIssues    VendorIssue[]    @relation("IssueCreatedBy")
   approvedStockCounts StockCount[] @relation("StockCountApprovedBy")
   verifiedDeliveries  Delivery[]   @relation("DeliveryVerifiedBy")
+  uploadedStatements  BankStatement[] @relation("StatementUploader")
 
   // Service tickets
   createdTickets    ServiceTicket[]     @relation("TicketCreatedBy")
@@ -405,17 +406,20 @@ model Vendor {
   creditLimit     Float           @default(0)
   cdTermsDays     Int?
   cdPercentage    Float?
+  openingBalance  Float           @default(0) // As of 2026-04-01
   isActive        Boolean         @default(true)
   notes           String?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
-  contacts        VendorContact[]
-  purchaseOrders  PurchaseOrder[]
-  bills           VendorBill[]
-  payments        VendorPayment[]
-  credits         VendorCredit[]
-  issues          VendorIssue[]
+  contacts            VendorContact[]
+  purchaseOrders      PurchaseOrder[]
+  bills               VendorBill[]
+  payments            VendorPayment[]
+  credits             VendorCredit[]
+  issues              VendorIssue[]
+  suggestedBankTxns   BankTransaction[] @relation("SuggestedVendorTxn")
+  confirmedBankTxns   BankTransaction[] @relation("ConfirmedVendorTxn")
 
   @@index([name])
 }
@@ -501,8 +505,9 @@ model VendorBill {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
-  payments         VendorPayment[]
-  issues           VendorIssue[]
+  payments           VendorPayment[]
+  issues             VendorIssue[]
+  suggestedBankTxns  BankTransaction[] @relation("SuggestedBillTxn")
 
   @@unique([vendorId, billNo])
   @@index([vendorId])
@@ -571,6 +576,74 @@ model Expense {
   @@index([date])
   @@index([category])
   @@index([recordedById])
+}
+
+// ─── BANK STATEMENT RECONCILIATION ───
+
+enum BankTxnType {
+  CREDIT
+  DEBIT
+}
+
+enum BankTxnMatchStatus {
+  UNMATCHED
+  MATCHED
+  FLAGGED
+  EXPENSE
+  IGNORED
+}
+
+model BankStatement {
+  id              String            @id @default(cuid())
+  bank            String            // HDFC, ICICI
+  accountNumber   String?
+  fileName        String
+  fromDate        DateTime?
+  toDate          DateTime?
+  totalCredits    Float             @default(0)
+  totalDebits     Float             @default(0)
+  txnCount        Int               @default(0)
+  matchedCount    Int               @default(0)
+  flaggedCount    Int               @default(0)
+  uploadedById    String
+  uploadedBy      User              @relation("StatementUploader", fields: [uploadedById], references: [id])
+  createdAt       DateTime          @default(now())
+
+  transactions    BankTransaction[]
+
+  @@index([createdAt])
+}
+
+model BankTransaction {
+  id              String              @id @default(cuid())
+  statementId     String
+  statement       BankStatement       @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  date            DateTime
+  description     String
+  reference       String?
+  amount          Float
+  type            BankTxnType         // CREDIT or DEBIT
+  balance         Float?
+  matchStatus     BankTxnMatchStatus  @default(UNMATCHED)
+  flagReason      String?
+  // AI-suggested matches
+  suggestedVendorId   String?
+  suggestedVendor     Vendor?         @relation("SuggestedVendorTxn", fields: [suggestedVendorId], references: [id])
+  suggestedBillId     String?
+  suggestedBill       VendorBill?     @relation("SuggestedBillTxn", fields: [suggestedBillId], references: [id])
+  suggestedCategory   String?         // For expenses
+  confidence          Float?          // AI match confidence 0-1
+  // Confirmed matches
+  confirmedVendorId   String?
+  confirmedVendor     Vendor?         @relation("ConfirmedVendorTxn", fields: [confirmedVendorId], references: [id])
+  confirmedPaymentId  String?
+  confirmedExpenseId  String?
+  processedAt         DateTime?
+  createdAt           DateTime        @default(now())
+
+  @@index([statementId])
+  @@index([matchStatus])
+  @@index([date])
 }
 
 model ZohoConfig {

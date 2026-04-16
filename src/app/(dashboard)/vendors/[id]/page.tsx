@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useEffect, use } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Phone, MessageSquare, FileText, CreditCard, Building2, AlertCircle } from "lucide-react";
+import { ArrowLeft, Phone, MessageSquare, FileText, CreditCard, Building2, AlertCircle, Check, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -21,9 +22,15 @@ type VendorDetail = Vendor & {
 
 export default function VendorDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string })?.role || "";
+  const canEditBalance = ["ADMIN", "SUPERVISOR"].includes(role);
   const [vendor, setVendor] = useState<VendorDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"overview" | "pos" | "bills" | "credits" | "issues">("overview");
+  const [editingBalance, setEditingBalance] = useState(false);
+  const [balanceValue, setBalanceValue] = useState("");
+  const [savingBalance, setSavingBalance] = useState(false);
 
   useEffect(() => {
     fetch(`/api/vendors/${id}`)
@@ -109,6 +116,72 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
           <CardContent className="p-3 flex items-center justify-between">
             <span className="text-sm font-medium text-red-700">Outstanding</span>
             <span className="text-lg font-bold text-red-700">{formatCurrency(totalOutstanding)}</span>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Opening Balance (Apr 1, 2026) */}
+      {canEditBalance && vendor && (
+        <Card className="bg-slate-50 border-slate-200 mb-4">
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-500">Opening Balance (Apr 1)</p>
+                {!editingBalance ? (
+                  <p className="text-sm font-bold text-slate-900">
+                    {formatCurrency(vendor.openingBalance || 0)}
+                  </p>
+                ) : (
+                  <input
+                    type="number"
+                    value={balanceValue}
+                    onChange={(e) => setBalanceValue(e.target.value)}
+                    className="mt-1 w-32 px-2 py-1 text-sm font-bold border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    autoFocus
+                    min="0"
+                    step="0.01"
+                  />
+                )}
+              </div>
+              {!editingBalance ? (
+                <button
+                  onClick={() => { setBalanceValue(String(vendor.openingBalance || 0)); setEditingBalance(true); }}
+                  className="text-xs text-blue-600 font-medium"
+                >
+                  Edit
+                </button>
+              ) : (
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setEditingBalance(false)}
+                    className="text-xs text-slate-500"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setSavingBalance(true);
+                      try {
+                        const res = await fetch(`/api/vendors/${id}`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ openingBalance: parseFloat(balanceValue) || 0 }),
+                        }).then(r => r.json());
+                        if (res.success) {
+                          setVendor({ ...vendor, openingBalance: parseFloat(balanceValue) || 0 });
+                          setEditingBalance(false);
+                        }
+                      } catch {} finally { setSavingBalance(false); }
+                    }}
+                    disabled={savingBalance}
+                    className="flex items-center gap-1 bg-slate-900 text-white px-2.5 py-1 rounded-md text-xs font-medium disabled:opacity-50"
+                  >
+                    {savingBalance ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                    Save
+                  </button>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}

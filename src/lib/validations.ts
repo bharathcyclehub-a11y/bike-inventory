@@ -139,6 +139,7 @@ export const vendorSchema = z.object({
   creditLimit: z.number().min(0).optional(),
   cdTermsDays: z.number().int().min(0).optional(),
   cdPercentage: z.number().min(0).max(100).optional(),
+  openingBalance: z.number().min(0).optional(),
   notes: z.string().optional(),
 });
 
