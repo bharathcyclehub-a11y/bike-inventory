@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Cloud, CloudOff, CheckCircle2, XCircle,
   Package, Users, Receipt, Loader2, Clock, AlertTriangle,
-  Download, RefreshCw, FileText, ShoppingCart,
+  Download, RefreshCw, FileText, ShoppingCart, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,14 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 
 interface ZohoStatus {
+  connected: boolean;
+  organizationId?: string;
+  organizationName?: string;
+  lastSyncAt?: string;
+  tokenValid?: boolean;
+}
+
+interface SourceStatus {
   connected: boolean;
   organizationId?: string;
   organizationName?: string;
@@ -68,16 +76,35 @@ export default function ZohoSettingsPage() {
   const [pullErrors, setPullErrors] = useState<string[]>([]);
   const [fullImport, setFullImport] = useState(false);
 
-  // Setup form
+  // Setup form (Books)
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
   const [grantToken, setGrantToken] = useState("");
   const [orgId, setOrgId] = useState("");
   const [orgName, setOrgName] = useState("");
 
+  // POS (Zakya) state
+  const [posStatus, setPosStatus] = useState<SourceStatus | null>(null);
+  const [posForm, setPosForm] = useState({ clientId: "", clientSecret: "", grantToken: "", orgId: "", orgName: "" });
+  const [connectingPos, setConnectingPos] = useState(false);
+  const [posError, setPosError] = useState("");
+  const [posExpanded, setPosExpanded] = useState(false);
+
+  // Zoho Inventory state
+  const [invStatus, setInvStatus] = useState<SourceStatus | null>(null);
+  const [invForm, setInvForm] = useState({ clientId: "", clientSecret: "", grantToken: "", orgId: "", orgName: "" });
+  const [connectingInv, setConnectingInv] = useState(false);
+  const [invError, setInvError] = useState("");
+  const [invExpanded, setInvExpanded] = useState(false);
+
+  // Books connect form expand (for not-connected state)
+  const [booksExpanded, setBooksExpanded] = useState(false);
+
   useEffect(() => {
     fetchStatus();
     fetchLogs();
+    fetch("/api/zakya/auth/status").then(r => r.json()).then(d => { if (d.success) setPosStatus(d.data); }).catch(() => {});
+    fetch("/api/zoho-inventory/auth/status").then(r => r.json()).then(d => { if (d.success) setInvStatus(d.data); }).catch(() => {});
   }, []);
 
   async function fetchStatus() {
@@ -122,6 +149,74 @@ export default function ZohoSettingsPage() {
     try {
       await fetch("/api/zoho/auth/disconnect", { method: "POST" });
       setStatus({ connected: false });
+    } catch { /* ignore */ }
+  }
+
+  async function handleConnectPos(e: React.FormEvent) {
+    e.preventDefault();
+    setConnectingPos(true);
+    setPosError("");
+    try {
+      const res = await fetch("/api/zakya/auth/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: posForm.clientId, clientSecret: posForm.clientSecret,
+          grantToken: posForm.grantToken, organizationId: posForm.orgId, organizationName: posForm.orgName,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const statusRes = await fetch("/api/zakya/auth/status");
+        const statusData = await statusRes.json();
+        if (statusData.success) setPosStatus(statusData.data);
+        setPosForm({ clientId: "", clientSecret: "", grantToken: "", orgId: "", orgName: "" });
+        setPosExpanded(false);
+      } else {
+        setPosError(data.error || "Connection failed");
+      }
+    } catch { setPosError("Network error"); }
+    finally { setConnectingPos(false); }
+  }
+
+  async function handleDisconnectPos() {
+    try {
+      await fetch("/api/zakya/auth/disconnect", { method: "POST" });
+      setPosStatus({ connected: false });
+    } catch { /* ignore */ }
+  }
+
+  async function handleConnectInv(e: React.FormEvent) {
+    e.preventDefault();
+    setConnectingInv(true);
+    setInvError("");
+    try {
+      const res = await fetch("/api/zoho-inventory/auth/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientId: invForm.clientId, clientSecret: invForm.clientSecret,
+          grantToken: invForm.grantToken, organizationId: invForm.orgId, organizationName: invForm.orgName,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const statusRes = await fetch("/api/zoho-inventory/auth/status");
+        const statusData = await statusRes.json();
+        if (statusData.success) setInvStatus(statusData.data);
+        setInvForm({ clientId: "", clientSecret: "", grantToken: "", orgId: "", orgName: "" });
+        setInvExpanded(false);
+      } else {
+        setInvError(data.error || "Connection failed");
+      }
+    } catch { setInvError("Network error"); }
+    finally { setConnectingInv(false); }
+  }
+
+  async function handleDisconnectInv() {
+    try {
+      await fetch("/api/zoho-inventory/auth/disconnect", { method: "POST" });
+      setInvStatus({ connected: false });
     } catch { /* ignore */ }
   }
 
@@ -266,13 +361,57 @@ export default function ZohoSettingsPage() {
   const progress = currentStepIdx >= 0 ? Math.min(Math.round(((pullDone ? 6 : currentStepIdx) / 6) * 100), 100) : 0;
   const totalNew = pullCounts.itemsNew + pullCounts.contactsNew + pullCounts.billsNew + pullCounts.invoicesNew;
 
+  // Helper to render a connect form
+  function renderConnectForm(
+    form: { clientId: string; clientSecret: string; grantToken: string; orgId: string; orgName: string },
+    setForm: (f: { clientId: string; clientSecret: string; grantToken: string; orgId: string; orgName: string }) => void,
+    onSubmit: (e: React.FormEvent) => void,
+    isConnecting: boolean,
+    formError: string,
+    label: string,
+  ) {
+    return (
+      <form onSubmit={onSubmit} className="mt-2 space-y-2">
+        {formError && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-2">
+            <p className="text-xs text-red-700">{formError}</p>
+          </div>
+        )}
+        <div>
+          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Client ID *</label>
+          <Input placeholder="1000.XXXX..." value={form.clientId} onChange={(e) => setForm({ ...form, clientId: e.target.value })} className="h-8 text-xs" />
+        </div>
+        <div>
+          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Client Secret *</label>
+          <Input type="password" placeholder="XXXX..." value={form.clientSecret} onChange={(e) => setForm({ ...form, clientSecret: e.target.value })} className="h-8 text-xs" />
+        </div>
+        <div>
+          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Grant Token *</label>
+          <Input type="password" placeholder="1000.XXXX..." value={form.grantToken} onChange={(e) => setForm({ ...form, grantToken: e.target.value })} className="h-8 text-xs" />
+          <p className="text-[9px] text-slate-400 mt-0.5">Expires in 2 min — paste quickly</p>
+        </div>
+        <div>
+          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Organization ID</label>
+          <Input placeholder="123456789" value={form.orgId} onChange={(e) => setForm({ ...form, orgId: e.target.value })} className="h-8 text-xs" />
+        </div>
+        <div>
+          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Organization Name</label>
+          <Input placeholder="My Bike Store" value={form.orgName} onChange={(e) => setForm({ ...form, orgName: e.target.value })} className="h-8 text-xs" />
+        </div>
+        <Button type="submit" size="sm" disabled={!form.clientId || !form.clientSecret || !form.grantToken || isConnecting} className="w-full bg-blue-600 hover:bg-blue-700 text-xs">
+          {isConnecting ? "Connecting..." : `Connect to ${label}`}
+        </Button>
+      </form>
+    );
+  }
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-4">
         <Link href="/more" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <div>
-          <h1 className="text-lg font-bold text-slate-900">Zoho Books</h1>
-          <p className="text-xs text-slate-500">Sync inventory with Zoho</p>
+          <h1 className="text-lg font-bold text-slate-900">Zoho Settings</h1>
+          <p className="text-xs text-slate-500">Manage Zoho connections</p>
         </div>
       </div>
 
@@ -280,29 +419,187 @@ export default function ZohoSettingsPage() {
         <div className="flex items-center justify-center py-12">
           <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
         </div>
-      ) : status?.connected ? (
+      ) : (
         <>
-          {/* Connected Status */}
-          <Card className="mb-4 border-green-200 bg-green-50">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <Cloud className="h-8 w-8 text-green-600" />
-                <div className="flex-1">
-                  <p className="text-sm font-semibold text-green-900">Connected to Zoho Books</p>
-                  {status.organizationName && <p className="text-xs text-green-700">{status.organizationName}</p>}
-                  {status.lastSyncAt && (
-                    <p className="text-[10px] text-green-600 mt-1">
-                      Last sync: {new Date(status.lastSyncAt).toLocaleString("en-IN")}
-                    </p>
+          {/* 3-Source Connection Cards */}
+          <div className="grid grid-cols-1 gap-2 mb-4">
+            {/* Zoho Books Card */}
+            <Card className={`border ${status?.connected ? "border-green-200 bg-green-50" : "border-slate-200"}`}>
+              <CardContent className="p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">📚</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-900">Zoho Books</p>
+                    <p className="text-[10px] text-slate-500">Bills & Vendors</p>
+                  </div>
+                  <Badge variant={status?.connected ? "success" : "danger"} className="text-[9px] shrink-0">
+                    {status?.connected ? "Connected" : "Not connected"}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2 mt-1.5">
+                  {status?.connected ? (
+                    <CheckCircle2 className="h-3 w-3 text-green-600 shrink-0" />
+                  ) : (
+                    <XCircle className="h-3 w-3 text-red-400 shrink-0" />
+                  )}
+                  <span className="text-[10px] text-slate-500">1000 calls/day</span>
+                  {status?.connected && status.lastSyncAt && (
+                    <>
+                      <span className="text-[10px] text-slate-300">|</span>
+                      <span className="text-[10px] text-slate-500">
+                        Last sync: {new Date(status.lastSyncAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                      </span>
+                    </>
                   )}
                 </div>
-                <Badge variant={status.tokenValid ? "success" : "warning"} className="text-[9px]">
-                  {status.tokenValid ? "Token Valid" : "Token Expired"}
-                </Badge>
-              </div>
-            </CardContent>
-          </Card>
+                {status?.connected ? (
+                  <button onClick={handleDisconnect} className="mt-2 text-xs text-red-500 hover:text-red-600 font-medium">
+                    Disconnect
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setBooksExpanded(!booksExpanded)}
+                      className="mt-2 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      Connect {booksExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    </button>
+                    {booksExpanded && (
+                      <form onSubmit={handleConnect} className="mt-2 space-y-2">
+                        {error && (
+                          <div className="bg-red-50 border border-red-200 rounded-lg p-2">
+                            <p className="text-xs text-red-700">{error}</p>
+                          </div>
+                        )}
+                        <div>
+                          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Client ID *</label>
+                          <Input placeholder="1000.XXXX..." value={clientId} onChange={(e) => setClientId(e.target.value)} className="h-8 text-xs" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Client Secret *</label>
+                          <Input type="password" placeholder="XXXX..." value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} className="h-8 text-xs" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Grant Token *</label>
+                          <Input type="password" placeholder="1000.XXXX..." value={grantToken} onChange={(e) => setGrantToken(e.target.value)} className="h-8 text-xs" />
+                          <p className="text-[9px] text-slate-400 mt-0.5">Expires in 2 min — paste quickly</p>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Organization ID</label>
+                          <Input placeholder="123456789" value={orgId} onChange={(e) => setOrgId(e.target.value)} className="h-8 text-xs" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-medium text-slate-600 mb-0.5">Organization Name</label>
+                          <Input placeholder="My Bike Store" value={orgName} onChange={(e) => setOrgName(e.target.value)} className="h-8 text-xs" />
+                        </div>
+                        <Button type="submit" size="sm" disabled={!clientId || !clientSecret || !grantToken || connecting} className="w-full bg-blue-600 hover:bg-blue-700 text-xs">
+                          {connecting ? "Connecting..." : "Connect to Zoho Books"}
+                        </Button>
+                      </form>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
 
+            {/* Zakya POS Card */}
+            <Card className={`border ${posStatus?.connected ? "border-green-200 bg-green-50" : "border-slate-200"}`}>
+              <CardContent className="p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🛒</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-900">Zakya POS</p>
+                    <p className="text-[10px] text-slate-500">Sales & Invoices</p>
+                  </div>
+                  <Badge variant={posStatus?.connected ? "success" : "danger"} className="text-[9px] shrink-0">
+                    {posStatus?.connected ? "Connected" : "Not connected"}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2 mt-1.5">
+                  {posStatus?.connected ? (
+                    <CheckCircle2 className="h-3 w-3 text-green-600 shrink-0" />
+                  ) : (
+                    <XCircle className="h-3 w-3 text-red-400 shrink-0" />
+                  )}
+                  <span className="text-[10px] text-slate-500">2500 calls/day</span>
+                  {posStatus?.connected && posStatus.lastSyncAt && (
+                    <>
+                      <span className="text-[10px] text-slate-300">|</span>
+                      <span className="text-[10px] text-slate-500">
+                        Last sync: {new Date(posStatus.lastSyncAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {posStatus?.connected ? (
+                  <button onClick={handleDisconnectPos} className="mt-2 text-xs text-red-500 hover:text-red-600 font-medium">
+                    Disconnect
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setPosExpanded(!posExpanded)}
+                      className="mt-2 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      Connect {posExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    </button>
+                    {posExpanded && renderConnectForm(posForm, setPosForm, handleConnectPos, connectingPos, posError, "Zakya POS")}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Zoho Inventory Card */}
+            <Card className={`border ${invStatus?.connected ? "border-green-200 bg-green-50" : "border-slate-200"}`}>
+              <CardContent className="p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">📦</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-900">Zoho Inventory</p>
+                    <p className="text-[10px] text-slate-500">Items & Stock</p>
+                  </div>
+                  <Badge variant={invStatus?.connected ? "success" : "danger"} className="text-[9px] shrink-0">
+                    {invStatus?.connected ? "Connected" : "Not connected"}
+                  </Badge>
+                </div>
+                <div className="flex items-center gap-2 mt-1.5">
+                  {invStatus?.connected ? (
+                    <CheckCircle2 className="h-3 w-3 text-green-600 shrink-0" />
+                  ) : (
+                    <XCircle className="h-3 w-3 text-red-400 shrink-0" />
+                  )}
+                  <span className="text-[10px] text-slate-500">1000 calls/day</span>
+                  {invStatus?.connected && invStatus.lastSyncAt && (
+                    <>
+                      <span className="text-[10px] text-slate-300">|</span>
+                      <span className="text-[10px] text-slate-500">
+                        Last sync: {new Date(invStatus.lastSyncAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                      </span>
+                    </>
+                  )}
+                </div>
+                {invStatus?.connected ? (
+                  <button onClick={handleDisconnectInv} className="mt-2 text-xs text-red-500 hover:text-red-600 font-medium">
+                    Disconnect
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => setInvExpanded(!invExpanded)}
+                      className="mt-2 flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                    >
+                      Connect {invExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                    </button>
+                    {invExpanded && renderConnectForm(invForm, setInvForm, handleConnectInv, connectingInv, invError, "Zoho Inventory")}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Books-specific sections (Pull, Import, History) — only when Books is connected */}
+          {status?.connected && (
+            <>
           {/* Pull from Zoho */}
           <Card className="mb-4 border-blue-200 bg-blue-50">
             <CardContent className="p-3">
@@ -534,67 +831,8 @@ export default function ZohoSettingsPage() {
             </div>
           )}
 
-          {/* Disconnect */}
-          <button onClick={handleDisconnect}
-            className="w-full mt-6 py-2 text-sm text-red-600 hover:text-red-700 font-medium">
-            Disconnect from Zoho
-          </button>
-        </>
-      ) : (
-        <>
-          <Card className="mb-4 border-slate-200">
-            <CardContent className="p-4 text-center">
-              <CloudOff className="h-10 w-10 text-slate-300 mx-auto mb-2" />
-              <p className="text-sm font-medium text-slate-700">Not connected to Zoho</p>
-              <p className="text-xs text-slate-500 mt-1">Enter your Zoho API credentials below to connect</p>
-            </CardContent>
-          </Card>
-
-          <Card className="mb-4 bg-blue-50 border-blue-200">
-            <CardContent className="p-3">
-              <p className="text-xs font-semibold text-blue-900 mb-1">Setup Steps:</p>
-              <ol className="text-[10px] text-blue-800 space-y-0.5 list-decimal list-inside">
-                <li>Go to api-console.zoho.in and create a Self Client</li>
-                <li>Note your Client ID and Client Secret</li>
-                <li>Generate a Grant Token with scope: ZohoBooks.fullaccess.all</li>
-                <li>Find your Organization ID in Zoho Books Settings</li>
-                <li>Enter all details below and click Connect</li>
-              </ol>
-            </CardContent>
-          </Card>
-
-          {error && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
-              <p className="text-sm text-red-700">{error}</p>
-            </div>
+            </>
           )}
-
-          <form onSubmit={handleConnect} className="space-y-3">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Client ID *</label>
-              <Input placeholder="1000.XXXX..." value={clientId} onChange={(e) => setClientId(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Client Secret *</label>
-              <Input type="password" placeholder="XXXX..." value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Grant Token *</label>
-              <Input type="password" placeholder="1000.XXXX..." value={grantToken} onChange={(e) => setGrantToken(e.target.value)} />
-              <p className="text-[10px] text-slate-400 mt-0.5">Expires in 2 minutes — generate and paste quickly</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Organization ID</label>
-              <Input placeholder="123456789" value={orgId} onChange={(e) => setOrgId(e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Organization Name</label>
-              <Input placeholder="My Bike Store" value={orgName} onChange={(e) => setOrgName(e.target.value)} />
-            </div>
-            <Button type="submit" size="lg" disabled={!clientId || !clientSecret || !grantToken || connecting} className="w-full bg-blue-600 hover:bg-blue-700">
-              {connecting ? "Connecting..." : "Connect to Zoho"}
-            </Button>
-          </form>
         </>
       )}
     </div>

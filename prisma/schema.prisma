@@ -581,6 +581,36 @@ model ZohoConfig {
   updatedAt            DateTime  @updatedAt
 }
 
+model ZakyaConfig {
+  id                   String    @id @default("singleton")
+  clientId             String?
+  clientSecret         String?
+  refreshToken         String?
+  accessToken          String?
+  accessTokenExpiresAt DateTime?
+  organizationId       String?
+  organizationName     String?
+  isConnected          Boolean   @default(false)
+  lastSyncAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+
+model ZohoInventoryConfig {
+  id                   String    @id @default("singleton")
+  clientId             String?
+  clientSecret         String?
+  refreshToken         String?
+  accessToken          String?
+  accessTokenExpiresAt DateTime?
+  organizationId       String?
+  organizationName     String?
+  isConnected          Boolean   @default(false)
+  lastSyncAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+}
+
 model SyncLog {
   id          String   @id @default(cuid())
   syncType    String   // items, contacts, invoices, bills, all

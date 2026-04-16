@@ -3,24 +3,21 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { ZohoClient } from "@/lib/zoho";
+import { ZakyaClient } from "@/lib/zakya";
+import { ZohoInventoryClient } from "@/lib/zoho-inventory";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 /*
- * API BUDGET OPTIMIZATION:
+ * 3-SOURCE MANUAL PULL (step-by-step):
  * ─────────────────────────
- * Target: < 15 calls per daily pull
- *
- * Items:     1-2 calls (list pages since lastSync, skip if all exist)
- * Contacts:  1 call (list since lastSync, dedup locally)
- * Bills:     1 call (yesterday only) + 1 per NEW bill (detail, capped at 10)
- * Invoices:  1 call (yesterday only) + 1 per NEW invoice (detail, capped at 10)
- *
- * Bills & invoices use YESTERDAY only — daily pull only needs 1 day
- * Items & contacts use lastSyncAt (cheap, no detail calls)
+ * Items:     Zoho Inventory (or fallback to Books)
+ * Contacts:  Zoho Books
+ * Bills:     Zoho Books
+ * Invoices:  Zakya POS (or fallback to Books)
  */
 
-const MAX_DETAIL_CALLS_PER_ENTITY = 150; // Covers busy days; yesterday-only filter is the real limiter
+const MAX_DETAIL_CALLS_PER_ENTITY = 150;
 
 export async function POST(req: NextRequest) {
   try {
@@ -48,91 +45,153 @@ export async function POST(req: NextRequest) {
         data: { syncType: "cron-pull", status: "running", triggeredBy: "manual" },
       });
 
-      // Validate Zoho connection (1 API call for token refresh if needed)
+      // Check at least one source is connected
       const zoho = new ZohoClient();
-      const ready = await zoho.init();
-      if (!ready) return errorResponse("Zoho not connected", 400);
+      const booksReady = await zoho.init();
+      const zakya = new ZakyaClient();
+      const posReady = await zakya.init();
+      const inventory = new ZohoInventoryClient();
+      const inventoryReady = await inventory.init();
+
+      if (!booksReady && !posReady && !inventoryReady) {
+        return errorResponse("No Zoho sources connected", 400);
+      }
 
       const pullId = `pull-${Date.now()}`;
-      return successResponse({ pullId, step: "init", message: "Ready" });
+      return successResponse({
+        pullId, step: "init", message: "Ready",
+        sources: {
+          books: booksReady ? "connected" : "skipped",
+          pos: posReady ? "connected" : "skipped",
+          inventory: inventoryReady ? "connected" : "skipped",
+        },
+      });
     }
 
     if (!existingPullId) return errorResponse("pullId required", 400);
 
-    const config = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
-
-    // Default to last 30 days if never synced (prevents fetching ALL history)
-    let lastSyncAt = config?.lastSyncAt?.toISOString().slice(0, 10);
-    if (!lastSyncAt) {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      lastSyncAt = thirtyDaysAgo.toISOString().slice(0, 10);
-    }
-
-    // Today's date for bills & invoices (pull current day only)
+    // Default last sync — 30 days ago
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const defaultLastSync = thirtyDaysAgo.toISOString().slice(0, 10);
     const todayStr = new Date().toISOString().slice(0, 10);
 
-    const zoho = new ZohoClient();
-    const ready = await zoho.init();
-    if (!ready) return errorResponse("Zoho not connected", 400);
-
-    // ─── ITEMS: list only, no detail calls ───
+    // ─── ITEMS: via Zoho Inventory (fallback Books) ───
     if (step === "items") {
       let itemsNew = 0;
       let apiCalls = 0;
       const errors: string[] = [];
+      let source = "none";
 
       try {
-        // Always pull only active items. fullImport skips date filter to get all 5000+.
-        const items = await zoho.listAllItems("active", fullImport ? undefined : lastSyncAt);
-        apiCalls += Math.ceil(items.length / 200) || 1;
+        // Try Inventory first
+        const inventory = new ZohoInventoryClient();
+        const inventoryReady = await inventory.init();
 
-        for (const item of items) {
-          const zohoItem = item as Record<string, unknown>;
-          // Skip if already exists
-          if (item.sku) {
-            const existing = await prisma.product.findFirst({ where: { sku: item.sku } });
-            if (existing) continue;
-          }
-          if (item.item_id) {
-            const existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id } });
-            if (existing) continue;
-          }
+        if (inventoryReady) {
+          source = "inventory";
+          const invConfig = await prisma.zohoInventoryConfig.findUnique({ where: { id: "singleton" } });
+          const lastSync = invConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
+          const items = await inventory.listAllItems("active", fullImport ? undefined : lastSync);
+          apiCalls += Math.ceil(items.length / 200) || 1;
 
-          await prisma.zohoPullPreview.create({
-            data: {
-              pullId: existingPullId,
-              entityType: "item",
-              zohoId: item.item_id,
+          for (const item of items) {
+            if (item.sku) {
+              const existing = await prisma.product.findFirst({ where: { sku: item.sku } });
+              if (existing) continue;
+            }
+            if (item.item_id) {
+              const existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id } });
+              if (existing) continue;
+            }
+
+            await prisma.zohoPullPreview.create({
               data: {
-                name: item.name,
-                sku: item.sku || "",
-                costPrice: Number(zohoItem.purchase_rate || 0),
-                sellingPrice: Number(zohoItem.rate || 0),
-                gstRate: Number(zohoItem.tax_percentage || 18),
-                hsnCode: String(zohoItem.hsn_or_sac || ""),
-                stockOnHand: Number(zohoItem.stock_on_hand || 0),
-                productType: String(zohoItem.product_type || zohoItem.item_type || ""),
+                pullId: existingPullId,
+                entityType: "item",
+                zohoId: item.item_id,
+                data: {
+                  name: item.name,
+                  sku: item.sku || "",
+                  costPrice: Number(item.purchase_rate || 0),
+                  sellingPrice: Number(item.rate || 0),
+                  gstRate: Number(item.tax_percentage || 18),
+                  hsnCode: String(item.hsn_or_sac || ""),
+                  stockOnHand: Number(item.stock_on_hand || 0),
+                  productType: String(item.product_type || item.item_type || ""),
+                },
               },
-            },
-          });
-          itemsNew++;
+            });
+            itemsNew++;
+          }
+        } else {
+          // Fallback to Books
+          const zoho = new ZohoClient();
+          const booksReady = await zoho.init();
+          if (booksReady) {
+            source = "books";
+            const booksConfig = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
+            const lastSync = booksConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
+            const items = await zoho.listAllItems("active", fullImport ? undefined : lastSync);
+            apiCalls += Math.ceil(items.length / 200) || 1;
+
+            for (const item of items) {
+              const zohoItem = item as Record<string, unknown>;
+              if (item.sku) {
+                const existing = await prisma.product.findFirst({ where: { sku: item.sku } });
+                if (existing) continue;
+              }
+              if (item.item_id) {
+                const existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id } });
+                if (existing) continue;
+              }
+
+              await prisma.zohoPullPreview.create({
+                data: {
+                  pullId: existingPullId,
+                  entityType: "item",
+                  zohoId: item.item_id,
+                  data: {
+                    name: item.name,
+                    sku: item.sku || "",
+                    costPrice: Number(zohoItem.purchase_rate || 0),
+                    sellingPrice: Number(zohoItem.rate || 0),
+                    gstRate: Number(zohoItem.tax_percentage || 18),
+                    hsnCode: String(zohoItem.hsn_or_sac || ""),
+                    stockOnHand: Number(zohoItem.stock_on_hand || 0),
+                    productType: String(zohoItem.product_type || zohoItem.item_type || ""),
+                  },
+                },
+              });
+              itemsNew++;
+            }
+          } else {
+            errors.push("Items: no source connected");
+          }
         }
       } catch (e) {
         errors.push(`Items: ${e instanceof Error ? e.message : "Unknown"}`);
       }
 
-      return successResponse({ step: "items", itemsNew, apiCalls, errors });
+      return successResponse({ step: "items", source, itemsNew, apiCalls, errors });
     }
 
-    // ─── CONTACTS: list only, 1 call ───
+    // ─── CONTACTS: via Zoho Books ───
     if (step === "contacts") {
       let contactsNew = 0;
       let apiCalls = 0;
       const errors: string[] = [];
 
       try {
-        const contacts = await zoho.listAllContacts(lastSyncAt);
+        const zoho = new ZohoClient();
+        const booksReady = await zoho.init();
+        if (!booksReady) {
+          return successResponse({ step: "contacts", source: "skipped", contactsNew: 0, apiCalls: 0, errors: ["Books not connected"] });
+        }
+
+        const booksConfig = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
+        const lastSync = booksConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
+        const contacts = await zoho.listAllContacts(lastSync);
         apiCalls += Math.ceil(contacts.length / 200) || 1;
         const vendors = contacts.filter((c) => c.contact_type === "vendor");
 
@@ -163,10 +222,10 @@ export async function POST(req: NextRequest) {
         errors.push(`Contacts: ${e instanceof Error ? e.message : "Unknown"}`);
       }
 
-      return successResponse({ step: "contacts", contactsNew, apiCalls, errors });
+      return successResponse({ step: "contacts", source: "books", contactsNew, apiCalls, errors });
     }
 
-    // ─── BILLS: yesterday only + capped detail calls ───
+    // ─── BILLS: via Zoho Books ───
     if (step === "bills") {
       let billsNew = 0;
       let apiCalls = 0;
@@ -174,10 +233,15 @@ export async function POST(req: NextRequest) {
       const errors: string[] = [];
 
       try {
+        const zoho = new ZohoClient();
+        const booksReady = await zoho.init();
+        if (!booksReady) {
+          return successResponse({ step: "bills", source: "skipped", billsNew: 0, apiCalls: 0, errors: ["Books not connected"] });
+        }
+
         const bills = await zoho.listAllBills(todayStr, todayStr);
         apiCalls += Math.ceil(bills.length / 200) || 1;
 
-        // Filter to only NEW bills first (before making any detail calls)
         const newBills: typeof bills = [];
         for (const bill of bills) {
           const existing = await prisma.vendorBill.findFirst({
@@ -189,7 +253,6 @@ export async function POST(req: NextRequest) {
         for (const bill of newBills) {
           let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
 
-          // Only fetch detail if under the cap
           if (detailCalls < MAX_DETAIL_CALLS_PER_ENTITY) {
             try {
               await zoho.delay(300);
@@ -229,21 +292,44 @@ export async function POST(req: NextRequest) {
         errors.push(`Bills: ${e instanceof Error ? e.message : "Unknown"}`);
       }
 
-      return successResponse({ step: "bills", billsNew, apiCalls, errors });
+      return successResponse({ step: "bills", source: "books", billsNew, apiCalls, errors });
     }
 
-    // ─── INVOICES: yesterday only + detail calls for line items (essential for outward check) ───
+    // ─── INVOICES: via Zakya POS (fallback Books) ───
     if (step === "invoices") {
       let invoicesNew = 0;
       let apiCalls = 0;
       let detailCalls = 0;
       const errors: string[] = [];
+      let source = "none";
 
       try {
-        const invoices = await zoho.listAllInvoices(todayStr, todayStr);
+        // Try Zakya POS first
+        const zakya = new ZakyaClient();
+        const posReady = await zakya.init();
+
+        // Determine which client and source to use
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let client: any = null;
+        if (posReady) {
+          client = zakya;
+          source = "pos";
+        } else {
+          const zoho = new ZohoClient();
+          const booksReady = await zoho.init();
+          if (booksReady) {
+            client = zoho;
+            source = "books";
+          }
+        }
+
+        if (!client) {
+          return successResponse({ step: "invoices", source: "skipped", invoicesNew: 0, apiCalls: 0, errors: ["No source connected"] });
+        }
+
+        const invoices = await client.listAllInvoices(todayStr, todayStr);
         apiCalls += Math.ceil(invoices.length / 200) || 1;
 
-        // Filter to only NEW invoices first
         const newInvoices: typeof invoices = [];
         for (const invoice of invoices) {
           if (invoice.status === "void") continue;
@@ -259,11 +345,11 @@ export async function POST(req: NextRequest) {
 
           if (detailCalls < MAX_DETAIL_CALLS_PER_ENTITY) {
             try {
-              await zoho.delay(300);
-              const detail = await zoho.getInvoice(invoice.invoice_id);
+              await client.delay(300);
+              const detail = await client.getInvoice(invoice.invoice_id);
               apiCalls++;
               detailCalls++;
-              lineItems = (detail.invoice.line_items || []).map((li) => ({
+              lineItems = (detail.invoice.line_items || []).map((li: { name: string; sku: string; quantity: number; rate: number; item_total: number }) => ({
                 name: li.name, sku: li.sku, quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
               }));
               salesPerson = (detail.invoice as Record<string, unknown>).salesperson_name as string || "";
@@ -298,7 +384,7 @@ export async function POST(req: NextRequest) {
         errors.push(`Invoices: ${e instanceof Error ? e.message : "Unknown"}`);
       }
 
-      return successResponse({ step: "invoices", invoicesNew, apiCalls, errors });
+      return successResponse({ step: "invoices", source, invoicesNew, apiCalls, errors });
     }
 
     // ─── FINALIZE ───
@@ -340,10 +426,10 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      await prisma.zohoConfig.update({
-        where: { id: "singleton" },
-        data: { lastSyncAt: new Date() },
-      }).catch(() => {});
+      // Update lastSyncAt for all connected sources
+      await prisma.zohoConfig.update({ where: { id: "singleton" }, data: { lastSyncAt: new Date() } }).catch(() => {});
+      await prisma.zakyaConfig.update({ where: { id: "singleton" }, data: { lastSyncAt: new Date() } }).catch(() => {});
+      await prisma.zohoInventoryConfig.update({ where: { id: "singleton" }, data: { lastSyncAt: new Date() } }).catch(() => {});
 
       return successResponse({
         pullId: existingPullId,
