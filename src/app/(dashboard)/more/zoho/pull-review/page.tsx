@@ -1,0 +1,339 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import {
+  ArrowLeft, CheckCircle2, XCircle, Download, RefreshCw,
+  Users, Package, FileText, ShoppingCart, Clock, Loader2,
+} from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+
+interface PreviewItem {
+  id: string;
+  entityType: string;
+  zohoId: string;
+  data: Record<string, unknown>;
+  status: string;
+}
+
+interface PullLog {
+  pullId: string;
+  status: string;
+  contactsNew: number;
+  itemsNew: number;
+  billsNew: number;
+  invoicesNew: number;
+  apiCallsUsed: number;
+  errors: string | null;
+  createdAt: string;
+  approvedAt: string | null;
+}
+
+interface PullData {
+  latest: {
+    pullId: string;
+    status: string;
+    contactsNew: number;
+    itemsNew: number;
+    billsNew: number;
+    invoicesNew: number;
+    apiCallsUsed: number;
+    errors: string | null;
+    createdAt: string;
+    previews: {
+      contacts: PreviewItem[];
+      items: PreviewItem[];
+      bills: PreviewItem[];
+      invoices: PreviewItem[];
+    };
+  } | null;
+  history: PullLog[];
+}
+
+const ENTITY_ICONS = {
+  contacts: Users,
+  items: Package,
+  bills: FileText,
+  invoices: ShoppingCart,
+};
+
+const STATUS_BADGE: Record<string, string> = {
+  PENDING_REVIEW: "warning",
+  APPROVED: "success",
+  REJECTED: "danger",
+  PARTIAL: "info",
+};
+
+export default function PullReviewPage() {
+  const [data, setData] = useState<PullData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [expandedSection, setExpandedSection] = useState<string | null>(null);
+
+  function fetchData() {
+    setLoading(true);
+    fetch("/api/zoho/pull-review")
+      .then((r) => r.json())
+      .then((res) => { if (res.success) setData(res.data); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => { fetchData(); }, []);
+
+  async function handleAction(action: "approve" | "reject") {
+    if (!data?.latest?.pullId) return;
+    const msg = action === "approve"
+      ? "This will write all new records to the database. Continue?"
+      : "This will discard all pulled data. Continue?";
+    if (!confirm(msg)) return;
+
+    setActing(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/zoho/pull-review/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pullId: data.latest.pullId, action }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        if (action === "approve") {
+          const d = json.data;
+          setResult(`Approved: ${d.contacts} vendors, ${d.items} items, ${d.bills} bills, ${d.invoices} invoices${d.errors?.length ? ` (${d.errors.length} errors)` : ""}`);
+        } else {
+          setResult("Pull rejected — no data written.");
+        }
+        fetchData();
+      } else {
+        setResult(`Error: ${json.error}`);
+      }
+    } catch {
+      setResult("Something went wrong");
+    } finally {
+      setActing(false);
+    }
+  }
+
+  function handleExport() {
+    if (!data?.latest?.pullId) return;
+    window.open(`/api/zoho/pull-review/export?pullId=${data.latest.pullId}`, "_blank");
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  const latest = data?.latest;
+  const totalNew = latest ? latest.contactsNew + latest.itemsNew + latest.billsNew + latest.invoicesNew : 0;
+  const isPending = latest?.status === "PENDING_REVIEW";
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-4">
+        <Link href="/more/zoho" className="p-1">
+          <ArrowLeft className="h-5 w-5 text-slate-600" />
+        </Link>
+        <h1 className="text-lg font-bold text-slate-900 flex-1">Zoho Pull Review</h1>
+        <button onClick={fetchData} className="p-2 rounded-lg hover:bg-slate-100">
+          <RefreshCw className="h-4 w-4 text-slate-500" />
+        </button>
+      </div>
+
+      {!latest ? (
+        <div className="text-center py-12">
+          <Clock className="h-10 w-10 text-slate-300 mx-auto mb-2" />
+          <p className="text-sm text-slate-400">No pull data yet</p>
+          <p className="text-xs text-slate-300 mt-1">Daily cron runs at 1 PM IST</p>
+        </div>
+      ) : (
+        <>
+          {/* Pull Summary Card */}
+          <Card className="mb-4">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">
+                    Pull: {new Date(latest.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {latest.apiCallsUsed} API calls used | {totalNew} new records
+                  </p>
+                </div>
+                <Badge variant={STATUS_BADGE[latest.status] as "warning" | "success" | "danger" | "info"}>
+                  {latest.status === "PENDING_REVIEW" ? "Pending Review" : latest.status.charAt(0) + latest.status.slice(1).toLowerCase()}
+                </Badge>
+              </div>
+
+              {/* Summary grid */}
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                {(["contacts", "items", "bills", "invoices"] as const).map((type) => {
+                  const Icon = ENTITY_ICONS[type];
+                  const count = latest[`${type}New` as keyof typeof latest] as number;
+                  return (
+                    <button
+                      key={type}
+                      onClick={() => setExpandedSection(expandedSection === type ? null : type)}
+                      className={`p-2 rounded-lg border text-center transition-colors ${
+                        expandedSection === type ? "border-slate-900 bg-slate-50" : "border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <Icon className="h-4 w-4 text-slate-500 mx-auto mb-1" />
+                      <p className="text-lg font-bold text-slate-900">{count}</p>
+                      <p className="text-[10px] text-slate-400 capitalize">{type}</p>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Action buttons */}
+              {isPending && totalNew > 0 && (
+                <div className="flex gap-2 mb-3">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1"
+                    onClick={handleExport}
+                  >
+                    <Download className="h-4 w-4 mr-1" /> Download CSV
+                  </Button>
+                </div>
+              )}
+
+              {isPending && totalNew > 0 && (
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="flex-1 text-red-600 border-red-200 hover:bg-red-50"
+                    onClick={() => handleAction("reject")}
+                    disabled={acting}
+                  >
+                    <XCircle className="h-4 w-4 mr-1" /> Reject
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="flex-1 bg-green-600 hover:bg-green-700"
+                    onClick={() => handleAction("approve")}
+                    disabled={acting}
+                  >
+                    {acting ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />}
+                    {acting ? "Processing..." : "Approve All"}
+                  </Button>
+                </div>
+              )}
+
+              {isPending && totalNew === 0 && (
+                <p className="text-xs text-slate-400 text-center py-2">No new data in this pull — everything is already synced.</p>
+              )}
+
+              {result && (
+                <p className={`text-xs mt-3 p-2 rounded-lg ${result.startsWith("Error") ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
+                  {result}
+                </p>
+              )}
+
+              {latest.errors && (
+                <details className="mt-3">
+                  <summary className="text-xs text-red-500 cursor-pointer">
+                    {JSON.parse(latest.errors).length} error(s)
+                  </summary>
+                  <div className="mt-1 text-xs text-red-400 space-y-0.5">
+                    {(JSON.parse(latest.errors) as string[]).map((e, i) => (
+                      <p key={i}>{e}</p>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Expanded section — preview items */}
+          {expandedSection && (
+            <Card className="mb-4">
+              <CardContent className="p-3">
+                <h3 className="text-sm font-bold text-slate-900 mb-2 capitalize">{expandedSection} ({latest.previews[expandedSection as keyof typeof latest.previews].length})</h3>
+                <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                  {latest.previews[expandedSection as keyof typeof latest.previews].map((p) => {
+                    const d = p.data;
+                    return (
+                      <div key={p.id} className="p-2 rounded-lg border border-slate-100 bg-slate-50/50">
+                        {p.entityType === "contact" && (
+                          <>
+                            <p className="text-sm font-medium text-slate-900">{String(d.name)}</p>
+                            <p className="text-xs text-slate-500">
+                              {d.phone ? `📞 ${d.phone}` : ""} {d.gstin ? `| GSTIN: ${d.gstin}` : ""}
+                            </p>
+                          </>
+                        )}
+                        {p.entityType === "item" && (
+                          <>
+                            <p className="text-sm font-medium text-slate-900">{String(d.name)}</p>
+                            <p className="text-xs text-slate-500">
+                              SKU: {String(d.sku)} | Cost: ₹{Number(d.costPrice).toLocaleString("en-IN")} | Sell: ₹{Number(d.sellingPrice).toLocaleString("en-IN")} | GST: {String(d.gstRate)}%
+                            </p>
+                          </>
+                        )}
+                        {p.entityType === "bill" && (
+                          <>
+                            <p className="text-sm font-medium text-slate-900">Bill #{String(d.billNumber)}</p>
+                            <p className="text-xs text-slate-500">
+                              Vendor: {String(d.vendorName)} | ₹{Number(d.total).toLocaleString("en-IN")} | {(d.lineItems as unknown[])?.length || 0} items
+                            </p>
+                          </>
+                        )}
+                        {p.entityType === "invoice" && (
+                          <>
+                            <p className="text-sm font-medium text-slate-900">Invoice #{String(d.invoiceNumber)}</p>
+                            <p className="text-xs text-slate-500">
+                              {String(d.customerName)} | ₹{Number(d.total).toLocaleString("en-IN")} | {(d.lineItems as unknown[])?.length || 0} items
+                              {d.salesPerson ? ` | Sales: ${d.salesPerson}` : ""}
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {latest.previews[expandedSection as keyof typeof latest.previews].length === 0 && (
+                    <p className="text-xs text-slate-400 text-center py-4">No new {expandedSection} in this pull</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Pull History */}
+          {data && data.history.length > 1 && (
+            <div className="mt-4">
+              <h3 className="text-sm font-bold text-slate-900 mb-2">Pull History</h3>
+              <div className="space-y-1.5">
+                {data.history.slice(1).map((h) => (
+                  <div key={h.pullId} className="flex items-center justify-between p-2 rounded-lg border border-slate-100">
+                    <div>
+                      <p className="text-xs font-medium text-slate-700">
+                        {new Date(h.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        {h.contactsNew}C {h.itemsNew}I {h.billsNew}B {h.invoicesNew}Inv | {h.apiCallsUsed} calls
+                      </p>
+                    </div>
+                    <Badge variant={STATUS_BADGE[h.status] as "warning" | "success" | "danger" | "info"} className="text-[10px]">
+                      {h.status === "PENDING_REVIEW" ? "Pending" : h.status.charAt(0) + h.status.slice(1).toLowerCase()}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

@@ -187,9 +187,12 @@ export default function ZohoSettingsPage() {
                 <p className="text-xs font-semibold text-blue-900">Auto-Sync: Daily at 1 PM IST</p>
               </div>
               <p className="text-[10px] text-blue-700">
-                Pulls yesterday&apos;s vendors, items, and bills from Zoho. ~10-20 API calls/day (of 2,500 limit).
-                Invoices disabled until stock baseline is done.
+                Pulls new vendors, items, bills, and invoices from Zoho. All data goes to preview for approval first. ~5-26 API calls/day.
               </p>
+              <Link href="/more/zoho/pull-review"
+                className="mt-2 flex items-center justify-center gap-1.5 bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Review & Approve Pulls
+              </Link>
             </CardContent>
           </Card>
 

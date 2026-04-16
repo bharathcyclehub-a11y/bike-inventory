@@ -725,6 +725,7 @@ model Delivery {
   flagResolvedAt  DateTime?
   flagResolvedBy  String?
 
+  salesPerson     String?
   lineItems       Json?
   notes           String?
   deliveryNotes   String?
@@ -822,4 +823,41 @@ model AlertConfig {
   id            String   @id @default("singleton")
   redFlagPhones String?
   updatedAt     DateTime @updatedAt
+}
+
+// ─── Zoho Pull Preview (approval gate) ───────────────────────
+
+model ZohoPullPreview {
+  id            String    @id @default(cuid())
+  pullId        String
+  entityType    String    // "contact", "item", "bill", "invoice"
+  action        String    @default("new")
+  zohoId        String
+  data          Json
+  localMatch    Json?
+  status        String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  reviewedAt    DateTime?
+  reviewedById  String?
+  createdAt     DateTime  @default(now())
+
+  @@index([pullId])
+  @@index([entityType])
+  @@index([status])
+}
+
+model ZohoPullLog {
+  id              String    @id @default(cuid())
+  pullId          String    @unique
+  status          String    @default("PENDING_REVIEW") // PENDING_REVIEW, APPROVED, REJECTED, PARTIAL
+  contactsNew     Int       @default(0)
+  itemsNew        Int       @default(0)
+  billsNew        Int       @default(0)
+  invoicesNew     Int       @default(0)
+  errors          String?
+  apiCallsUsed    Int       @default(0)
+  createdAt       DateTime  @default(now())
+  approvedAt      DateTime?
+
+  @@index([status])
+  @@index([createdAt])
 }
