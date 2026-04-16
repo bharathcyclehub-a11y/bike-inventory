@@ -56,14 +56,10 @@ export async function POST() {
       });
     }
 
-    // Step 5: Build brand cache
-    const allBrands = await prisma.brand.findMany();
-    const brandMap = new Map(allBrands.map((b) => [b.name.toLowerCase(), b.id]));
-
+    // Step 5: Default brand (brands managed manually via stock count)
     let defaultBrand = await prisma.brand.findFirst({ where: { name: "Unbranded" } });
     if (!defaultBrand) {
       defaultBrand = await prisma.brand.create({ data: { name: "Unbranded" } });
-      brandMap.set("unbranded", defaultBrand.id);
     }
 
     // Step 6: Import active items and record each one
@@ -77,21 +73,9 @@ export async function POST() {
         const zohoItem = item as Record<string, unknown>;
         const sku = (item.sku || `ZOHO-${String(Date.now()).slice(-8)}-${imported}`).substring(0, 50);
 
-        // Resolve brand
-        const brandName = String(zohoItem.brand || zohoItem.manufacturer || "").trim();
-        let brandId = defaultBrand.id;
-        let resolvedBrand = "Unbranded";
-        if (brandName) {
-          resolvedBrand = brandName;
-          const existingBrandId = brandMap.get(brandName.toLowerCase());
-          if (existingBrandId) {
-            brandId = existingBrandId;
-          } else {
-            const newBrand = await prisma.brand.create({ data: { name: brandName } });
-            brandMap.set(brandName.toLowerCase(), newBrand.id);
-            brandId = newBrand.id;
-          }
-        }
+        // Brand assigned manually during stock count — use default here
+        const brandId = defaultBrand.id;
+        const resolvedBrand = "Unbranded";
 
         // Determine product type
         const zohoType = String(zohoItem.product_type || zohoItem.item_type || "").toLowerCase();
