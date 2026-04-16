@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
-import { getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
+import { getAging, AGING_COLORS, AGING_BADGE, fuzzySearchFields } from "@/lib/utils";
 
 const INWARD_COLUMNS: ExportColumn[] = [
   { header: "Product", key: "product.name" },
@@ -27,7 +27,7 @@ interface InwardTransaction {
   referenceNo: string | null;
   notes: string | null;
   createdAt: string;
-  product: { name: string; sku: string };
+  product: { name: string; sku: string; size?: string | null; brand?: { name: string } | null };
   user: { name: string };
 }
 
@@ -92,10 +92,7 @@ export default function InwardsPage() {
     if (sourceFilter === "manual" && isZoho(t.notes)) return false;
     if (sourceFilter === "zoho" && !isZoho(t.notes)) return false;
     if (sourceFilter === "unverified" && !(isZoho(t.notes) && !isVerified(t.notes))) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      if (!t.product.name.toLowerCase().includes(q) && !t.product.sku.toLowerCase().includes(q) && !(t.referenceNo?.toLowerCase().includes(q))) return false;
-    }
+    if (search && !fuzzySearchFields(search, [t.product.name, t.product.sku, t.referenceNo, t.product.brand?.name, t.product.size])) return false;
     return true;
   });
 

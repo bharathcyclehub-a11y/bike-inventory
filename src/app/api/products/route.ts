@@ -27,12 +27,19 @@ export async function GET(req: NextRequest) {
     const binId = searchParams.get("binId") || undefined;
 
     const where = {
-      ...(search && {
-        OR: [
-          { name: { contains: search, mode: "insensitive" as const } },
-          { sku: { contains: search, mode: "insensitive" as const } },
-        ],
-      }),
+      ...(search && (() => {
+        const words = search.trim().split(/\s+/).filter(Boolean);
+        const fieldOR = (word: string) => ([
+          { name: { contains: word, mode: "insensitive" as const } },
+          { sku: { contains: word, mode: "insensitive" as const } },
+          { brand: { name: { contains: word, mode: "insensitive" as const } } },
+          { size: { contains: word, mode: "insensitive" as const } },
+        ]);
+        if (words.length > 1) {
+          return { AND: words.map((w) => ({ OR: fieldOR(w) })) };
+        }
+        return { OR: fieldOR(words[0]) };
+      })()),
       ...(categoryId && { categoryId }),
       ...(brandId && { brandId }),
       ...(binId && { binId }),

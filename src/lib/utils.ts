@@ -60,6 +60,56 @@ export const AGING_BADGE = {
   critical: "bg-red-200 text-red-900 animate-pulse",
 } as const;
 
+/** Edit distance between two strings (Levenshtein) — for typo tolerance */
+function editDistance(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp: number[] = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    let prev = i - 1;
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = temp;
+    }
+  }
+  return dp[n];
+}
+
+/** Smart fuzzy search — matches substring, subsequence, or within edit distance tolerance */
+export function fuzzyMatch(query: string, target: string | null | undefined): boolean {
+  if (!target) return false;
+  const q = query.toLowerCase().trim();
+  const t = target.toLowerCase();
+  if (!q) return true;
+  // Exact substring
+  if (t.includes(q)) return true;
+  // Check each word in target for close match
+  const tWords = t.split(/[\s\-_\/]+/);
+  const tolerance = q.length <= 3 ? 1 : q.length <= 6 ? 2 : 3;
+  for (const w of tWords) {
+    if (w.startsWith(q.slice(0, Math.max(1, q.length - 1)))) return true;
+    if (editDistance(q, w) <= tolerance) return true;
+    if (w.length > q.length && editDistance(q, w.slice(0, q.length)) <= 1) return true;
+  }
+  // Subsequence match
+  let qi = 0;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (t[ti] === q[qi]) qi++;
+  }
+  if (qi === q.length) return true;
+  return false;
+}
+
+/** Multi-field fuzzy search — returns true if ALL query words match at least one field */
+export function fuzzySearchFields(query: string, fields: (string | null | undefined)[]): boolean {
+  if (!query.trim()) return true;
+  const words = query.trim().split(/\s+/);
+  return words.every((word) => fields.some((f) => fuzzyMatch(word, f)));
+}
+
 export function useDebounce<T>(value: T, delay = 300): T {
   const [debouncedValue, setDebouncedValue] = useState(value);
 

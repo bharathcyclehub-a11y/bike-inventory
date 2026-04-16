@@ -63,7 +63,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       include: {
         product: {
           select: {
-            name: true, sku: true, currentStock: true, type: true,
+            name: true, sku: true, currentStock: true, type: true, size: true,
             category: { select: { name: true } },
             brand: { select: { name: true } },
             bin: { select: { code: true, location: true } },

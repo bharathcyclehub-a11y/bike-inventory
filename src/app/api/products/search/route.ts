@@ -19,6 +19,8 @@ export async function GET(req: NextRequest) {
         OR: [
           { name: { contains: q, mode: "insensitive" } },
           { sku: { contains: q, mode: "insensitive" } },
+          { brand: { name: { contains: q, mode: "insensitive" } } },
+          { size: { contains: q, mode: "insensitive" } },
           { category: { name: { contains: q, mode: "insensitive" } } },
           { bin: { code: { contains: q, mode: "insensitive" } } },
         ],

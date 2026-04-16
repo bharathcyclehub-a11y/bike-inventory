@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSession } from "next-auth/react";
-import { ArrowLeft, Warehouse, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Warehouse, Plus, Trash2, ChevronRight, MapPin, Layers, Tag } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,13 @@ interface Bin {
   location: string;
 }
 
+function abbreviate(text: string): string {
+  return text
+    .split(/\s+/)
+    .map((w) => w[0]?.toUpperCase() || "")
+    .join("");
+}
+
 export default function BinsPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
@@ -23,9 +30,10 @@ export default function BinsPage() {
   const [bins, setBins] = useState<Bin[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-  const [location, setLocation] = useState("");
+  const [step, setStep] = useState(1);
+  const [mainLocation, setMainLocation] = useState("");
+  const [subLocation, setSubLocation] = useState("");
+  const [binName, setBinName] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState("");
   const [error, setError] = useState("");
@@ -40,20 +48,70 @@ export default function BinsPage() {
 
   useEffect(() => { fetchBins(); }, []);
 
-  async function handleAdd(e: React.FormEvent) {
-    e.preventDefault();
-    if (!code.trim() || !name.trim()) return;
+  // Extract unique main locations and sub-locations from existing bins
+  const existingLocations = useMemo(() => {
+    const mainSet = new Map<string, Set<string>>();
+    bins.forEach((b) => {
+      if (!b.location) return;
+      const parts = b.location.split(" - ");
+      const main = parts[0].trim();
+      if (!mainSet.has(main)) mainSet.set(main, new Set());
+      if (parts[1]) mainSet.get(main)!.add(parts[1].trim());
+    });
+    return mainSet;
+  }, [bins]);
+
+  // Generate bin code from inputs
+  const generatedCode = useMemo(() => {
+    if (!mainLocation.trim()) return "";
+    const mainAbbr = abbreviate(mainLocation.trim());
+    const subAbbr = subLocation.trim() ? abbreviate(subLocation.trim()) : "";
+    const prefix = subAbbr ? `${mainAbbr}-${subAbbr}` : mainAbbr;
+
+    // Find next sequential number for this prefix
+    const existing = bins.filter((b) => b.code.startsWith(prefix + "-"));
+    const maxNum = existing.reduce((max, b) => {
+      const parts = b.code.split("-");
+      const last = parseInt(parts[parts.length - 1], 10);
+      return isNaN(last) ? max : Math.max(max, last);
+    }, 0);
+
+    return `${prefix}-${String(maxNum + 1).padStart(2, "0")}`;
+  }, [mainLocation, subLocation, bins]);
+
+  // Build location string for DB
+  const locationString = useMemo(() => {
+    if (!mainLocation.trim()) return "";
+    if (!subLocation.trim()) return mainLocation.trim();
+    return `${mainLocation.trim()} - ${subLocation.trim()}`;
+  }, [mainLocation, subLocation]);
+
+  function resetForm() {
+    setStep(1);
+    setMainLocation("");
+    setSubLocation("");
+    setBinName("");
+    setError("");
+  }
+
+  async function handleAdd() {
+    if (!binName.trim() || !generatedCode) return;
     setSaving(true);
     setError("");
     try {
       const res = await fetch("/api/bins", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: code.trim(), name: name.trim(), location: location.trim() }),
+        body: JSON.stringify({
+          code: generatedCode,
+          name: binName.trim(),
+          location: locationString,
+        }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error || "Failed to create bin");
-      setCode(""); setName(""); setLocation(""); setShowAdd(false);
+      resetForm();
+      setShowAdd(false);
       fetchBins();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -78,6 +136,12 @@ export default function BinsPage() {
     }
   }
 
+  // Sub-locations for selected main location
+  const subLocationsForMain = useMemo(() => {
+    const subs = existingLocations.get(mainLocation.trim());
+    return subs ? Array.from(subs).sort() : [];
+  }, [mainLocation, existingLocations]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -92,7 +156,7 @@ export default function BinsPage() {
         <Link href="/more" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <h1 className="text-lg font-bold text-slate-900 flex-1">Bins & Locations</h1>
         {isAdmin && (
-          <Button size="sm" onClick={() => setShowAdd(!showAdd)} variant={showAdd ? "outline" : "default"}>
+          <Button size="sm" onClick={() => { setShowAdd(!showAdd); if (showAdd) resetForm(); }} variant={showAdd ? "outline" : "default"}>
             <Plus className="h-4 w-4 mr-1" /> {showAdd ? "Cancel" : "Add Bin"}
           </Button>
         )}
@@ -100,16 +164,156 @@ export default function BinsPage() {
 
       {showAdd && (
         <Card className="mb-4">
-          <CardContent className="p-3">
-            <form onSubmit={handleAdd} className="space-y-2">
-              <Input placeholder="Bin code (e.g. A1, B2)" value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} autoFocus />
-              <Input placeholder="Bin name (e.g. Rack A Shelf 1)" value={name} onChange={(e) => setName(e.target.value)} />
-              <Input placeholder="Location (e.g. Ground Floor)" value={location} onChange={(e) => setLocation(e.target.value)} />
-              {error && <p className="text-xs text-red-600">{error}</p>}
-              <Button type="submit" size="sm" disabled={saving || !code.trim() || !name.trim()} className="w-full">
-                {saving ? "Saving..." : "Create Bin"}
-              </Button>
-            </form>
+          <CardContent className="p-4">
+            {/* Step indicators */}
+            <div className="flex items-center gap-1 mb-4">
+              {[1, 2, 3].map((s) => (
+                <div key={s} className="flex items-center gap-1">
+                  <div className={`h-7 w-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                    s < step ? "bg-green-100 text-green-700" :
+                    s === step ? "bg-slate-900 text-white" :
+                    "bg-slate-100 text-slate-400"
+                  }`}>
+                    {s < step ? "\u2713" : s}
+                  </div>
+                  {s < 3 && <ChevronRight className="h-3 w-3 text-slate-300" />}
+                </div>
+              ))}
+              <span className="text-xs text-slate-400 ml-2">
+                {step === 1 ? "Location" : step === 2 ? "Sub-location" : "Bin Name"}
+              </span>
+            </div>
+
+            {/* Step 1: Main Location */}
+            {step === 1 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <MapPin className="h-4 w-4" /> Main Location
+                </div>
+                <Input
+                  placeholder="e.g. Bharath Cycle Hub, Godown 3"
+                  value={mainLocation}
+                  onChange={(e) => setMainLocation(e.target.value)}
+                  autoFocus
+                />
+                {Array.from(existingLocations.keys()).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {Array.from(existingLocations.keys()).sort().map((loc) => (
+                      <button
+                        key={loc}
+                        type="button"
+                        onClick={() => setMainLocation(loc)}
+                        className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                          mainLocation === loc
+                            ? "bg-slate-900 text-white border-slate-900"
+                            : "bg-white text-slate-600 border-slate-200 hover:border-slate-400"
+                        }`}
+                      >
+                        {loc}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <Button
+                  size="sm"
+                  className="w-full"
+                  disabled={!mainLocation.trim()}
+                  onClick={() => setStep(2)}
+                >
+                  Next <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            )}
+
+            {/* Step 2: Sub-location */}
+            {step === 2 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <Layers className="h-4 w-4" /> Sub-location
+                </div>
+                <p className="text-xs text-slate-400">{mainLocation}</p>
+                <Input
+                  placeholder="e.g. Ground Floor, First Floor, Area A"
+                  value={subLocation}
+                  onChange={(e) => setSubLocation(e.target.value)}
+                  autoFocus
+                />
+                {subLocationsForMain.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {subLocationsForMain.map((sub) => (
+                      <button
+                        key={sub}
+                        type="button"
+                        onClick={() => setSubLocation(sub)}
+                        className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                          subLocation === sub
+                            ? "bg-slate-900 text-white border-slate-900"
+                            : "bg-white text-slate-600 border-slate-200 hover:border-slate-400"
+                        }`}
+                      >
+                        {sub}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setStep(1)} className="flex-1">
+                    Back
+                  </Button>
+                  <Button size="sm" className="flex-1" onClick={() => setStep(3)}>
+                    {subLocation.trim() ? "Next" : "Skip"} <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: Bin Name + Review */}
+            {step === 3 && (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <Tag className="h-4 w-4" /> Bin Name
+                </div>
+                <p className="text-xs text-slate-400">{locationString}</p>
+                <Input
+                  placeholder="e.g. Assembly Bin, Gear MTB Bin"
+                  value={binName}
+                  onChange={(e) => setBinName(e.target.value)}
+                  autoFocus
+                />
+
+                {/* Preview */}
+                {generatedCode && (
+                  <div className="rounded-lg bg-slate-50 p-3 border border-slate-200">
+                    <p className="text-[10px] uppercase tracking-wider text-slate-400 mb-1">Preview</p>
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 rounded-lg bg-white border border-slate-200 flex items-center justify-center">
+                        <span className="text-xs font-bold text-slate-700">{generatedCode}</span>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">{binName || "—"}</p>
+                        <p className="text-xs text-slate-500">{locationString}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {error && <p className="text-xs text-red-600">{error}</p>}
+
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setStep(2)} className="flex-1">
+                    Back
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="flex-1"
+                    disabled={saving || !binName.trim() || !generatedCode}
+                    onClick={handleAdd}
+                  >
+                    {saving ? "Saving..." : "Create Bin"}
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

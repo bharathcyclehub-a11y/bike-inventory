@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useDebounce } from "@/lib/utils";
+import { useDebounce, fuzzySearchFields } from "@/lib/utils";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
@@ -167,7 +167,9 @@ export default function StockPage() {
 
   const filtered = quickFilter === "LOW_STOCK"
     ? products.filter((p) => p.reorderLevel > 0 && p.currentStock <= p.reorderLevel)
-    : products;
+    : debouncedSearch
+      ? products.filter((p) => fuzzySearchFields(debouncedSearch, [p.name, p.sku, p.brand?.name, p.size, p.category?.name]))
+      : products;
 
   const secondsAgo = Math.round((Date.now() - lastUpdated.getTime()) / 1000);
 
@@ -203,7 +205,7 @@ export default function StockPage() {
       <div className="relative mb-3">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
         <Input
-          placeholder="Search product, SKU, or brand..."
+          placeholder="Search product, SKU, brand, or size..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="pl-9"

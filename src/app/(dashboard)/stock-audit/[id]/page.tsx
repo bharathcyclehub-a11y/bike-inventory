@@ -12,7 +12,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { useDebounce } from "@/lib/utils";
+import { useDebounce, fuzzyMatch } from "@/lib/utils";
 
 interface StockCountItemData {
   id: string;
@@ -27,6 +27,7 @@ interface StockCountItemData {
     sku: string;
     currentStock: number;
     type: string;
+    size: string | null;
     category: { name: string } | null;
     brand: { name: string } | null;
     bin: { code: string; location: string } | null;
@@ -58,18 +59,6 @@ const STATUS_STYLE: Record<string, string> = {
   APPROVED: "success",
   REJECTED: "danger",
 };
-
-// Simple fuzzy match — check if each character of query appears in order in target
-function fuzzyMatch(query: string, target: string): boolean {
-  const q = query.toLowerCase();
-  const t = target.toLowerCase();
-  if (t.includes(q)) return true;
-  let qi = 0;
-  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
-    if (t[ti] === q[qi]) qi++;
-  }
-  return qi === q.length;
-}
 
 // Baseline mode: until May 31 2026, counted stock IS actual stock
 const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
@@ -143,8 +132,9 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
                   const fuzzyResults = allItems.filter((item) =>
                     fuzzyMatch(debouncedSearch, item.product.name) ||
                     fuzzyMatch(debouncedSearch, item.product.sku) ||
-                    (item.product.brand && fuzzyMatch(debouncedSearch, item.product.brand.name)) ||
-                    (item.product.category && fuzzyMatch(debouncedSearch, item.product.category.name))
+                    fuzzyMatch(debouncedSearch, item.product.brand?.name) ||
+                    fuzzyMatch(debouncedSearch, item.product.category?.name) ||
+                    fuzzyMatch(debouncedSearch, item.product.size)
                   );
                   setItems(fuzzyResults);
                   mergeServerCounts(fuzzyResults);
