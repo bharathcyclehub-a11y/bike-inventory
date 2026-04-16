@@ -119,12 +119,24 @@ export default function InwardsPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  const fetchWithTimeout = async (url: string, options?: RequestInit, timeoutMs = 20000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...options, signal: controller.signal });
+      return res;
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw new Error("Request timed out — Zoho may be slow, try again");
+      throw e;
+    } finally { clearTimeout(timer); }
+  };
+
   const handleFetchBills = async () => {
     setFetchStep("fetching");
     setFetchError("");
     setFetchProgress("Connecting to Zoho...");
     try {
-      const initRes = await fetch("/api/zoho/trigger-pull", {
+      const initRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "init" }),
       }).then(r => r.json());
@@ -132,28 +144,27 @@ export default function InwardsPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
-      // Pull bills from 1st of current month
       setFetchProgress("Pulling bills from Zoho...");
       const now = new Date();
       const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
-      const billRes = await fetch("/api/zoho/trigger-pull", {
+      const billRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "bills", pullId, fromDate: monthStart }),
-      }).then(r => r.json());
+      }, 30000).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
 
-      setFetchProgress(`Found ${billRes.data.billsNew || 0} new bills, processing...`);
-      await fetch("/api/zoho/trigger-pull", {
+      setFetchProgress(`Found ${billRes.data.billsNew || 0} new bills, saving...`);
+      await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           step: "finalize", pullId,
           billsNew: billRes.data.billsNew, apiCalls: billRes.data.apiCalls,
           allErrors: billRes.data.errors || [],
         }),
-      });
+      }).then(r => r.json());
 
       setFetchProgress("Loading preview...");
-      const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
+      const previewRes = await fetchWithTimeout(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
       if (previewRes.success) {
         const billItems = (previewRes.data.previews || []).filter(
           (p: ZohoBillPreview & { entityType: string; status: string }) => p.entityType === "bill" && p.status === "PENDING"
@@ -265,7 +276,7 @@ export default function InwardsPage() {
             <button onClick={handleFetchBills} disabled={fetchStep === "fetching" || fetchStep === "importing"}
               className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
               {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-              {fetchStep === "fetching" ? (fetchProgress || "Fetching...") : "Fetch Bills"}
+              {fetchStep === "fetching" ? "Fetching..." : "Fetch Bills"}
             </button>
           )}
           <ExportButtons
@@ -274,6 +285,14 @@ export default function InwardsPage() {
           />
         </div>
       </div>
+
+      {/* Progress Banner */}
+      {fetchStep === "fetching" && fetchProgress && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
+          <span className="text-xs text-blue-700 font-medium">{fetchProgress}</span>
+        </div>
+      )}
 
       {/* Fetch Error */}
       {fetchError && (
