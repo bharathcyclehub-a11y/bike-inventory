@@ -246,14 +246,26 @@ export async function POST(req: NextRequest) {
           const bills = await inventory.listAllBills(billsFromDate, todayStr);
           apiCalls += Math.ceil(bills.length / 200) || 1;
 
+          // Diagnostic: total bills returned from API
+          const totalFromApi = bills.length;
+
           // Batch check existing bills
           const billNumbers = bills.map((b) => b.bill_number);
-          const existingBills = await prisma.vendorBill.findMany({
-            where: { billNo: { in: billNumbers } },
-            select: { billNo: true },
-          });
+          const existingBills = billNumbers.length > 0
+            ? await prisma.vendorBill.findMany({
+                where: { billNo: { in: billNumbers } },
+                select: { billNo: true },
+              })
+            : [];
           const existingSet = new Set(existingBills.map((b) => b.billNo));
           const newBills = bills.filter((b) => !existingSet.has(b.bill_number));
+
+          // Also check zohoPullPreview for bills stuck in PENDING from previous attempts
+          if (newBills.length === 0 && totalFromApi === 0) {
+            errors.push(`Zoho Inventory returned 0 bills for ${billsFromDate} to ${todayStr}`);
+          } else if (newBills.length === 0 && totalFromApi > 0) {
+            errors.push(`${totalFromApi} bills from API but all already imported (${existingSet.size} in DB). Sample: ${billNumbers.slice(0, 3).join(", ")}`);
+          }
 
           if (newBills.length > 0) {
             // Fetch line items for new bills (5 concurrent, ~200ms between batches)

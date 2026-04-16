@@ -144,7 +144,13 @@ export default function BillsPage() {
       setBillPreviews(billItems);
       setSelectedBills(new Set(billItems.map((b: ZohoBillPreview) => b.id)));
       setFetchStep(billItems.length > 0 ? "selecting" : "idle");
-      if (billItems.length === 0) setFetchError(`No new bills found (${src} source)`);
+      const billErrors = billRes.data.errors || [];
+      if (billItems.length === 0) {
+        const errDetail = billErrors.length > 0 ? `: ${billErrors.join("; ")}` : "";
+        setFetchError(`No new bills found (${src})${errDetail}`);
+      } else if (billErrors.length > 0) {
+        setFetchError(`Warnings: ${billErrors.join("; ")}`);
+      }
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
       setFetchStep("idle");
