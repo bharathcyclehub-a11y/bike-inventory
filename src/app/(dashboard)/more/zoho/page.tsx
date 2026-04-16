@@ -66,6 +66,7 @@ export default function ZohoSettingsPage() {
   const [pullError, setPullError] = useState<string | null>(null);
   const [pullCounts, setPullCounts] = useState({ itemsNew: 0, contactsNew: 0, billsNew: 0, invoicesNew: 0 });
   const [pullErrors, setPullErrors] = useState<string[]>([]);
+  const [fullImport, setFullImport] = useState(false);
 
   // Setup form
   const [clientId, setClientId] = useState("");
@@ -181,8 +182,8 @@ export default function ZohoSettingsPage() {
 
       // Step 1: Items
       setCurrentStepIdx(1);
-      setStepMessage("Fetching items...");
-      const itemsResult = await callStep("items", pullId);
+      setStepMessage(fullImport ? "Fetching ALL items (full import)..." : "Fetching items...");
+      const itemsResult = await callStep("items", pullId, fullImport ? { fullImport: true } : undefined);
       const counts = { itemsNew: itemsResult.itemsNew || 0, contactsNew: 0, billsNew: 0, invoicesNew: 0 };
       const allErrors: string[] = [...(itemsResult.errors || [])];
       let totalApiCalls = itemsResult.apiCalls || 0;
@@ -423,6 +424,20 @@ export default function ZohoSettingsPage() {
                 </div>
               )}
 
+              {/* Full import toggle */}
+              <label className="flex items-center gap-2 mb-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={fullImport}
+                  onChange={(e) => setFullImport(e.target.checked)}
+                  disabled={pulling}
+                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-xs text-slate-600">
+                  Full import (all items, ~27 API calls for 5000+ items)
+                </span>
+              </label>
+
               {/* Action buttons */}
               <div className="flex gap-2">
                 <button
@@ -431,7 +446,7 @@ export default function ZohoSettingsPage() {
                   className="flex-1 flex items-center justify-center gap-1.5 border border-blue-300 text-blue-700 px-3 py-2.5 rounded-lg text-xs font-medium hover:bg-blue-100 disabled:opacity-50 transition-colors"
                 >
                   {pulling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                  {pulling ? "Pulling..." : "Pull Now"}
+                  {pulling ? "Pulling..." : fullImport ? "Full Import" : "Pull Now"}
                 </button>
                 <Link href="/more/zoho/pull-review"
                   className="flex-1 flex items-center justify-center gap-1.5 bg-blue-600 text-white px-3 py-2.5 rounded-lg text-xs font-medium hover:bg-blue-700 transition-colors">

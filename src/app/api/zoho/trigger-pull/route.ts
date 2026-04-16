@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   try {
     await requireAuth(["ADMIN", "SUPERVISOR"]);
     const body = await req.json();
-    const { step, pullId: existingPullId } = body as { step: string; pullId?: string };
+    const { step, pullId: existingPullId, fullImport } = body as { step: string; pullId?: string; fullImport?: boolean };
 
     // ─── INIT ───
     if (step === "init") {
@@ -86,8 +86,8 @@ export async function POST(req: NextRequest) {
       const errors: string[] = [];
 
       try {
-        // Use lastModifiedTime to only get recently changed items (1-2 API calls)
-        const items = await zoho.listAllItems(undefined, lastSyncAt);
+        // fullImport: pull ALL items (no date filter). Normal: only recently modified.
+        const items = await zoho.listAllItems(undefined, fullImport ? undefined : lastSyncAt);
         apiCalls += Math.ceil(items.length / 200) || 1;
 
         for (const item of items) {
