@@ -72,6 +72,7 @@ export default function BillsPage() {
   const [selectedBills, setSelectedBills] = useState<Set<string>>(new Set());
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
+  const [billSearch, setBillSearch] = useState("");
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -117,10 +118,15 @@ export default function BillsPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
-      setFetchProgress("Pulling bills from Zoho...");
+      const searchTerm = billSearch.trim();
+      setFetchProgress(searchTerm ? `Searching "${searchTerm}" in Zoho...` : "Pulling bills from Zoho (last 24h)...");
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       const billRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "bills", pullId, fromDate: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10) }),
+        body: JSON.stringify({
+          step: "bills", pullId,
+          ...(searchTerm ? { searchText: searchTerm } : { fromDate: yesterday }),
+        }),
       }, 30000).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
 
@@ -206,11 +212,19 @@ export default function BillsPage() {
         <h1 className="text-lg font-bold text-slate-900">Vendor Bills</h1>
         <div className="flex items-center gap-2">
           {canFetchBills && (
-            <button onClick={handleFetchBills} disabled={fetchStep === "fetching" || fetchStep === "importing"}
-              className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
-              {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-              {fetchStep === "fetching" ? "Fetching..." : "Fetch Bills"}
-            </button>
+            <div className="flex items-center gap-1">
+              <input
+                type="text" placeholder="Bill no..." value={billSearch}
+                onChange={(e) => setBillSearch(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleFetchBills()}
+                className="w-20 px-2 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400"
+              />
+              <button onClick={handleFetchBills} disabled={fetchStep === "fetching" || fetchStep === "importing"}
+                className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+                {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+                {fetchStep === "fetching" ? "Fetching..." : billSearch.trim() ? "Search" : "Fetch Bills"}
+              </button>
+            </div>
           )}
           <ExportButtons
             onExcel={() => exportToExcel(bills as unknown as Record<string, unknown>[], BILL_COLUMNS, "vendor-bills")}

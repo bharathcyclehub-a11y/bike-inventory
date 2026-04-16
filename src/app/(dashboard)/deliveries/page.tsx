@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   Search, Loader2, Cloud, Download, Truck, AlertTriangle, CheckCircle2,
-  Clock, Package, Flag,
+  Clock, Package, Flag, Trash2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -82,6 +82,8 @@ export default function DeliveriesPage() {
   const [selectedInvoices, setSelectedInvoices] = useState<Set<string>>(new Set());
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -140,6 +142,18 @@ export default function DeliveriesPage() {
     fetchData();
   };
 
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this delivery entry?")) return;
+    setDeleting(id);
+    try {
+      const res = await fetch(`/api/deliveries/${id}`, { method: "DELETE" }).then(r => r.json());
+      if (!res.success) throw new Error(res.error || "Delete failed");
+      fetchData();
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : "Delete failed");
+    } finally { setDeleting(null); }
+  };
+
   const handleFetchInvoices = async () => {
     setFetchStep("fetching");
     setFetchError("");
@@ -153,10 +167,15 @@ export default function DeliveriesPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
-      // Step 2: Pull invoices only
+      // Step 2: Pull invoices only (last 24h or by search)
+      const searchTerm = invoiceSearch.trim();
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       const invRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "invoices", pullId }),
+        body: JSON.stringify({
+          step: "invoices", pullId,
+          ...(searchTerm ? { searchText: searchTerm } : { fromDate: yesterday }),
+        }),
       }).then(r => r.json());
       if (!invRes.success) throw new Error(invRes.error || "Invoice fetch failed");
 
@@ -168,7 +187,7 @@ export default function DeliveriesPage() {
           invoicesNew: invRes.data.invoicesNew, apiCalls: invRes.data.apiCalls,
           allErrors: invRes.data.errors || [],
         }),
-      });
+      }).then(r => r.json()).catch(() => {});
 
       // Step 4: Load previews
       const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
@@ -179,7 +198,10 @@ export default function DeliveriesPage() {
         setInvoicePreviews(invoices);
         setSelectedInvoices(new Set(invoices.map((inv: ZohoInvoicePreview) => inv.id)));
         setFetchStep(invoices.length > 0 ? "selecting" : "idle");
-        if (invoices.length === 0) setFetchError("No new invoices found for today");
+        const invFound = invRes.data.invoicesNew || 0;
+        if (invoices.length === 0) {
+          setFetchError(invFound > 0 ? `${invFound} found but already imported` : `No new invoices found${searchTerm ? ` for "${searchTerm}"` : " (last 24h)"}`);
+        }
       }
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
@@ -231,11 +253,19 @@ export default function DeliveriesPage() {
     <div>
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Deliveries</h1>
-        <button onClick={handleFetchInvoices} disabled={fetchStep === "fetching" || fetchStep === "importing"}
-          className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
-          {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-          {fetchStep === "fetching" ? "Fetching..." : "Fetch Invoices"}
-        </button>
+        <div className="flex items-center gap-1">
+          <input
+            type="text" placeholder="Invoice no..." value={invoiceSearch}
+            onChange={(e) => setInvoiceSearch(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleFetchInvoices()}
+            className="w-24 px-2 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400"
+          />
+          <button onClick={handleFetchInvoices} disabled={fetchStep === "fetching" || fetchStep === "importing"}
+            className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+            {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+            {fetchStep === "fetching" ? "Fetching..." : invoiceSearch.trim() ? "Search" : "Fetch Invoices"}
+          </button>
+        </div>
       </div>
 
       {/* Stats Row */}
@@ -434,6 +464,10 @@ export default function DeliveriesPage() {
                       <button onClick={() => handleVerify(d.id)}
                         className="flex-1 bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Mark Ready</button>
                     )}
+                    <button onClick={() => handleDelete(d.id)} disabled={deleting === d.id}
+                      className="bg-slate-100 text-slate-500 px-2 py-1.5 rounded-md text-xs hover:bg-red-50 hover:text-red-600 disabled:opacity-50">
+                      {deleting === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                    </button>
                   </div>
                 </CardContent>
               </Card>

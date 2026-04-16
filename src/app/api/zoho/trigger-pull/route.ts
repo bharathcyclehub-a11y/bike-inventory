@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   try {
     await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER"]);
     const body = await req.json();
-    const { step, pullId: existingPullId, fullImport, fromDate } = body as { step: string; pullId?: string; fullImport?: boolean; fromDate?: string };
+    const { step, pullId: existingPullId, fullImport, fromDate, searchText } = body as { step: string; pullId?: string; fullImport?: boolean; fromDate?: string; searchText?: string };
 
     // ─── INIT ───
     if (step === "init") {
@@ -254,7 +254,7 @@ export async function POST(req: NextRequest) {
             return successResponse({ step: "bills", source: "skipped", billsNew: 0, apiCalls: 0, errors: ["No source connected for bills"] });
           }
 
-          const bills = await client.listAllBills(billsFromDate, todayStr);
+          const bills = await client.listAllBills(searchText ? undefined : billsFromDate, searchText ? undefined : todayStr, searchText);
           apiCalls += Math.ceil(bills.length / 200) || 1;
 
           const billNumbers = bills.map((b: { bill_number: string }) => b.bill_number);
@@ -330,7 +330,7 @@ export async function POST(req: NextRequest) {
         }
 
         const invoicesFromDate = fromDate || todayStr;
-        const invoices = await client.listAllInvoices(invoicesFromDate, todayStr);
+        const invoices = await client.listAllInvoices(searchText ? undefined : invoicesFromDate, searchText ? undefined : todayStr, searchText);
         apiCalls += Math.ceil(invoices.length / 200) || 1;
 
         // Batch check existing invoices in one query

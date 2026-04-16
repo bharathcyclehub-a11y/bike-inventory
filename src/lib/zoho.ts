@@ -275,9 +275,10 @@ export class ZohoClient {
     return all;
   }
 
-  async listBills(page = 1, dateFrom?: string, dateTo?: string) {
+  async listBills(page = 1, dateFrom?: string, dateTo?: string, searchText?: string) {
     const dateParam = dateFrom ? `&date_start=${dateFrom}` : "";
     const dateEndParam = dateTo ? `&date_end=${dateTo}` : "";
+    const searchParam = searchText ? `&search_text=${encodeURIComponent(searchText)}` : "";
     return this.apiCall<{
       bills: Array<{
         bill_id: string;
@@ -291,14 +292,14 @@ export class ZohoClient {
         status: string;
       }>;
       page_context?: { has_more_page: boolean };
-    }>("GET", `/bills?page=${page}&per_page=200${dateParam}${dateEndParam}`);
+    }>("GET", `/bills?page=${page}&per_page=200${dateParam}${dateEndParam}${searchParam}`);
   }
 
-  async listAllBills(dateFrom?: string, dateTo?: string) {
+  async listAllBills(dateFrom?: string, dateTo?: string, searchText?: string) {
     const all: Array<{ bill_id: string; bill_number: string; vendor_name: string; vendor_id: string; date: string; due_date: string; total: number; balance: number; status: string }> = [];
     let page = 1;
     while (true) {
-      const data = await this.listBills(page, dateFrom, dateTo);
+      const data = await this.listBills(page, dateFrom, dateTo, searchText);
       all.push(...(data.bills || []));
       if (!data.page_context?.has_more_page) break;
       page++;
@@ -327,9 +328,10 @@ export class ZohoClient {
     }>("GET", `/bills/${billId}`);
   }
 
-  async listInvoices(page = 1, dateFrom?: string, dateTo?: string) {
+  async listInvoices(page = 1, dateFrom?: string, dateTo?: string, searchText?: string) {
     const dateParam = dateFrom ? `&date_start=${dateFrom}` : "";
     const dateEndParam = dateTo ? `&date_end=${dateTo}` : "";
+    const searchParam = searchText ? `&search_text=${encodeURIComponent(searchText)}` : "";
     return this.apiCall<{
       invoices: Array<{
         invoice_id: string;
@@ -343,14 +345,14 @@ export class ZohoClient {
         status: string;
       }>;
       page_context?: { has_more_page: boolean };
-    }>("GET", `/invoices?page=${page}&per_page=200${dateParam}${dateEndParam}`);
+    }>("GET", `/invoices?page=${page}&per_page=200${dateParam}${dateEndParam}${searchParam}`);
   }
 
-  async listAllInvoices(dateFrom?: string, dateTo?: string) {
+  async listAllInvoices(dateFrom?: string, dateTo?: string, searchText?: string) {
     const all: Array<{ invoice_id: string; invoice_number: string; customer_name: string; customer_id: string; phone?: string; date: string; total: number; balance: number; status: string }> = [];
     let page = 1;
     while (true) {
-      const data = await this.listInvoices(page, dateFrom, dateTo);
+      const data = await this.listInvoices(page, dateFrom, dateTo, searchText);
       all.push(...(data.invoices || []));
       if (!data.page_context?.has_more_page) break;
       page++;
