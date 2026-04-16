@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Cloud, CloudOff, CheckCircle2, XCircle,
   Package, Users, Receipt, Loader2, Clock, AlertTriangle,
-  Download, RefreshCw,
+  Download, RefreshCw, FileText, ShoppingCart,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +40,43 @@ interface SyncLogEntry {
   completedAt?: string;
 }
 
+interface PullProgress {
+  step: string;
+  message: string;
+  progress: number;
+  itemsNew?: number;
+  contactsNew?: number;
+  billsNew?: number;
+  invoicesNew?: number;
+  apiCalls?: number;
+  errors?: string[];
+}
+
+const PULL_STEPS = [
+  { key: "init", label: "Connecting", icon: Cloud },
+  { key: "items", label: "Items", icon: Package },
+  { key: "contacts", label: "Vendors", icon: Users },
+  { key: "bills", label: "Bills", icon: FileText },
+  { key: "invoices", label: "Invoices", icon: ShoppingCart },
+  { key: "saving", label: "Saving", icon: CheckCircle2 },
+];
+
+function getStepStatus(stepKey: string, currentStep: string): "pending" | "active" | "done" {
+  const order = ["init", "connected", "items", "items-done", "contacts", "contacts-done", "bills", "bills-done", "invoices", "invoices-done", "saving", "done"];
+  const stepMap: Record<string, string> = { init: "init", connected: "init", items: "items", "items-done": "items", contacts: "contacts", "contacts-done": "contacts", bills: "bills", "bills-done": "bills", invoices: "invoices", "invoices-done": "invoices", saving: "saving", done: "saving" };
+
+  const currentBase = stepMap[currentStep] || currentStep;
+  const currentIdx = PULL_STEPS.findIndex((s) => s.key === currentBase);
+  const stepIdx = PULL_STEPS.findIndex((s) => s.key === stepKey);
+
+  if (currentStep === "done" || currentStep === "error") {
+    return currentStep === "done" ? "done" : stepIdx <= currentIdx ? "done" : "pending";
+  }
+  if (stepIdx < currentIdx) return "done";
+  if (stepIdx === currentIdx) return "active";
+  return "pending";
+}
+
 export default function ZohoSettingsPage() {
   const [status, setStatus] = useState<ZohoStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,8 +85,12 @@ export default function ZohoSettingsPage() {
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [logs, setLogs] = useState<SyncLogEntry[]>([]);
   const [error, setError] = useState("");
+
+  // Pull progress state
   const [pulling, setPulling] = useState(false);
-  const [pullResult, setPullResult] = useState<string | null>(null);
+  const [pullProgress, setPullProgress] = useState<PullProgress | null>(null);
+  const [pullDone, setPullDone] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Setup form
   const [clientId, setClientId] = useState("");
@@ -137,24 +178,64 @@ export default function ZohoSettingsPage() {
   }
 
   async function handleTriggerPull() {
-    if (!confirm("This will pull new data from Zoho into preview. Continue?")) return;
+    if (!confirm("Pull new data from Zoho into preview for review?")) return;
+
     setPulling(true);
-    setPullResult(null);
+    setPullDone(false);
+    setPullProgress({ step: "init", message: "Starting...", progress: 0 });
+
+    const abort = new AbortController();
+    abortRef.current = abort;
+
     try {
-      const res = await fetch("/api/zoho/trigger-pull", { method: "POST" });
-      const data = await res.json();
-      if (data.success) {
-        const d = data.data;
-        if (d.status === "NO_NEW_DATA") {
-          setPullResult("No new data — everything is already synced.");
-        } else {
-          setPullResult(`Pulled ${d.contactsNew} vendors, ${d.itemsNew} items, ${d.billsNew} bills, ${d.invoicesNew} invoices. Go to Review & Approve.`);
-        }
-      } else {
-        setPullResult(`Error: ${data.error}`);
+      const res = await fetch("/api/zoho/trigger-pull", {
+        method: "POST",
+        signal: abort.signal,
+      });
+
+      // Check if it's SSE or JSON error
+      const contentType = res.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        const data = await res.json();
+        setPullProgress({ step: "error", message: data.error || "Failed", progress: 0 });
+        setPulling(false);
+        return;
       }
-    } catch {
-      setPullResult("Something went wrong");
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        setPullProgress({ step: "error", message: "No response stream", progress: 0 });
+        setPulling(false);
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            try {
+              const data = JSON.parse(line.slice(6)) as PullProgress;
+              setPullProgress(data);
+              if (data.step === "done") {
+                setPullDone(true);
+                fetchLogs();
+              }
+            } catch { /* ignore parse errors */ }
+          }
+        }
+      }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
+      setPullProgress({ step: "error", message: "Connection lost", progress: 0 });
     } finally {
       setPulling(false);
     }
@@ -196,44 +277,123 @@ export default function ZohoSettingsPage() {
                     </p>
                   )}
                 </div>
-                <div className="flex flex-col gap-1">
-                  <Badge variant={status.tokenValid ? "success" : "warning"} className="text-[9px]">
-                    {status.tokenValid ? "Token Valid" : "Token Expired"}
-                  </Badge>
-                </div>
+                <Badge variant={status.tokenValid ? "success" : "warning"} className="text-[9px]">
+                  {status.tokenValid ? "Token Valid" : "Token Expired"}
+                </Badge>
               </div>
             </CardContent>
           </Card>
 
-          {/* Cron Info */}
+          {/* Pull from Zoho — with progress */}
           <Card className="mb-4 border-blue-200 bg-blue-50">
             <CardContent className="p-3">
               <div className="flex items-center gap-2 mb-1">
                 <Clock className="h-4 w-4 text-blue-600" />
                 <p className="text-xs font-semibold text-blue-900">Auto-Sync: Daily at 1 PM IST</p>
               </div>
-              <p className="text-[10px] text-blue-700">
-                Pulls new vendors, items, bills, and invoices from Zoho. All data goes to preview for approval first. ~5-26 API calls/day.
+              <p className="text-[10px] text-blue-700 mb-3">
+                Pulls new vendors, items, bills, and invoices. All data goes to preview for approval first.
               </p>
-              <div className="flex gap-2 mt-2">
+
+              {/* Progress UI */}
+              {pullProgress && (pulling || pullDone || pullProgress.step === "error") && (
+                <div className="bg-white rounded-lg border border-blue-200 p-3 mb-3">
+                  {/* Progress bar */}
+                  <div className="flex items-center gap-2 mb-2">
+                    {pullProgress.step === "error" ? (
+                      <XCircle className="h-4 w-4 text-red-500 shrink-0" />
+                    ) : pullProgress.step === "done" ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
+                    ) : (
+                      <Loader2 className="h-4 w-4 text-blue-500 animate-spin shrink-0" />
+                    )}
+                    <p className="text-xs font-medium text-slate-700 flex-1">{pullProgress.message}</p>
+                    <span className="text-xs font-bold text-blue-600">{pullProgress.progress}%</span>
+                  </div>
+
+                  {/* Bar */}
+                  <div className="w-full bg-slate-100 rounded-full h-2 mb-3 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ease-out ${
+                        pullProgress.step === "error" ? "bg-red-500" : pullProgress.step === "done" ? "bg-green-500" : "bg-blue-500"
+                      }`}
+                      style={{ width: `${pullProgress.progress}%` }}
+                    />
+                  </div>
+
+                  {/* Step indicators */}
+                  <div className="grid grid-cols-6 gap-1">
+                    {PULL_STEPS.map((s) => {
+                      const Icon = s.icon;
+                      const stepStatus = pullProgress.step === "error" ? "pending" : getStepStatus(s.key, pullProgress.step);
+                      return (
+                        <div key={s.key} className="flex flex-col items-center">
+                          <div className={`w-6 h-6 rounded-full flex items-center justify-center mb-0.5 ${
+                            stepStatus === "done" ? "bg-green-100" : stepStatus === "active" ? "bg-blue-100" : "bg-slate-100"
+                          }`}>
+                            {stepStatus === "done" ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 text-green-600" />
+                            ) : stepStatus === "active" ? (
+                              <Icon className="h-3 w-3 text-blue-600" />
+                            ) : (
+                              <Icon className="h-3 w-3 text-slate-300" />
+                            )}
+                          </div>
+                          <span className={`text-[9px] ${
+                            stepStatus === "done" ? "text-green-600 font-medium" : stepStatus === "active" ? "text-blue-600 font-medium" : "text-slate-400"
+                          }`}>{s.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Results summary when done */}
+                  {pullProgress.step === "done" && (
+                    <div className="mt-3 grid grid-cols-4 gap-2">
+                      {[
+                        { label: "Items", count: pullProgress.itemsNew || 0, icon: Package },
+                        { label: "Vendors", count: pullProgress.contactsNew || 0, icon: Users },
+                        { label: "Bills", count: pullProgress.billsNew || 0, icon: FileText },
+                        { label: "Invoices", count: pullProgress.invoicesNew || 0, icon: ShoppingCart },
+                      ].map((r) => {
+                        const RIcon = r.icon;
+                        return (
+                          <div key={r.label} className="text-center p-1.5 rounded-lg bg-green-50 border border-green-100">
+                            <RIcon className="h-3.5 w-3.5 text-green-600 mx-auto mb-0.5" />
+                            <p className="text-sm font-bold text-green-800">{r.count}</p>
+                            <p className="text-[9px] text-green-600">{r.label}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Errors */}
+                  {pullProgress.errors && pullProgress.errors.length > 0 && (
+                    <div className="mt-2 space-y-0.5">
+                      {pullProgress.errors.map((e, i) => (
+                        <p key={i} className="text-[10px] text-red-500">{e}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Action buttons */}
+              <div className="flex gap-2">
                 <button
                   onClick={handleTriggerPull}
                   disabled={pulling}
-                  className="flex-1 flex items-center justify-center gap-1.5 border border-blue-300 text-blue-700 px-3 py-2 rounded-lg text-xs font-medium hover:bg-blue-100 disabled:opacity-50"
+                  className="flex-1 flex items-center justify-center gap-1.5 border border-blue-300 text-blue-700 px-3 py-2.5 rounded-lg text-xs font-medium hover:bg-blue-100 disabled:opacity-50 transition-colors"
                 >
                   {pulling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                   {pulling ? "Pulling..." : "Pull Now"}
                 </button>
                 <Link href="/more/zoho/pull-review"
-                  className="flex-1 flex items-center justify-center gap-1.5 bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">
+                  className="flex-1 flex items-center justify-center gap-1.5 bg-blue-600 text-white px-3 py-2.5 rounded-lg text-xs font-medium hover:bg-blue-700 transition-colors">
                   <CheckCircle2 className="h-3.5 w-3.5" /> Review Pulls
                 </Link>
               </div>
-              {pullResult && (
-                <p className={`text-[10px] mt-2 p-2 rounded-lg ${pullResult.startsWith("Error") ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
-                  {pullResult}
-                </p>
-              )}
             </CardContent>
           </Card>
 
