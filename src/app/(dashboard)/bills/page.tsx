@@ -67,6 +67,7 @@ export default function BillsPage() {
 
   // Fetch Bills state (same pattern as deliveries Fetch Invoices)
   const [fetchStep, setFetchStep] = useState<"idle" | "fetching" | "selecting" | "importing">("idle");
+  const [fetchProgress, setFetchProgress] = useState("");
   const [billPreviews, setBillPreviews] = useState<ZohoBillPreview[]>([]);
   const [selectedBills, setSelectedBills] = useState<Set<string>>(new Set());
   const [fetchError, setFetchError] = useState("");
@@ -94,8 +95,8 @@ export default function BillsPage() {
   const handleFetchBills = async () => {
     setFetchStep("fetching");
     setFetchError("");
+    setFetchProgress("Connecting to Zoho...");
     try {
-      // Step 1: Init
       const initRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "init" }),
@@ -104,14 +105,14 @@ export default function BillsPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
-      // Step 2: Pull bills from April 1
+      setFetchProgress("Pulling bills from Zoho...");
       const billRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "bills", pullId, fromDate: "2026-04-01" }),
       }).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
 
-      // Step 3: Finalize
+      setFetchProgress(`Found ${billRes.data.billsNew || 0} new bills, processing...`);
       await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -121,7 +122,7 @@ export default function BillsPage() {
         }),
       });
 
-      // Step 4: Load previews
+      setFetchProgress("Loading preview...");
       const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
       if (previewRes.success) {
         const billItems = (previewRes.data.previews || []).filter(
@@ -135,6 +136,8 @@ export default function BillsPage() {
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
       setFetchStep("idle");
+    } finally {
+      setFetchProgress("");
     }
   };
 
@@ -177,7 +180,7 @@ export default function BillsPage() {
             <button onClick={handleFetchBills} disabled={fetchStep === "fetching" || fetchStep === "importing"}
               className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
               {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-              {fetchStep === "fetching" ? "Fetching..." : "Fetch Bills"}
+              {fetchStep === "fetching" ? (fetchProgress || "Fetching...") : "Fetch Bills"}
             </button>
           )}
           <ExportButtons
