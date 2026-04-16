@@ -153,7 +153,8 @@ export default function InwardsPage() {
       }, 30000).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
 
-      setFetchProgress(`Found ${billRes.data.billsNew || 0} new bills, saving...`);
+      const src = billRes.data.source === "inventory" ? "Zoho Inventory" : billRes.data.source === "pos" ? "Zakya" : "Zoho Books";
+      setFetchProgress(`Found ${billRes.data.billsNew || 0} new bills from ${src}, saving...`);
       await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -165,15 +166,14 @@ export default function InwardsPage() {
 
       setFetchProgress("Loading preview...");
       const previewRes = await fetchWithTimeout(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
-      if (previewRes.success) {
-        const billItems = (previewRes.data.previews || []).filter(
-          (p: ZohoBillPreview & { entityType: string; status: string }) => p.entityType === "bill" && p.status === "PENDING"
-        );
-        setBillPreviews(billItems);
-        setSelectedBills(new Set(billItems.map((b: ZohoBillPreview) => b.id)));
-        setFetchStep(billItems.length > 0 ? "selecting" : "idle");
-        if (billItems.length === 0) setFetchError("No new bills found this month");
-      }
+      if (!previewRes.success) throw new Error(previewRes.error || "Failed to load preview");
+      const billItems = (previewRes.data.previews || []).filter(
+        (p: ZohoBillPreview & { entityType: string; status: string }) => p.entityType === "bill" && p.status === "PENDING"
+      );
+      setBillPreviews(billItems);
+      setSelectedBills(new Set(billItems.map((b: ZohoBillPreview) => b.id)));
+      setFetchStep(billItems.length > 0 ? "selecting" : "idle");
+      if (billItems.length === 0) setFetchError(`No new bills found (${billRes.data.source || "unknown"} source)`);
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
       setFetchStep("idle");
