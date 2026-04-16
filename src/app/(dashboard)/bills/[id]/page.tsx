@@ -22,6 +22,7 @@ interface BillDetail {
   followUpNotes?: string;
   notes?: string;
   vendor: { name: string; code: string; phone?: string; whatsappNumber?: string };
+  vendorBalance?: number;
   payments: Array<{
     id: string;
     amount: number;
@@ -129,6 +130,11 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
         <div className="flex-1">
           <h1 className="text-lg font-bold text-slate-900">{bill.billNo}</h1>
           <p className="text-xs text-slate-500">{bill.vendor.name}</p>
+          {bill.vendorBalance !== undefined && (
+            <p className={`text-xs font-medium ${bill.vendorBalance > 0 ? "text-red-600" : "text-green-600"}`}>
+              Balance: {formatCurrency(bill.vendorBalance)}
+            </p>
+          )}
         </div>
         <Badge variant={bill.status === "PAID" ? "success" : isOverdue ? "danger" : "warning"}>
           {isOverdue ? "OVERDUE" : bill.status.replace(/_/g, " ")}

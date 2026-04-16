@@ -76,9 +76,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       }
     }
 
-    // ADMIN cannot start or complete counts — only approve/reject
-    if (user.role === "ADMIN" && (data.status === "IN_PROGRESS" || data.status === "COMPLETED")) {
-      return errorResponse("Admin can only approve or reject stock counts, not initiate or complete them", 403);
+    // ADMIN cannot start counts — only complete, approve, or reject
+    if (user.role === "ADMIN" && data.status === "IN_PROGRESS") {
+      return errorResponse("Admin can only complete, approve, or reject stock counts, not initiate them", 403);
     }
 
     // Status transition guards

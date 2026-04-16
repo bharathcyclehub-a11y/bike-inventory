@@ -1,4 +1,4 @@
-export const revalidate = 30; // cache product list 30 seconds
+export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";

@@ -1,4 +1,4 @@
-export const revalidate = 60; // cache vendors 1 minute
+export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
@@ -11,7 +11,10 @@ export async function GET(req: NextRequest) {
     await requireAuth();
     const { page, limit, skip, search } = parseSearchParams(req.url);
 
+    const includeInactive = req.nextUrl.searchParams.get("includeInactive") === "true";
+
     const where = {
+      ...(!includeInactive && { isActive: true }),
       ...(search && {
         OR: [
           { name: { contains: search, mode: "insensitive" as const } },

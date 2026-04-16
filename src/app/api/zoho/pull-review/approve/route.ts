@@ -155,12 +155,20 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
+          // Calculate due date: use Zoho's dueDate unless it equals billDate (missing), then use vendor's payment terms
+          const billDate = new Date(String(d.date));
+          let dueDate = new Date(String(d.dueDate));
+          if (dueDate.toISOString().slice(0, 10) === billDate.toISOString().slice(0, 10)) {
+            dueDate = new Date(billDate);
+            dueDate.setDate(dueDate.getDate() + (vendor.paymentTermDays || 30));
+          }
+
           await prisma.vendorBill.create({
             data: {
               billNo: String(d.billNumber),
               vendorId: vendor.id,
-              billDate: new Date(String(d.date)),
-              dueDate: new Date(String(d.dueDate)),
+              billDate,
+              dueDate,
               amount: total,
               paidAmount: total - balance,
               status: balance === 0 ? "PAID" : balance < total ? "PARTIALLY_PAID" : "PENDING",

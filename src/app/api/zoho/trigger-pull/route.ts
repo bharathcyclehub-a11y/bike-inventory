@@ -98,11 +98,11 @@ export async function POST(req: NextRequest) {
           for (const item of items) {
             if (item.sku) {
               const existing = await prisma.product.findFirst({ where: { sku: item.sku } });
-              if (existing) continue;
+              if (existing) continue; // skip existing (active or inactive)
             }
             if (item.item_id) {
               const existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id } });
-              if (existing) continue;
+              if (existing) continue; // skip existing (active or inactive)
             }
 
             await prisma.zohoPullPreview.create({

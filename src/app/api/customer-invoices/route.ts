@@ -51,7 +51,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "ACCOUNTS_MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
     const body = await req.json();
     const data = customerInvoiceSchema.parse(body);
 

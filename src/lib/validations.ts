@@ -140,6 +140,7 @@ export const vendorSchema = z.object({
   cdTermsDays: z.number().int().min(0).optional(),
   cdPercentage: z.number().min(0).max(100).optional(),
   openingBalance: z.number().min(0).optional(),
+  isActive: z.boolean().optional(),
   notes: z.string().optional(),
 });
 
@@ -172,7 +173,7 @@ export const vendorBillSchema = z.object({
   purchaseOrderId: z.string().optional(),
   billNo: z.string().min(1, "Bill number is required"),
   billDate: z.string().min(1, "Bill date is required"),
-  dueDate: z.string().min(1, "Due date is required"),
+  dueDate: z.string().optional(),
   amount: z.number().min(0.01, "Amount must be positive"),
   notes: z.string().optional(),
 });

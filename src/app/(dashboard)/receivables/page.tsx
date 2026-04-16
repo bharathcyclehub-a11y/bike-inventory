@@ -98,12 +98,28 @@ export default function ReceivablesPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
+      // Check if POS or Books is connected for invoices
+      const sources = initRes.data.sources || {};
+      if (sources.pos === "skipped" && sources.books === "skipped") {
+        throw new Error("Neither Zakya POS nor Zoho Books is connected. Go to Settings > Zoho to connect.");
+      }
+
       // Step 2: Pull invoices from April 1
       const invRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "invoices", pullId, fromDate: "2026-04-01" }),
       }).then(r => r.json());
       if (!invRes.success) throw new Error(invRes.error || "Invoice fetch failed");
+
+      // Check if source was skipped
+      if (invRes.data.source === "skipped") {
+        // Still finalize to clean up
+        await fetch("/api/zoho/trigger-pull", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ step: "finalize", pullId, invoicesNew: 0, apiCalls: 0, allErrors: invRes.data.errors || [] }),
+        });
+        throw new Error(invRes.data.errors?.[0] || "No invoice source connected");
+      }
 
       // Step 3: Finalize
       await fetch("/api/zoho/trigger-pull", {

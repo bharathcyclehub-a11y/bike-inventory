@@ -78,20 +78,15 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       });
     }
 
-    // Sort by date descending
-    entries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    // Sort by date ascending (chronological from opening balance)
+    entries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
     // Calculate running balance (from opening balance forward)
-    // First, sort ascending for balance calculation
-    const ascending = [...entries].reverse();
     let runningBalance = vendor.openingBalance;
-    const withBalance = ascending.map((entry) => {
+    const withBalance = entries.map((entry) => {
       runningBalance += entry.debit - entry.credit;
       return { ...entry, balance: runningBalance };
     });
-
-    // Reverse back to descending for display
-    withBalance.reverse();
 
     // Summary
     const totalBills = bills.reduce((s, b) => s + b.amount, 0);

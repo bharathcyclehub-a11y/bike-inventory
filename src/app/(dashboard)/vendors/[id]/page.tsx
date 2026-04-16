@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect, useCallback, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { ArrowLeft, Phone, MessageSquare, FileText, CreditCard, Building2, AlertCircle, Check, Loader2, Power } from "lucide-react";
@@ -31,14 +31,26 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   const [editingBalance, setEditingBalance] = useState(false);
   const [balanceValue, setBalanceValue] = useState("");
   const [savingBalance, setSavingBalance] = useState(false);
+  const [editingTerms, setEditingTerms] = useState(false);
+  const [termsValue, setTermsValue] = useState("");
+  const [savingTerms, setSavingTerms] = useState(false);
 
-  useEffect(() => {
+  const loadVendor = useCallback(() => {
     fetch(`/api/vendors/${id}`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setVendor(res.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [id]);
+
+  useEffect(() => { loadVendor(); }, [loadVendor]);
+
+  // Refetch when tab becomes visible (another user may have updated)
+  useEffect(() => {
+    const onVisible = () => { if (document.visibilityState === "visible") loadVendor(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [loadVendor]);
 
   if (loading) {
     return (
@@ -244,7 +256,53 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
           <div className="grid grid-cols-2 gap-3">
             <div>
               <p className="text-xs text-slate-500 mb-0.5">Payment Terms</p>
-              <p className="text-sm text-slate-700">{vendor.paymentTermDays} days</p>
+              {canEditBalance && editingTerms ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    value={termsValue}
+                    onChange={(e) => setTermsValue(e.target.value)}
+                    className="w-16 px-2 py-1 text-sm font-medium border border-slate-300 rounded-md focus:outline-none focus:ring-1 focus:ring-slate-400"
+                    autoFocus
+                    min="0"
+                  />
+                  <span className="text-xs text-slate-500">days</span>
+                  <button
+                    onClick={async () => {
+                      setSavingTerms(true);
+                      try {
+                        const val = parseInt(termsValue) || 0;
+                        const res = await fetch(`/api/vendors/${id}`, {
+                          method: "PUT",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ paymentTermDays: val }),
+                        }).then(r => r.json());
+                        if (res.success) {
+                          setVendor({ ...vendor, paymentTermDays: val });
+                          setEditingTerms(false);
+                        }
+                      } catch {} finally { setSavingTerms(false); }
+                    }}
+                    disabled={savingTerms}
+                    className="p-1 bg-slate-900 text-white rounded-md disabled:opacity-50"
+                  >
+                    {savingTerms ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                  </button>
+                  <button onClick={() => setEditingTerms(false)} className="text-xs text-slate-500">Cancel</button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <p className="text-sm text-slate-700">{vendor.paymentTermDays} days</p>
+                  {canEditBalance && (
+                    <button
+                      onClick={() => { setTermsValue(String(vendor.paymentTermDays)); setEditingTerms(true); }}
+                      className="text-xs text-blue-600 font-medium"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             <div>
               <p className="text-xs text-slate-500 mb-0.5">Credit Limit</p>

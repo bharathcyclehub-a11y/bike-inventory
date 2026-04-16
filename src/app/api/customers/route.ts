@@ -48,6 +48,15 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = customerSchema.parse(body);
 
+    // Find existing customer by name (case-insensitive) or create new
+    const existing = await prisma.customer.findFirst({
+      where: { name: { equals: data.name, mode: "insensitive" } },
+    });
+
+    if (existing) {
+      return successResponse(existing);
+    }
+
     const customer = await prisma.customer.create({
       data: {
         name: data.name,

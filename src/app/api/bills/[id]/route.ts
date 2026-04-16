@@ -19,7 +19,18 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     });
 
     if (!bill) return errorResponse("Bill not found", 404);
-    return successResponse(bill);
+
+    // Calculate vendor outstanding balance
+    const [vendorBills, vendorPayments] = await Promise.all([
+      prisma.vendorBill.aggregate({ where: { vendorId: bill.vendorId }, _sum: { amount: true } }),
+      prisma.vendorPayment.aggregate({ where: { vendorId: bill.vendorId }, _sum: { amount: true, cdDiscountAmount: true } }),
+    ]);
+    const vendorBalance = (bill.vendor.openingBalance || 0)
+      + (vendorBills._sum.amount || 0)
+      - (vendorPayments._sum.amount || 0)
+      - (vendorPayments._sum.cdDiscountAmount || 0);
+
+    return successResponse({ ...bill, vendorBalance });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch bill", 500);

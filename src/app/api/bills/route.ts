@@ -56,13 +56,27 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = vendorBillSchema.parse(body);
 
+    // Auto-calculate dueDate from vendor's paymentTermDays if not provided
+    let dueDate: Date;
+    if (data.dueDate) {
+      dueDate = new Date(data.dueDate);
+    } else {
+      const vendor = await prisma.vendor.findUnique({
+        where: { id: data.vendorId },
+        select: { paymentTermDays: true },
+      });
+      const billDate = new Date(data.billDate);
+      dueDate = new Date(billDate);
+      dueDate.setDate(dueDate.getDate() + (vendor?.paymentTermDays || 30));
+    }
+
     const bill = await prisma.vendorBill.create({
       data: {
         vendorId: data.vendorId,
         purchaseOrderId: data.purchaseOrderId || null,
         billNo: data.billNo,
         billDate: new Date(data.billDate),
-        dueDate: new Date(data.dueDate),
+        dueDate,
         amount: data.amount,
         notes: data.notes,
       },

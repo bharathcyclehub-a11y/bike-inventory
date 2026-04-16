@@ -70,26 +70,40 @@ Rules:
 Bank statement data:
 ${text.slice(0, 50000)}`;
 
-    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 8192,
-        messages: [{ role: "user", content: parsePrompt }],
-      }),
-    });
+    // Helper: call Claude with retry for overloaded errors
+    const callClaude = async (prompt: string, retries = 2): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; error: string }> => {
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey!,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: "claude-haiku-4-5-20251001",
+            max_tokens: 8192,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        });
+        if (res.ok) return { ok: true, data: await res.json() };
+        const errText = await res.text();
+        const isOverloaded = errText.includes("overloaded") || res.status === 529;
+        if (isOverloaded && attempt < retries) {
+          await new Promise(r => setTimeout(r, 3000 * (attempt + 1))); // wait 3s, 6s
+          continue;
+        }
+        return { ok: false, error: isOverloaded
+          ? "AI service is temporarily busy. Please try again in a minute."
+          : `AI processing failed (${res.status}). Please try again.` };
+      }
+      return { ok: false, error: "AI service unavailable. Please try again later." };
+    };
 
-    if (!claudeRes.ok) {
-      const err = await claudeRes.text();
-      return errorResponse(`Claude API error: ${err.slice(0, 200)}`, 500);
-    }
+    const claudeResult = await callClaude(parsePrompt);
+    if (!claudeResult.ok) return errorResponse(claudeResult.error, 503);
 
-    const claudeData = await claudeRes.json();
+    const claudeData = claudeResult.data as { content?: Array<{ text?: string }> };
     const responseText = claudeData.content?.[0]?.text || "";
 
     // Extract JSON from response
@@ -193,26 +207,13 @@ Flag suspicious transactions if:
 
 Return ONLY the JSON array.`;
 
-    const matchRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
-        max_tokens: 8192,
-        messages: [{ role: "user", content: matchPrompt }],
-      }),
-    });
+    const matchResult = await callClaude(matchPrompt);
 
     let matchedCount = 0;
     let flaggedCount = 0;
 
-    if (matchRes.ok) {
-      const matchData = await matchRes.json();
-      const matchText = matchData.content?.[0]?.text || "";
+    if (matchResult.ok) {
+      const matchText = (matchResult.data as { content?: Array<{ text?: string }> }).content?.[0]?.text || "";
 
       try {
         const jsonMatch = matchText.match(/\[[\s\S]*\]/);
