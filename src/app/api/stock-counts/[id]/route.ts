@@ -129,16 +129,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         // Baseline mode: auto-set uncounted items to countedQty=0 (not found = 0 stock)
         const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
         if (new Date() <= BASELINE_END) {
-          const uncountedItems = await tx.stockCountItem.findMany({
+          // Bulk update: set all uncounted items to 0 in one query
+          await tx.stockCountItem.updateMany({
             where: { stockCountId: id, countedQty: null },
-            select: { id: true, systemQty: true },
+            data: { countedQty: 0, countedAt: new Date() },
           });
-          for (const item of uncountedItems) {
-            await tx.stockCountItem.update({
-              where: { id: item.id },
-              data: { countedQty: 0, variance: 0 - item.systemQty, countedAt: new Date() },
-            });
-          }
+          // Then fix variance: need individual updates since variance = 0 - systemQty per item
+          // Use raw SQL for bulk variance calculation
+          await tx.$executeRaw`
+            UPDATE "StockCountItem"
+            SET variance = 0 - "systemQty"
+            WHERE "stockCountId" = ${id} AND "countedQty" = 0 AND variance IS NULL
+          `;
         }
       }
       if (data.status === "APPROVED") {
@@ -154,13 +156,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
         const isBaselinePeriod = new Date() <= BASELINE_END;
 
+        // Only process items actually found (countedQty > 0) — skip zeros
         const countedItems = await tx.stockCountItem.findMany({
-          where: { stockCountId: id, countedQty: { not: null } },
+          where: { stockCountId: id, countedQty: { gt: 0 } },
           include: { product: { select: { brandId: true, brand: { select: { name: true } } } } },
         });
 
         for (const item of countedItems) {
-          if (item.countedQty === null) continue;
+          if (!item.countedQty) continue; // TS guard (query already filters > 0)
 
           const product = await tx.product.findUnique({
             where: { id: item.productId },
@@ -250,7 +253,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       });
 
       return updated;
-    });
+    }, { timeout: 120000 }); // 2 min timeout for large stock counts
 
     return successResponse(result);
   } catch (error) {
