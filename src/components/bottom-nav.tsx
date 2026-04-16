@@ -52,7 +52,7 @@ function getTabsForRole(role: Role): TabConfig[] {
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
+        { href: "/reorder", label: "Reorder", icon: ArrowRightLeft, key: "reorder" },
         { href: "/purchase-orders", label: "POs", icon: ArrowDownCircle, key: "pos" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];

@@ -127,7 +127,7 @@ const menuItems: MenuItem[] = [
     label: "Stock Audit",
     icon: ClipboardCheck,
     href: "/stock-audit",
-    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"],
   },
   {
     label: "Barcode Scanner",
