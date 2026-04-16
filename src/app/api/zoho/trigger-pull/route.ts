@@ -17,7 +17,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
  * Invoices:  Zakya POS (or fallback to Books)
  */
 
-const MAX_DETAIL_CALLS_PER_ENTITY = 150;
+const MAX_DETAIL_CALLS_PER_ENTITY = 50;
 
 export async function POST(req: NextRequest) {
   try {
@@ -260,20 +260,21 @@ export async function POST(req: NextRequest) {
         const bills = await client.listAllBills(billsFromDate, todayStr);
         apiCalls += Math.ceil(bills.length / 200) || 1;
 
-        const newBills: typeof bills = [];
-        for (const bill of bills) {
-          const existing = await prisma.vendorBill.findFirst({
-            where: { billNo: bill.bill_number },
-          });
-          if (!existing) newBills.push(bill);
-        }
+        // Batch check existing bills in one query instead of N individual queries
+        const billNumbers = bills.map((b: { bill_number: string }) => b.bill_number);
+        const existingBills = await prisma.vendorBill.findMany({
+          where: { billNo: { in: billNumbers } },
+          select: { billNo: true },
+        });
+        const existingSet = new Set(existingBills.map((b) => b.billNo));
+        const newBills = bills.filter((b: { bill_number: string }) => !existingSet.has(b.bill_number));
 
         for (const bill of newBills) {
           let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
 
           if (detailCalls < MAX_DETAIL_CALLS_PER_ENTITY) {
             try {
-              await client.delay(300);
+              await client.delay(100);
               const detail = await client.getBill(bill.bill_id);
               apiCalls++;
               detailCalls++;
@@ -349,14 +350,18 @@ export async function POST(req: NextRequest) {
         const invoices = await client.listAllInvoices(invoicesFromDate, todayStr);
         apiCalls += Math.ceil(invoices.length / 200) || 1;
 
-        const newInvoices: typeof invoices = [];
-        for (const invoice of invoices) {
-          if (invoice.status === "void") continue;
-          const existing = await prisma.delivery.findFirst({
-            where: { invoiceNo: invoice.invoice_number },
-          });
-          if (!existing) newInvoices.push(invoice);
-        }
+        // Batch check existing invoices in one query
+        const invoiceNumbers = invoices
+          .filter((inv: { status: string }) => inv.status !== "void")
+          .map((inv: { invoice_number: string }) => inv.invoice_number);
+        const existingInvoices = await prisma.delivery.findMany({
+          where: { invoiceNo: { in: invoiceNumbers } },
+          select: { invoiceNo: true },
+        });
+        const existingInvSet = new Set(existingInvoices.map((d) => d.invoiceNo));
+        const newInvoices = invoices.filter(
+          (inv: { status: string; invoice_number: string }) => inv.status !== "void" && !existingInvSet.has(inv.invoice_number)
+        );
 
         for (const invoice of newInvoices) {
           let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
@@ -364,7 +369,7 @@ export async function POST(req: NextRequest) {
 
           if (detailCalls < MAX_DETAIL_CALLS_PER_ENTITY) {
             try {
-              await client.delay(300);
+              await client.delay(100);
               const detail = await client.getInvoice(invoice.invoice_id);
               apiCalls++;
               detailCalls++;
