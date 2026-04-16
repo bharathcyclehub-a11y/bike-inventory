@@ -12,12 +12,12 @@ export async function GET(req: NextRequest) {
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status") || undefined;
 
-    // Clerks can only see their own assigned stock counts
-    const isClerk = ["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role);
+    // Non-admins only see their own assigned stock counts
+    const isAdmin = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(user.role);
 
     const where = {
       ...(status && { status }),
-      ...(isClerk && { assignedToId: user.id }),
+      ...(!isAdmin && { assignedToId: user.id }),
     };
 
     const [counts, total] = await Promise.all([
