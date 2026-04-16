@@ -47,15 +47,16 @@ const ROLE_LABELS: Record<Role, string> = {
   ACCOUNTS_MANAGER: "Accounts Manager",
   INWARDS_CLERK: "Inventory & Receiving Lead",
   OUTWARDS_CLERK: "Sales & Dispatch Lead",
+  MECHANIC: "Service Mechanic",
 };
 
 // Ordered by frequency of use — tailored per role
 const menuItems: MenuItem[] = [
   {
-    label: "Service Tickets",
+    label: "Service Jobs",
     icon: Wrench,
     href: "/service",
-    roles: ["ADMIN", "ACCOUNTS_MANAGER", "OUTWARDS_CLERK"],
+    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER", "OUTWARDS_CLERK", "MECHANIC"],
   },
   {
     label: "Bills & Payments",

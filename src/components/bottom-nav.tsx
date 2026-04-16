@@ -14,6 +14,7 @@ import {
   Building2,
   Receipt,
   Truck,
+  Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types";
@@ -78,6 +79,14 @@ function getTabsForRole(role: Role): TabConfig[] {
         { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
         { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
+    case "MECHANIC":
+      return [
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/service", label: "My Jobs", icon: Wrench, key: "service" },
+        { href: "/stock", label: "Parts", icon: Package, key: "stock" },
+        { href: "/scanner", label: "Scanner", icon: QrCode, key: "scanner" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     default:

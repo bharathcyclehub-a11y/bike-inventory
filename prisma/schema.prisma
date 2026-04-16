@@ -15,6 +15,7 @@ enum Role {
   ACCOUNTS_MANAGER
   INWARDS_CLERK
   OUTWARDS_CLERK
+  MECHANIC
 }
 
 enum TransactionType {
@@ -158,6 +159,11 @@ model User {
   createdTickets    ServiceTicket[]     @relation("TicketCreatedBy")
   assignedTickets   ServiceTicket[]     @relation("TicketAssignedTo")
   ticketNotes       ServiceTicketNote[]
+
+  // Service jobs
+  assignedJobs      ServiceJob[]        @relation("JobAssignedTo")
+  createdJobs       ServiceJob[]        @relation("JobCreatedBy")
+  serviceJobNotes   ServiceJobNote[]
 }
 
 model Category {
@@ -233,6 +239,7 @@ model Product {
   stockCounts   StockCountItem[]
   serialItems   SerialItem[]
   purchaseOrderItems PurchaseOrderItem[]
+  serviceJobItems ServiceJobItem[]
 
   @@index([status])
   @@index([categoryId])
@@ -887,6 +894,174 @@ model ZohoPullLog {
   apiCallsUsed    Int       @default(0)
   createdAt       DateTime  @default(now())
   approvedAt      DateTime?
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ─── BCH Service (Job Card System) ───────────────────────
+
+enum ServiceJobStatus {
+  CREATED
+  DIAGNOSED
+  QUOTED
+  APPROVED
+  IN_PROGRESS
+  COMPLETED
+  INVOICED
+  DELIVERED
+  ON_HOLD
+  CANCELLED
+}
+
+enum ServiceJobItemType {
+  PART
+  LABOUR
+  ACCESSORY
+}
+
+model ServiceCustomer {
+  id            String         @id @default(cuid())
+  name          String
+  phone         String         @unique
+  whatsapp      String?
+  email         String?
+  address       String?
+  area          String?
+  pincode       String?
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  bikes         CustomerBike[]
+  jobs          ServiceJob[]
+
+  @@index([name])
+  @@index([phone])
+}
+
+model CustomerBike {
+  id            String           @id @default(cuid())
+  customerId    String
+  customer      ServiceCustomer  @relation(fields: [customerId], references: [id])
+  brand         String
+  model         String
+  size          String?          // 16", 20", 24", 26", 29"
+  color         String?
+  serialNo      String?
+  purchaseDate  DateTime?
+  purchaseInvoiceNo String?
+  notes         String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  jobs          ServiceJob[]
+
+  @@index([customerId])
+  @@index([serialNo])
+}
+
+model ServiceJob {
+  id                String           @id @default(cuid())
+  jobNo             String           @unique // Auto: BCH-JOB-0001
+  customerId        String
+  customer          ServiceCustomer  @relation(fields: [customerId], references: [id])
+  bikeId            String?
+  bike              CustomerBike?    @relation(fields: [bikeId], references: [id])
+
+  // Issue
+  complaint         String           // Customer's complaint description
+  diagnosis         String?          // Mechanic's diagnosis after inspection
+  priority          String           @default("NORMAL") // LOW, NORMAL, HIGH, URGENT
+
+  // Status machine
+  status            ServiceJobStatus @default(CREATED)
+
+  // Assignment
+  assignedToId      String?
+  assignedTo        User?            @relation("JobAssignedTo", fields: [assignedToId], references: [id])
+  createdById       String
+  createdBy         User             @relation("JobCreatedBy", fields: [createdById], references: [id])
+
+  // Pricing
+  estimatedCost     Float            @default(0)
+  actualCost        Float            @default(0)
+  discount          Float            @default(0)
+
+  // Dates
+  estimatedCompletion DateTime?
+  diagnosedAt       DateTime?
+  quotedAt          DateTime?
+  approvedAt        DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  deliveredAt       DateTime?
+
+  // Warranty link
+  ticketId          String?          // Optional link to ServiceTicket for warranty jobs
+
+  notes             String?
+
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  items             ServiceJobItem[]
+  jobNotes          ServiceJobNote[]
+  invoice           ServiceJobInvoice?
+
+  @@index([status])
+  @@index([customerId])
+  @@index([assignedToId])
+  @@index([createdAt])
+  @@index([priority])
+  @@index([jobNo])
+}
+
+model ServiceJobItem {
+  id            String             @id @default(cuid())
+  jobId         String
+  job           ServiceJob         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  type          ServiceJobItemType
+  productId     String?            // Links to Product for parts/accessories
+  product       Product?           @relation(fields: [productId], references: [id])
+  description   String             // "Brake Pad" or "Labour: Wheel truing"
+  quantity      Int                @default(1)
+  unitPrice     Float
+  total         Float
+  createdAt     DateTime           @default(now())
+
+  @@index([jobId])
+  @@index([productId])
+}
+
+model ServiceJobNote {
+  id            String      @id @default(cuid())
+  jobId         String
+  job           ServiceJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  content       String
+  type          String      @default("NOTE") // NOTE, STATUS_CHANGE, DIAGNOSIS, QUOTE, PHOTO, CUSTOMER_UPDATE
+  createdById   String
+  createdBy     User        @relation(fields: [createdById], references: [id])
+  createdAt     DateTime    @default(now())
+
+  @@index([jobId])
+  @@index([createdAt])
+}
+
+model ServiceJobInvoice {
+  id            String      @id @default(cuid())
+  jobId         String      @unique
+  job           ServiceJob  @relation(fields: [jobId], references: [id])
+  invoiceNo     String      @unique // Auto: BCH-SVC-INV-0001
+  amount        Float
+  discount      Float       @default(0)
+  netAmount     Float
+  paidAmount    Float       @default(0)
+  paymentMode   PaymentMode?
+  status        String      @default("PENDING") // PENDING, PAID, PARTIALLY_PAID
+  paidAt        DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
 
   @@index([status])
   @@index([createdAt])
