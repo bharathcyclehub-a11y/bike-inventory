@@ -20,29 +20,37 @@ export async function GET(req: NextRequest) {
 
     if (previews.length === 0) return errorResponse("No data for this pull", 404);
 
-    // Build CSV with all entity types
+    // Build CSV — one row per line item for invoices/bills so item names & SKUs are visible
     const lines: string[] = [];
-    lines.push("Type,Zoho ID,Status,Key Fields");
+    lines.push("Type,Doc Number,Date,Customer/Vendor,Sales Person,Item Name,SKU,Qty,Rate,Item Total,Doc Total,Status");
 
     for (const p of previews) {
       const d = p.data as Record<string, unknown>;
-      let keyFields = "";
+      const esc = (v: unknown) => String(v || "").replace(/"/g, '""').replace(/,/g, " ");
 
       if (p.entityType === "contact") {
-        keyFields = `Name: ${d.name} | Phone: ${d.phone} | GSTIN: ${d.gstin}`;
+        lines.push(`contact,,,,,"${esc(d.name)}",,,,,,"${esc(`Phone: ${d.phone} | GSTIN: ${d.gstin}`)}"`);
       } else if (p.entityType === "item") {
-        keyFields = `SKU: ${d.sku} | Name: ${d.name} | Cost: ${d.costPrice} | Sell: ${d.sellingPrice} | GST: ${d.gstRate}% | HSN: ${d.hsnCode}`;
-      } else if (p.entityType === "bill") {
-        const items = (d.lineItems as Array<{ name: string; quantity: number }>) || [];
-        keyFields = `Bill#: ${d.billNumber} | Vendor: ${d.vendorName} | Total: ${d.total} | Items: ${items.length}`;
+        lines.push(`item,,,,,"${esc(d.name)}","${esc(d.sku)}",,"${esc(d.costPrice)}","${esc(d.sellingPrice)}",,`);
       } else if (p.entityType === "invoice") {
-        const items = (d.lineItems as Array<{ name: string; quantity: number }>) || [];
-        keyFields = `Inv#: ${d.invoiceNumber} | Customer: ${d.customerName} | Total: ${d.total} | Items: ${items.length} | Sales: ${d.salesPerson}`;
+        const items = (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];
+        if (items.length > 0) {
+          for (const li of items) {
+            lines.push(`invoice,"${esc(d.invoiceNumber)}","${esc(d.date)}","${esc(d.customerName)}","${esc(d.salesPerson)}","${esc(li.name)}","${esc(li.sku)}",${li.quantity},${li.rate},${li.itemTotal},${d.total},${d.status}`);
+          }
+        } else {
+          lines.push(`invoice,"${esc(d.invoiceNumber)}","${esc(d.date)}","${esc(d.customerName)}","${esc(d.salesPerson)}",,,,,,${d.total},${d.status}`);
+        }
+      } else if (p.entityType === "bill") {
+        const items = (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];
+        if (items.length > 0) {
+          for (const li of items) {
+            lines.push(`bill,"${esc(d.billNumber)}","${esc(d.date)}","${esc(d.vendorName)}",,"${esc(li.name)}","${esc(li.sku)}",${li.quantity},${li.rate},${li.itemTotal},${d.total},${d.status}`);
+          }
+        } else {
+          lines.push(`bill,"${esc(d.billNumber)}","${esc(d.date)}","${esc(d.vendorName)}",,,,,,${d.total},${d.status}`);
+        }
       }
-
-      // Escape CSV
-      const escaped = keyFields.replace(/"/g, '""');
-      lines.push(`${p.entityType},${p.zohoId},${p.status},"${escaped}"`);
     }
 
     const csv = lines.join("\n");

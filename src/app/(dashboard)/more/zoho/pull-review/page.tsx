@@ -285,17 +285,35 @@ export default function PullReviewPage() {
                           <>
                             <p className="text-sm font-medium text-slate-900">Bill #{String(d.billNumber)}</p>
                             <p className="text-xs text-slate-500">
-                              Vendor: {String(d.vendorName)} | ₹{Number(d.total).toLocaleString("en-IN")} | {(d.lineItems as unknown[])?.length || 0} items
+                              Vendor: {String(d.vendorName)} | ₹{Number(d.total).toLocaleString("en-IN")}
                             </p>
+                            {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>)?.length > 0 && (
+                              <div className="mt-1 pl-2 border-l-2 border-slate-200 space-y-0.5">
+                                {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>).map((li, idx) => (
+                                  <p key={idx} className="text-[11px] text-slate-600">
+                                    {li.name} {li.sku ? `(${li.sku})` : ""} — Qty: {li.quantity} × ₹{li.rate.toLocaleString("en-IN")}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
                           </>
                         )}
                         {p.entityType === "invoice" && (
                           <>
                             <p className="text-sm font-medium text-slate-900">Invoice #{String(d.invoiceNumber)}</p>
                             <p className="text-xs text-slate-500">
-                              {String(d.customerName)} | ₹{Number(d.total).toLocaleString("en-IN")} | {(d.lineItems as unknown[])?.length || 0} items
+                              {String(d.customerName)} | ₹{Number(d.total).toLocaleString("en-IN")}
                               {d.salesPerson ? ` | Sales: ${d.salesPerson}` : ""}
                             </p>
+                            {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>)?.length > 0 && (
+                              <div className="mt-1 pl-2 border-l-2 border-slate-200 space-y-0.5">
+                                {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>).map((li, idx) => (
+                                  <p key={idx} className="text-[11px] text-slate-600">
+                                    {li.name} {li.sku ? `(${li.sku})` : ""} — Qty: {li.quantity} × ₹{li.rate.toLocaleString("en-IN")}
+                                  </p>
+                                ))}
+                              </div>
+                            )}
                           </>
                         )}
                       </div>
