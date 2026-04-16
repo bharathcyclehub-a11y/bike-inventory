@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Cloud, CloudOff, CheckCircle2, XCircle,
   Package, Users, Receipt, Loader2, Clock, AlertTriangle,
-  Download,
+  Download, RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -48,6 +48,8 @@ export default function ZohoSettingsPage() {
   const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [logs, setLogs] = useState<SyncLogEntry[]>([]);
   const [error, setError] = useState("");
+  const [pulling, setPulling] = useState(false);
+  const [pullResult, setPullResult] = useState<string | null>(null);
 
   // Setup form
   const [clientId, setClientId] = useState("");
@@ -134,6 +136,30 @@ export default function ZohoSettingsPage() {
     } finally { setImporting(null); }
   }
 
+  async function handleTriggerPull() {
+    if (!confirm("This will pull new data from Zoho into preview. Continue?")) return;
+    setPulling(true);
+    setPullResult(null);
+    try {
+      const res = await fetch("/api/zoho/trigger-pull", { method: "POST" });
+      const data = await res.json();
+      if (data.success) {
+        const d = data.data;
+        if (d.status === "NO_NEW_DATA") {
+          setPullResult("No new data — everything is already synced.");
+        } else {
+          setPullResult(`Pulled ${d.contactsNew} vendors, ${d.itemsNew} items, ${d.billsNew} bills, ${d.invoicesNew} invoices. Go to Review & Approve.`);
+        }
+      } else {
+        setPullResult(`Error: ${data.error}`);
+      }
+    } catch {
+      setPullResult("Something went wrong");
+    } finally {
+      setPulling(false);
+    }
+  }
+
   const IMPORT_TYPES = [
     { key: "contacts", label: "Vendors", icon: Users, desc: "Pull vendors from Zoho" },
     { key: "items", label: "Products & Brands", icon: Package, desc: "Pull items + brand details from Zoho (updates existing)" },
@@ -189,10 +215,25 @@ export default function ZohoSettingsPage() {
               <p className="text-[10px] text-blue-700">
                 Pulls new vendors, items, bills, and invoices from Zoho. All data goes to preview for approval first. ~5-26 API calls/day.
               </p>
-              <Link href="/more/zoho/pull-review"
-                className="mt-2 flex items-center justify-center gap-1.5 bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">
-                <CheckCircle2 className="h-3.5 w-3.5" /> Review & Approve Pulls
-              </Link>
+              <div className="flex gap-2 mt-2">
+                <button
+                  onClick={handleTriggerPull}
+                  disabled={pulling}
+                  className="flex-1 flex items-center justify-center gap-1.5 border border-blue-300 text-blue-700 px-3 py-2 rounded-lg text-xs font-medium hover:bg-blue-100 disabled:opacity-50"
+                >
+                  {pulling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                  {pulling ? "Pulling..." : "Pull Now"}
+                </button>
+                <Link href="/more/zoho/pull-review"
+                  className="flex-1 flex items-center justify-center gap-1.5 bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium">
+                  <CheckCircle2 className="h-3.5 w-3.5" /> Review Pulls
+                </Link>
+              </div>
+              {pullResult && (
+                <p className={`text-[10px] mt-2 p-2 rounded-lg ${pullResult.startsWith("Error") ? "bg-red-50 text-red-700" : "bg-green-50 text-green-700"}`}>
+                  {pullResult}
+                </p>
+              )}
             </CardContent>
           </Card>
 
