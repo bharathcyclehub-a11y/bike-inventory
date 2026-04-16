@@ -30,7 +30,7 @@ interface BillItem {
   status: string;
   dueDate: string;
   billDate: string;
-  vendor: { name: string; code: string };
+  vendor: { name: string; code: string; paymentTermDays?: number };
 }
 
 interface ZohoBillPreview {
@@ -296,7 +296,10 @@ export default function BillsPage() {
         <div className="space-y-2">
           {bills.map((bill) => {
             const remaining = bill.amount - bill.paidAmount;
-            const isOverdue = new Date(bill.dueDate) < new Date() && remaining > 0;
+            // Overdue based on billDate + vendor payment terms from app
+            const appDueDate = new Date(bill.billDate);
+            appDueDate.setDate(appDueDate.getDate() + (bill.vendor.paymentTermDays || 30));
+            const isOverdue = appDueDate < new Date() && remaining > 0;
             return (
               <Link key={bill.id} href={`/bills/${bill.id}`}>
                 <Card className={`hover:border-slate-300 transition-colors mb-2 ${isOverdue ? "border-red-200 bg-red-50/30" : ""}`}>
@@ -308,7 +311,7 @@ export default function BillsPage() {
                           <p className="text-sm font-medium text-slate-900">{bill.vendor.name}</p>
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5">
-                          {bill.billNo} | Due: {new Date(bill.dueDate).toLocaleDateString("en-IN")}
+                          {bill.billNo} | Due: {appDueDate.toLocaleDateString("en-IN")}
                         </p>
                       </div>
                       <div className="text-right shrink-0">

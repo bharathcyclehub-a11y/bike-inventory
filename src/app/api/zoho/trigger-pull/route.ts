@@ -21,7 +21,7 @@ const MAX_DETAIL_CALLS_PER_ENTITY = 150;
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER"]);
     const body = await req.json();
     const { step, pullId: existingPullId, fullImport, fromDate } = body as { step: string; pullId?: string; fullImport?: boolean; fromDate?: string };
 

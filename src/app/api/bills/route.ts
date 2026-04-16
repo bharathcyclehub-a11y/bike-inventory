@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
         select: {
           id: true, billNo: true, amount: true, paidAmount: true,
           status: true, dueDate: true, billDate: true, createdAt: true,
-          vendor: { select: { name: true, code: true } },
+          vendor: { select: { name: true, code: true, paymentTermDays: true } },
           _count: { select: { payments: true } },
         },
         orderBy: { dueDate: "asc" },

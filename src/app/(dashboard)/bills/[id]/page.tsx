@@ -21,7 +21,7 @@ interface BillDetail {
   nextFollowUpDate?: string;
   followUpNotes?: string;
   notes?: string;
-  vendor: { name: string; code: string; phone?: string; whatsappNumber?: string };
+  vendor: { name: string; code: string; phone?: string; whatsappNumber?: string; paymentTermDays?: number };
   vendorBalance?: number;
   payments: Array<{
     id: string;
@@ -112,12 +112,15 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   );
 
   const remaining = bill.amount - bill.paidAmount;
-  const isOverdue = new Date(bill.dueDate) < new Date() && remaining > 0;
+  // Calculate due date from billDate + vendor payment terms (app controls overdue)
+  const appDueDate = new Date(bill.billDate);
+  appDueDate.setDate(appDueDate.getDate() + (bill.vendor.paymentTermDays || 30));
+  const isOverdue = appDueDate < new Date() && remaining > 0;
   const paidPercent = Math.min(100, (bill.paidAmount / bill.amount) * 100);
 
   const whatsappLink = bill.vendor.whatsappNumber
     ? `https://wa.me/91${bill.vendor.whatsappNumber.replace(/\D/g, "").slice(-10)}?text=${encodeURIComponent(
-        `Reminder: Bill ${bill.billNo} for ${formatCurrency(remaining)} is ${isOverdue ? "overdue" : "pending"}. Due: ${new Date(bill.dueDate).toLocaleDateString("en-IN")}. Please arrange payment. Thank you.`
+        `Reminder: Bill ${bill.billNo} for ${formatCurrency(remaining)} is ${isOverdue ? "overdue" : "pending"}. Due: ${appDueDate.toLocaleDateString("en-IN")}. Please arrange payment. Thank you.`
       )}`
     : null;
 
@@ -211,7 +214,8 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           </div>
           <div>
             <span className="text-slate-500">Due Date</span>
-            <p className={`font-medium ${isOverdue ? "text-red-600" : ""}`}>{new Date(bill.dueDate).toLocaleDateString("en-IN")}</p>
+            <p className={`font-medium ${isOverdue ? "text-red-600" : ""}`}>{appDueDate.toLocaleDateString("en-IN")}</p>
+            <p className="text-[10px] text-slate-400">{bill.vendor.paymentTermDays || 30} day terms</p>
           </div>
         </CardContent>
       </Card>

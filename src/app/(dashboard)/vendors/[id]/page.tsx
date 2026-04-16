@@ -27,7 +27,9 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   const canEditBalance = ["ADMIN", "SUPERVISOR"].includes(role);
   const [vendor, setVendor] = useState<VendorDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"overview" | "pos" | "bills" | "credits" | "issues">("overview");
+  const [tab, setTab] = useState<"overview" | "pos" | "bills" | "credits" | "issues" | "ledger">("overview");
+  const [ledger, setLedger] = useState<{ openingBalance: number; currentBalance: number; entries: Array<{ id: string; date: string; type: string; description: string; debit: number; credit: number; balance: number }> } | null>(null);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
   const [editingBalance, setEditingBalance] = useState(false);
   const [balanceValue, setBalanceValue] = useState("");
   const [savingBalance, setSavingBalance] = useState(false);
@@ -44,6 +46,18 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   }, [id]);
 
   useEffect(() => { loadVendor(); }, [loadVendor]);
+
+  // Load ledger when tab is selected
+  useEffect(() => {
+    if (tab === "ledger" && !ledger) {
+      setLedgerLoading(true);
+      fetch(`/api/vendors/${id}/ledger`)
+        .then(r => r.json())
+        .then(res => { if (res.success) setLedger(res.data); })
+        .catch(() => {})
+        .finally(() => setLedgerLoading(false));
+    }
+  }, [tab, id, ledger]);
 
   // Refetch when tab becomes visible (another user may have updated)
   useEffect(() => {
@@ -87,6 +101,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
     { key: "bills", label: `Bills (${vendor.bills.length})` },
     { key: "credits", label: `Credits (${vendor.credits.length})` },
     { key: "issues", label: `Issues (${issueCount})` },
+    { key: "ledger", label: "Ledger" },
   ] as const;
 
   return (
@@ -360,14 +375,19 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
         <div className="space-y-2">
           {vendor.bills.map((bill) => {
             const remaining = bill.amount - bill.paidAmount;
-            const isOverdue = new Date(bill.dueDate) < new Date() && remaining > 0;
+            // Calculate due date from billDate + vendor's payment terms (app controls overdue)
+            const appDueDate = new Date(bill.billDate);
+            appDueDate.setDate(appDueDate.getDate() + (vendor.paymentTermDays || 30));
+            const isOverdue = appDueDate < new Date() && remaining > 0;
             return (
               <Link key={bill.id} href={`/bills/${bill.id}`}>
                 <Card className={`hover:border-slate-300 mb-2 ${isOverdue ? "border-red-200" : ""}`}>
                   <CardContent className="p-3 flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-slate-900">{bill.billNo}</p>
-                      <p className="text-xs text-slate-500">Due: {new Date(bill.dueDate).toLocaleDateString("en-IN")}</p>
+                      <p className="text-xs text-slate-500">
+                        {new Date(bill.billDate).toLocaleDateString("en-IN")} · Due: {appDueDate.toLocaleDateString("en-IN")}
+                      </p>
                     </div>
                     <div className="text-right">
                       <p className={`text-sm font-bold ${remaining > 0 ? "text-red-600" : "text-green-600"}`}>
@@ -429,6 +449,59 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
               </CardContent>
             </Card>
           </Link>
+        </div>
+      )}
+
+      {/* Ledger Tab */}
+      {tab === "ledger" && (
+        <div>
+          {ledgerLoading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+            </div>
+          ) : ledger ? (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <p className="text-[10px] text-slate-500">Opening Balance</p>
+                  <p className="text-sm font-medium text-slate-700">{formatCurrency(ledger.openingBalance)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] text-slate-500">Current Balance</p>
+                  <p className={`text-sm font-bold ${ledger.currentBalance > 0 ? "text-red-600" : "text-green-600"}`}>
+                    {formatCurrency(ledger.currentBalance)}
+                  </p>
+                </div>
+              </div>
+              <div className="border rounded-lg overflow-hidden">
+                <div className="grid grid-cols-12 gap-0 bg-slate-100 px-2 py-1.5 text-[10px] font-semibold text-slate-600">
+                  <div className="col-span-3">Date</div>
+                  <div className="col-span-4">Description</div>
+                  <div className="col-span-2 text-right">Debit</div>
+                  <div className="col-span-3 text-right">Balance</div>
+                </div>
+                {ledger.entries.map((entry) => (
+                  <div key={entry.id} className={`grid grid-cols-12 gap-0 px-2 py-2 border-t border-slate-100 text-xs ${entry.type === "PAYMENT" ? "bg-green-50/50" : ""}`}>
+                    <div className="col-span-3 text-slate-500">{new Date(entry.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}</div>
+                    <div className="col-span-4 text-slate-900 truncate">{entry.description}</div>
+                    <div className="col-span-2 text-right">
+                      {entry.type === "BILL" ? (
+                        <span className="text-red-600">{formatCurrency(entry.debit)}</span>
+                      ) : (
+                        <span className="text-green-600">-{formatCurrency(entry.credit)}</span>
+                      )}
+                    </div>
+                    <div className="col-span-3 text-right font-medium">{formatCurrency(entry.balance)}</div>
+                  </div>
+                ))}
+                {ledger.entries.length === 0 && (
+                  <p className="text-sm text-slate-400 text-center py-4">No transactions</p>
+                )}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-400 text-center py-8">Could not load ledger</p>
+          )}
         </div>
       )}
     </div>
