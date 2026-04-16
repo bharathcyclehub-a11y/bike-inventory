@@ -136,6 +136,100 @@ export class ZohoInventoryClient {
     return data as T;
   }
 
+  // ---- Bills (Purchases) ----
+
+  async listBills(page = 1, dateFrom?: string, dateTo?: string) {
+    const dateParam = dateFrom ? `&date_start=${dateFrom}` : "";
+    const dateEndParam = dateTo ? `&date_end=${dateTo}` : "";
+    return this.apiCall<{
+      bills: Array<{
+        bill_id: string;
+        bill_number: string;
+        vendor_name: string;
+        vendor_id: string;
+        date: string;
+        due_date: string;
+        total: number;
+        balance: number;
+        status: string;
+      }>;
+      page_context?: { has_more_page: boolean };
+    }>("GET", `/bills?page=${page}&per_page=200${dateParam}${dateEndParam}`);
+  }
+
+  async listAllBills(dateFrom?: string, dateTo?: string) {
+    const all: Array<{
+      bill_id: string;
+      bill_number: string;
+      vendor_name: string;
+      vendor_id: string;
+      date: string;
+      due_date: string;
+      total: number;
+      balance: number;
+      status: string;
+    }> = [];
+    let page = 1;
+    while (true) {
+      const data = await this.listBills(page, dateFrom, dateTo);
+      all.push(...(data.bills || []));
+      if (!data.page_context?.has_more_page) break;
+      page++;
+    }
+    return all;
+  }
+
+  async getBill(billId: string) {
+    return this.apiCall<{
+      bill: {
+        bill_id: string;
+        bill_number: string;
+        vendor_name: string;
+        date: string;
+        due_date: string;
+        total: number;
+        balance: number;
+        status: string;
+        line_items: Array<{
+          line_item_id: string;
+          item_id: string;
+          name: string;
+          sku: string;
+          quantity: number;
+          rate: number;
+          item_total: number;
+        }>;
+      };
+    }>("GET", `/bills/${billId}`);
+  }
+
+  /** Fetch detail for multiple bills (respects 5-concurrent limit) */
+  async getBillDetails(billIds: string[]) {
+    const results: Array<{
+      bill_id: string;
+      line_items: Array<{ line_item_id: string; item_id: string; name: string; sku: string; quantity: number; rate: number; item_total: number }>;
+    }> = [];
+
+    // Process in batches of 5 (Zoho concurrent limit)
+    for (let i = 0; i < billIds.length; i += 5) {
+      const batch = billIds.slice(i, i + 5);
+      const batchResults = await Promise.all(
+        batch.map(async (id) => {
+          try {
+            const data = await this.getBill(id);
+            return { bill_id: id, line_items: data.bill.line_items || [] };
+          } catch {
+            return { bill_id: id, line_items: [] };
+          }
+        })
+      );
+      results.push(...batchResults);
+      // Small delay between batches to stay within rate limits
+      if (i + 5 < billIds.length) await this.delay(200);
+    }
+    return results;
+  }
+
   // ---- Items (Products) ----
 
   async listItems(page = 1, statusFilter?: string, lastModifiedTime?: string) {

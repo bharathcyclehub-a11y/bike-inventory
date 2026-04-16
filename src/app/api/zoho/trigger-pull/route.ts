@@ -12,10 +12,10 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 /*
  * 3-SOURCE MANUAL PULL (step-by-step):
  * ─────────────────────────
- * Items:     Zoho Inventory (or fallback to Books)
+ * Items:     Zoho Inventory (fallback Books)
  * Contacts:  Zoho Books
- * Bills:     Zoho Books
- * Invoices:  Zakya POS (or fallback to Books)
+ * Bills:     Zoho Inventory + line items (fallback Zakya → Books)
+ * Invoices:  Zakya POS (fallback Books)
  */
 
 const MAX_DETAIL_CALLS_PER_ENTITY = 50;
@@ -226,7 +226,7 @@ export async function POST(req: NextRequest) {
       return successResponse({ step: "contacts", source: "books", contactsNew, apiCalls, errors });
     }
 
-    // ─── BILLS: via Zakya POS (fallback Books) ───
+    // ─── BILLS: via Zoho Inventory (fallback Zakya → Books) ───
     if (step === "bills") {
       let billsNew = 0;
       let apiCalls = 0;
@@ -235,71 +235,119 @@ export async function POST(req: NextRequest) {
       let source = "none";
 
       try {
-        // Try Zakya POS first, then fallback to Books
-        const zakya = new ZakyaClient();
-        const posReady = await zakya.init();
-
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let client: any = null;
-        if (posReady) {
-          client = zakya;
-          source = "pos";
-        } else {
-          const zoho = new ZohoClient();
-          const booksReady = await zoho.init();
-          if (booksReady) {
-            client = zoho;
-            source = "books";
-          }
-        }
-
-        if (!client) {
-          return successResponse({ step: "bills", source: "skipped", billsNew: 0, apiCalls: 0, errors: ["No source connected for bills"] });
-        }
-
         const billsFromDate = fromDate || todayStr;
-        const bills = await client.listAllBills(billsFromDate, todayStr);
-        apiCalls += Math.ceil(bills.length / 200) || 1;
 
-        // Batch check existing bills in one query instead of N individual queries
-        const billNumbers = bills.map((b: { bill_number: string }) => b.bill_number);
-        const existingBills = await prisma.vendorBill.findMany({
-          where: { billNo: { in: billNumbers } },
-          select: { billNo: true },
-        });
-        const existingSet = new Set(existingBills.map((b) => b.billNo));
-        const newBills = bills.filter((b: { bill_number: string }) => !existingSet.has(b.bill_number));
+        // Try Zoho Inventory first (faster + separate quota + line items)
+        const inventory = new ZohoInventoryClient();
+        const inventoryReady = await inventory.init();
 
-        // Batch create all previews in one transaction
-        if (newBills.length > 0) {
-          await prisma.$transaction(
-            newBills.map((bill: { bill_id: string; bill_number: string; vendor_name: string; date: string; due_date: string; total: number; balance: number; status: string }) =>
-              prisma.zohoPullPreview.create({
-                data: {
-                  pullId: existingPullId,
-                  entityType: "bill",
-                  zohoId: bill.bill_id,
+        if (inventoryReady) {
+          source = "inventory";
+          const bills = await inventory.listAllBills(billsFromDate, todayStr);
+          apiCalls += Math.ceil(bills.length / 200) || 1;
+
+          // Batch check existing bills
+          const billNumbers = bills.map((b) => b.bill_number);
+          const existingBills = await prisma.vendorBill.findMany({
+            where: { billNo: { in: billNumbers } },
+            select: { billNo: true },
+          });
+          const existingSet = new Set(existingBills.map((b) => b.billNo));
+          const newBills = bills.filter((b) => !existingSet.has(b.bill_number));
+
+          if (newBills.length > 0) {
+            // Fetch line items for new bills (5 concurrent, ~200ms between batches)
+            const details = await inventory.getBillDetails(newBills.map((b) => b.bill_id));
+            detailCalls = newBills.length;
+            apiCalls += detailCalls;
+            const detailMap = new Map(details.map((d) => [d.bill_id, d.line_items]));
+
+            await prisma.$transaction(
+              newBills.map((bill) =>
+                prisma.zohoPullPreview.create({
                   data: {
-                    billNumber: bill.bill_number,
-                    vendorName: bill.vendor_name,
-                    date: bill.date,
-                    dueDate: bill.due_date,
-                    total: bill.total,
-                    balance: bill.balance,
-                    status: bill.status,
-                    lineItems: [],
+                    pullId: existingPullId,
+                    entityType: "bill",
+                    zohoId: bill.bill_id,
+                    data: {
+                      billNumber: bill.bill_number,
+                      vendorName: bill.vendor_name,
+                      date: bill.date,
+                      dueDate: bill.due_date,
+                      total: bill.total,
+                      balance: bill.balance,
+                      status: bill.status,
+                      lineItems: (detailMap.get(bill.bill_id) || []).map((li) => ({
+                        name: li.name,
+                        sku: li.sku,
+                        quantity: li.quantity,
+                        rate: li.rate,
+                        itemTotal: li.item_total,
+                      })),
+                    },
                   },
-                },
-              })
-            )
-          );
-          billsNew = newBills.length;
+                })
+              )
+            );
+            billsNew = newBills.length;
+          }
+        } else {
+          // Fallback: Zakya POS → Books (header-only, no line items)
+          const zakya = new ZakyaClient();
+          const posReady = await zakya.init();
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let client: any = null;
+          if (posReady) { client = zakya; source = "pos"; }
+          else {
+            const zoho = new ZohoClient();
+            if (await zoho.init()) { client = zoho; source = "books"; }
+          }
+
+          if (!client) {
+            return successResponse({ step: "bills", source: "skipped", billsNew: 0, apiCalls: 0, errors: ["No source connected for bills"] });
+          }
+
+          const bills = await client.listAllBills(billsFromDate, todayStr);
+          apiCalls += Math.ceil(bills.length / 200) || 1;
+
+          const billNumbers = bills.map((b: { bill_number: string }) => b.bill_number);
+          const existingBills = await prisma.vendorBill.findMany({
+            where: { billNo: { in: billNumbers } },
+            select: { billNo: true },
+          });
+          const existingSet = new Set(existingBills.map((b) => b.billNo));
+          const newBills = bills.filter((b: { bill_number: string }) => !existingSet.has(b.bill_number));
+
+          if (newBills.length > 0) {
+            await prisma.$transaction(
+              newBills.map((bill: { bill_id: string; bill_number: string; vendor_name: string; date: string; due_date: string; total: number; balance: number; status: string }) =>
+                prisma.zohoPullPreview.create({
+                  data: {
+                    pullId: existingPullId,
+                    entityType: "bill",
+                    zohoId: bill.bill_id,
+                    data: {
+                      billNumber: bill.bill_number,
+                      vendorName: bill.vendor_name,
+                      date: bill.date,
+                      dueDate: bill.due_date,
+                      total: bill.total,
+                      balance: bill.balance,
+                      status: bill.status,
+                      lineItems: [],
+                    },
+                  },
+                })
+              )
+            );
+            billsNew = newBills.length;
+          }
         }
       } catch (e) {
         errors.push(`Bills: ${e instanceof Error ? e.message : "Unknown"}`);
       }
 
-      return successResponse({ step: "bills", source, billsNew, apiCalls, errors });
+      return successResponse({ step: "bills", source, billsNew, apiCalls, detailCalls, errors });
     }
 
     // ─── INVOICES: via Zakya POS (fallback Books) ───
