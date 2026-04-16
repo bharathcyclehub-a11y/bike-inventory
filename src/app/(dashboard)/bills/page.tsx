@@ -127,7 +127,7 @@ export default function BillsPage() {
           step: "bills", pullId,
           ...(searchTerm ? { searchText: searchTerm } : { fromDate: yesterday }),
         }),
-      }, 30000).then(r => r.json());
+      }, 60000).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
 
       const src = billRes.data.source === "inventory" ? "Zoho Inventory" : billRes.data.source === "pos" ? "Zakya" : "Zoho Books";

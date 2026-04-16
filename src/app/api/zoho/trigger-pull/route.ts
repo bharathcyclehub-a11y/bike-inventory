@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-export const maxDuration = 30; // Allow up to 30s for Zoho API calls
+export const maxDuration = 60; // Allow up to 60s for Zoho API calls (bill details need per-bill calls)
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
@@ -266,8 +266,31 @@ export async function POST(req: NextRequest) {
           const newBills = bills.filter((b: { bill_number: string }) => !existingSet.has(b.bill_number));
 
           if (newBills.length > 0) {
+            // Fetch line items for each bill (max 50 detail calls)
+            const billsWithDetails: Array<{
+              bill_id: string; bill_number: string; vendor_name: string;
+              date: string; due_date: string; total: number; balance: number; status: string;
+              lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>;
+            }> = [];
+
+            for (const bill of newBills.slice(0, MAX_DETAIL_CALLS_PER_ENTITY) as Array<{ bill_id: string; bill_number: string; vendor_name: string; date: string; due_date: string; total: number; balance: number; status: string }>) {
+              let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
+              try {
+                if (source === "books") {
+                  const detail = await (client as ZohoClient).getBill(bill.bill_id);
+                  detailCalls++;
+                  lineItems = (detail.bill?.line_items || []).map((li) => ({
+                    name: li.name, sku: li.sku || "", quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
+                  }));
+                }
+              } catch (e) {
+                errors.push(`Bill ${bill.bill_number} details: ${e instanceof Error ? e.message : "Failed"}`);
+              }
+              billsWithDetails.push({ ...bill, lineItems });
+            }
+
             await prisma.$transaction(
-              newBills.map((bill: { bill_id: string; bill_number: string; vendor_name: string; date: string; due_date: string; total: number; balance: number; status: string }) =>
+              billsWithDetails.map((bill) =>
                 prisma.zohoPullPreview.create({
                   data: {
                     pullId: existingPullId,
@@ -281,13 +304,13 @@ export async function POST(req: NextRequest) {
                       total: bill.total,
                       balance: bill.balance,
                       status: bill.status,
-                      lineItems: [],
+                      lineItems: bill.lineItems,
                     },
                   },
                 })
               )
             );
-            billsNew = newBills.length;
+            billsNew = billsWithDetails.length;
           }
         }
       } catch (e) {

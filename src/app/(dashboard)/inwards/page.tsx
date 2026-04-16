@@ -154,7 +154,7 @@ export default function InwardsPage() {
           step: "bills", pullId,
           ...(searchTerm ? { searchText: searchTerm } : { fromDate: yesterday }),
         }),
-      }, 30000).then(r => r.json());
+      }, 60000).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
 
       const src = billRes.data.source === "inventory" ? "Zoho Inventory" : billRes.data.source === "pos" ? "Zakya" : "Zoho Books";
@@ -339,7 +339,7 @@ export default function InwardsPage() {
           <CardContent className="p-3">
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-semibold text-blue-800">
-                {billPreviews.length} new bill{billPreviews.length !== 1 ? "s" : ""} from Zoho (this month)
+                {billPreviews.length} new bill{billPreviews.length !== 1 ? "s" : ""} from Zoho
               </p>
               <div className="flex gap-2">
                 <button onClick={() => { setFetchStep("idle"); setBillPreviews([]); }}
