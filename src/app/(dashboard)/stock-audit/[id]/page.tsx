@@ -504,7 +504,8 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         </p>
       )}
 
-      {/* Tabs: Uncounted / Counted / All */}
+      {/* Tabs, Search, Items — only show after counting starts */}
+      {summary.status !== "PENDING" && (<>
       <div className="flex bg-slate-100 rounded-lg p-0.5 mb-2">
         {(["uncounted", "counted", "all"] as const).map((t) => {
           const count = t === "uncounted" ? tabCounts.uncounted : t === "counted" ? tabCounts.counted : tabCounts.total;
@@ -717,7 +718,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         </div>
       )}
 
-      {/* Removed floating "Next" button — not useful for baseline counting */}
+      </>)}
 
       {/* Rejection Bottom Sheet Modal */}
       {showRejectModal && (
