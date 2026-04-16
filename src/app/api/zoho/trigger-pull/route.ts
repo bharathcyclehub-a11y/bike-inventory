@@ -95,13 +95,23 @@ export async function POST(req: NextRequest) {
           apiCalls += Math.ceil(items.length / 200) || 1;
 
           for (const item of items) {
+            const zohoBrand = String(item.brand || item.manufacturer || "").trim();
+            let existing: { id: string; brand?: { name: string } | null } | null = null;
             if (item.sku) {
-              const existing = await prisma.product.findFirst({ where: { sku: item.sku } });
-              if (existing) continue; // skip existing (active or inactive)
+              existing = await prisma.product.findFirst({ where: { sku: item.sku }, include: { brand: { select: { name: true } } } });
             }
-            if (item.item_id) {
-              const existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id } });
-              if (existing) continue; // skip existing (active or inactive)
+            if (!existing && item.item_id) {
+              existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id }, include: { brand: { select: { name: true } } } });
+            }
+            if (existing) {
+              // Update brand if currently Imported/Unbranded and Zoho has brand data
+              const currentBrand = (existing.brand as { name: string } | null)?.name || "";
+              if (zohoBrand && ["Imported", "Unbranded", ""].includes(currentBrand)) {
+                let brand = await prisma.brand.findFirst({ where: { name: { equals: zohoBrand, mode: "insensitive" } } });
+                if (!brand) brand = await prisma.brand.create({ data: { name: zohoBrand } });
+                await prisma.product.update({ where: { id: existing.id }, data: { brandId: brand.id } });
+              }
+              continue;
             }
 
             await prisma.zohoPullPreview.create({
@@ -118,7 +128,7 @@ export async function POST(req: NextRequest) {
                   hsnCode: String(item.hsn_or_sac || ""),
                   stockOnHand: Number(item.stock_on_hand || 0),
                   productType: String(item.product_type || item.item_type || ""),
-                  brand: String(item.brand || item.manufacturer || ""),
+                  brand: zohoBrand,
                 },
               },
             });
@@ -137,13 +147,22 @@ export async function POST(req: NextRequest) {
 
             for (const item of items) {
               const zohoItem = item as Record<string, unknown>;
+              const zohoBrand = String(item.brand || item.manufacturer || "").trim();
+              let existing: { id: string; brand?: { name: string } | null } | null = null;
               if (item.sku) {
-                const existing = await prisma.product.findFirst({ where: { sku: item.sku } });
-                if (existing) continue;
+                existing = await prisma.product.findFirst({ where: { sku: item.sku }, include: { brand: { select: { name: true } } } });
               }
-              if (item.item_id) {
-                const existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id } });
-                if (existing) continue;
+              if (!existing && item.item_id) {
+                existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id }, include: { brand: { select: { name: true } } } });
+              }
+              if (existing) {
+                const currentBrand = (existing.brand as { name: string } | null)?.name || "";
+                if (zohoBrand && ["Imported", "Unbranded", ""].includes(currentBrand)) {
+                  let brand = await prisma.brand.findFirst({ where: { name: { equals: zohoBrand, mode: "insensitive" } } });
+                  if (!brand) brand = await prisma.brand.create({ data: { name: zohoBrand } });
+                  await prisma.product.update({ where: { id: existing.id }, data: { brandId: brand.id } });
+                }
+                continue;
               }
 
               await prisma.zohoPullPreview.create({
@@ -160,7 +179,7 @@ export async function POST(req: NextRequest) {
                     hsnCode: String(zohoItem.hsn_or_sac || ""),
                     stockOnHand: Number(zohoItem.stock_on_hand || 0),
                     productType: String(zohoItem.product_type || zohoItem.item_type || ""),
-                    brand: String(item.brand || item.manufacturer || ""),
+                    brand: zohoBrand,
                   },
                 },
               });

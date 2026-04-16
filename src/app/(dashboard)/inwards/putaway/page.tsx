@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, Loader2, Package, MapPin } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, Package, MapPin, CheckSquare, Square } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,7 @@ export default function PutawayPage() {
   const [verifiedCount, setVerifiedCount] = useState(0);
   const [bins, setBins] = useState<Bin[]>([]);
   const [binSelections, setBinSelections] = useState<Record<string, string>>({});
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
@@ -59,8 +60,9 @@ export default function PutawayPage() {
         const unverified: PutawayTransaction[] = txRes.data.unverified;
         setTransactions(unverified);
         setVerifiedCount(txRes.data.verifiedCount || 0);
+        // Select all by default
+        setSelected(new Set(unverified.map((t) => t.id)));
 
-        // Default bin selections to each product's current binId
         const defaults: Record<string, string> = {};
         for (const t of unverified) {
           if (t.product.binId) {
@@ -88,17 +90,44 @@ export default function PutawayPage() {
     setBinSelections((prev) => ({ ...prev, [transactionId]: binId }));
   };
 
-  const handleConfirmAll = async () => {
+  const toggleItem = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelected(new Set(transactions.map((t) => t.id)));
+  const deselectAll = () => setSelected(new Set());
+  const allSelected = transactions.length > 0 && selected.size === transactions.length;
+
+  // Apply a single bin to all selected items
+  const handleBulkBin = (binId: string) => {
+    setBinSelections((prev) => {
+      const next = { ...prev };
+      for (const id of selected) {
+        if (binId) next[id] = binId;
+        else delete next[id];
+      }
+      return next;
+    });
+  };
+
+  const handleConfirmSelected = async () => {
+    if (selected.size === 0) return;
     setSubmitting(true);
     setError("");
     setResult(null);
 
     try {
       const payload = {
-        transactions: transactions.map((t) => ({
-          transactionId: t.id,
-          binId: binSelections[t.id] || undefined,
-        })),
+        transactions: transactions
+          .filter((t) => selected.has(t.id))
+          .map((t) => ({
+            transactionId: t.id,
+            binId: binSelections[t.id] || undefined,
+          })),
       };
 
       const res = await fetch("/api/inventory/inwards/putaway", {
@@ -110,11 +139,12 @@ export default function PutawayPage() {
       const data = await res.json();
       if (data.success) {
         setResult(data.data);
-        if (data.data.errors.length === 0) {
+        if (data.data.errors.length === 0 && selected.size === transactions.length) {
           setDone(true);
         } else {
-          // Partial success — re-fetch to show remaining items
-          setError(`${data.data.verified} verified, ${data.data.errors.length} failed`);
+          if (data.data.errors.length > 0) {
+            setError(`${data.data.verified} verified, ${data.data.errors.length} failed`);
+          }
           fetchData();
         }
       } else {
@@ -127,19 +157,15 @@ export default function PutawayPage() {
     }
   };
 
-  // No bill reference provided
   if (!ref) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
         <p className="text-sm text-slate-500 mb-4">No bill reference specified</p>
-        <Link href="/inwards" className="text-sm text-blue-600 underline">
-          Back to Inwards
-        </Link>
+        <Link href="/inwards" className="text-sm text-blue-600 underline">Back to Inwards</Link>
       </div>
     );
   }
 
-  // Success state
   if (done) {
     return (
       <div className="flex flex-col items-center justify-center py-20">
@@ -151,14 +177,9 @@ export default function PutawayPage() {
           Bill {ref} — {result?.verified} item{result?.verified !== 1 ? "s" : ""} putaway
         </p>
         {verifiedCount > 0 && (
-          <p className="text-xs text-slate-400 mb-4">
-            ({verifiedCount} previously verified)
-          </p>
+          <p className="text-xs text-slate-400 mb-4">({verifiedCount} previously verified)</p>
         )}
-        <Link
-          href="/inwards"
-          className="mt-2 inline-flex items-center gap-1.5 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium"
-        >
+        <Link href="/inwards" className="mt-2 inline-flex items-center gap-1.5 bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-medium">
           <ArrowLeft className="h-4 w-4" /> Back to Inwards
         </Link>
       </div>
@@ -166,13 +187,10 @@ export default function PutawayPage() {
   }
 
   return (
-    <div className="pb-24">
+    <div className="pb-28">
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
-        <Link
-          href="/inwards"
-          className="rounded-lg border border-slate-200 p-2 hover:bg-slate-50"
-        >
+        <Link href="/inwards" className="rounded-lg border border-slate-200 p-2 hover:bg-slate-50">
           <ArrowLeft className="h-4 w-4 text-slate-600" />
         </Link>
         <div>
@@ -181,27 +199,21 @@ export default function PutawayPage() {
         </div>
       </div>
 
-      {/* Error */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
           {error}
-          <button onClick={() => setError("")} className="ml-2 underline">
-            dismiss
-          </button>
+          <button onClick={() => setError("")} className="ml-2 underline">dismiss</button>
         </div>
       )}
 
-      {/* Loading */}
       {loading ? (
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
-            <Card key={i}>
-              <CardContent className="p-4 animate-pulse">
-                <div className="h-4 bg-slate-200 rounded w-2/3 mb-2" />
-                <div className="h-3 bg-slate-200 rounded w-1/3 mb-3" />
-                <div className="h-9 bg-slate-200 rounded w-full" />
-              </CardContent>
-            </Card>
+            <Card key={i}><CardContent className="p-4 animate-pulse">
+              <div className="h-4 bg-slate-200 rounded w-2/3 mb-2" />
+              <div className="h-3 bg-slate-200 rounded w-1/3 mb-3" />
+              <div className="h-9 bg-slate-200 rounded w-full" />
+            </CardContent></Card>
           ))}
         </div>
       ) : transactions.length === 0 ? (
@@ -209,107 +221,124 @@ export default function PutawayPage() {
           <div className="rounded-full bg-green-100 p-3 mb-3">
             <CheckCircle2 className="h-8 w-8 text-green-600" />
           </div>
-          <p className="text-sm font-medium text-slate-700 mb-1">
-            No pending items for this bill
-          </p>
+          <p className="text-sm font-medium text-slate-700 mb-1">No pending items for this bill</p>
           {verifiedCount > 0 && (
-            <p className="text-xs text-slate-400 mb-4">
-              All {verifiedCount} item{verifiedCount !== 1 ? "s" : ""} already verified
-            </p>
+            <p className="text-xs text-slate-400 mb-4">All {verifiedCount} item{verifiedCount !== 1 ? "s" : ""} already verified</p>
           )}
-          <Link href="/inwards" className="text-sm text-blue-600 underline">
-            Back to Inwards
-          </Link>
+          <Link href="/inwards" className="text-sm text-blue-600 underline">Back to Inwards</Link>
         </div>
       ) : (
         <>
-          {/* Summary */}
-          <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-3">
+          {/* Summary + Select All */}
+          <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-2">
             <div className="flex items-center gap-2">
               <Package className="h-4 w-4 text-amber-600" />
               <span className="text-xs font-medium text-amber-800">
-                {transactions.length} item{transactions.length !== 1 ? "s" : ""} pending putaway
+                {transactions.length} item{transactions.length !== 1 ? "s" : ""} pending
               </span>
             </div>
-            {verifiedCount > 0 && (
-              <Badge variant="success" className="text-[10px]">
-                {verifiedCount} already done
-              </Badge>
+            <div className="flex items-center gap-2">
+              {verifiedCount > 0 && (
+                <Badge variant="success" className="text-[10px]">{verifiedCount} done</Badge>
+              )}
+              <Badge variant="info" className="text-[10px]">{selected.size} selected</Badge>
+            </div>
+          </div>
+
+          {/* Select All / Deselect + Bulk Bin */}
+          <div className="flex items-center gap-2 mb-3">
+            <button
+              onClick={allSelected ? deselectAll : selectAll}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-700"
+            >
+              {allSelected ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
+              {allSelected ? "Deselect All" : "Select All"}
+            </button>
+            {selected.size > 1 && bins.length > 0 && (
+              <select
+                onChange={(e) => handleBulkBin(e.target.value)}
+                className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                defaultValue=""
+              >
+                <option value="" disabled>Assign bin to selected...</option>
+                <option value="">No bin</option>
+                {bins.map((bin) => (
+                  <option key={bin.id} value={bin.id}>{bin.code} — {bin.name}</option>
+                ))}
+              </select>
             )}
           </div>
 
           {/* Item Cards */}
-          <div className="space-y-2.5">
-            {transactions.map((t) => (
-              <Card key={t.id} className="overflow-hidden">
-                <CardContent className="p-3">
-                  <div className="flex items-start justify-between mb-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-slate-900 truncate">
-                        {t.product.name}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {t.product.sku}
-                        {t.product.brand?.name ? ` | ${t.product.brand.name}` : ""}
-                      </p>
-                    </div>
-                    <Badge variant="info" className="ml-2 shrink-0 text-xs font-bold">
-                      x{t.quantity}
-                    </Badge>
-                  </div>
+          <div className="space-y-2">
+            {transactions.map((t) => {
+              const isSelected = selected.has(t.id);
+              return (
+                <Card key={t.id} className={`overflow-hidden transition-colors ${isSelected ? "border-blue-300 bg-blue-50/30" : "opacity-60"}`}>
+                  <CardContent className="p-3">
+                    <div className="flex items-start gap-2.5">
+                      {/* Checkbox */}
+                      <button onClick={() => toggleItem(t.id)} className="mt-0.5 shrink-0">
+                        {isSelected
+                          ? <CheckSquare className="h-5 w-5 text-blue-600" />
+                          : <Square className="h-5 w-5 text-slate-300" />}
+                      </button>
 
-                  {/* Bin Selection */}
-                  <div className="flex items-center gap-2">
-                    <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                    <select
-                      value={binSelections[t.id] || ""}
-                      onChange={(e) => handleBinChange(t.id, e.target.value)}
-                      className="flex-1 text-sm border border-slate-200 rounded-lg px-2.5 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 appearance-none"
-                    >
-                      <option value="">No bin assigned</option>
-                      {bins.map((bin) => (
-                        <option key={bin.id} value={bin.id}>
-                          {bin.code} — {bin.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-slate-900 truncate">{t.product.name}</p>
+                            <p className="text-xs text-slate-500">
+                              {t.product.sku}
+                              {t.product.brand?.name ? ` | ${t.product.brand.name}` : ""}
+                            </p>
+                          </div>
+                          <Badge variant="info" className="ml-2 shrink-0 text-xs font-bold">x{t.quantity}</Badge>
+                        </div>
+
+                        {/* Bin Selection */}
+                        <div className="flex items-center gap-2">
+                          <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                          <select
+                            value={binSelections[t.id] || ""}
+                            onChange={(e) => handleBinChange(t.id, e.target.value)}
+                            className="flex-1 text-sm border border-slate-200 rounded-lg px-2.5 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 appearance-none"
+                          >
+                            <option value="">No bin assigned</option>
+                            {bins.map((bin) => (
+                              <option key={bin.id} value={bin.id}>{bin.code} — {bin.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
 
-          {/* Result errors (partial failure) */}
+          {/* Result errors */}
           {result && result.errors.length > 0 && (
             <div className="mt-3 bg-red-50 border border-red-200 rounded-lg p-3">
-              <p className="text-xs font-semibold text-red-700 mb-1">
-                {result.errors.length} item{result.errors.length !== 1 ? "s" : ""} failed:
-              </p>
+              <p className="text-xs font-semibold text-red-700 mb-1">{result.errors.length} failed:</p>
               {result.errors.map((e, i) => (
-                <p key={i} className="text-[10px] text-red-600">
-                  {e.error}
-                </p>
+                <p key={i} className="text-[10px] text-red-600">{e.error}</p>
               ))}
             </div>
           )}
 
-          {/* Confirm All Button — fixed at bottom for mobile */}
+          {/* Confirm Button — fixed bottom */}
           <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-4 z-40">
             <Button
-              onClick={handleConfirmAll}
-              disabled={submitting || transactions.length === 0}
+              onClick={handleConfirmSelected}
+              disabled={submitting || selected.size === 0}
               className="w-full h-12 bg-green-600 hover:bg-green-700 text-white font-semibold text-sm rounded-xl disabled:opacity-50"
             >
               {submitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  Verifying...
-                </>
+                <><Loader2 className="h-4 w-4 animate-spin mr-2" />Verifying...</>
               ) : (
-                <>
-                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                  Confirm All ({transactions.length} items)
-                </>
+                <><CheckCircle2 className="h-4 w-4 mr-2" />Confirm {selected.size} of {transactions.length} Items</>
               )}
             </Button>
           </div>

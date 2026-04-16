@@ -94,7 +94,6 @@ export default function InwardsPage() {
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
-  const [verifying, setVerifying] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
@@ -278,26 +277,6 @@ export default function InwardsPage() {
   for (const [ref, { vendor, date, brandMap }] of refMap) {
     const brands = Array.from(brandMap.entries()).map(([brand, items]) => ({ brand, items }));
     grouped.push({ ref, vendor, date, brands });
-  }
-
-  async function handleVerify(id: string) {
-    setVerifying(id);
-    try {
-      const res = await fetch("/api/inventory/inwards/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transactionId: id }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setInwards((prev) =>
-          prev.map((t) =>
-            t.id === id ? { ...t, notes: t.notes?.replace("[UNVERIFIED]", "[VERIFIED]") || t.notes } : t
-          )
-        );
-      }
-    } catch { /* ignore */ }
-    finally { setVerifying(null); }
   }
 
   return (
@@ -544,21 +523,13 @@ export default function InwardsPage() {
                                 </div>
 
                                 {zoho && (
-                                  <div className="flex items-center justify-between pb-2 pl-10">
+                                  <div className="pb-2 pl-10">
                                     {verified ? (
                                       <Badge variant="success" className="text-[10px]">
                                         <CheckCircle2 className="h-3 w-3 mr-0.5" /> Verified & Stocked
                                       </Badge>
                                     ) : (
-                                      <Badge variant="warning" className="text-[10px]">Pending Receipt</Badge>
-                                    )}
-                                    {!verified && (
-                                      <Button size="sm" variant="outline"
-                                        className="h-6 text-[10px] text-green-600 border-green-200 hover:bg-green-50"
-                                        onClick={(e) => { e.stopPropagation(); handleVerify(t.id); }}
-                                        disabled={verifying === t.id}>
-                                        {verifying === t.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm Receipt"}
-                                      </Button>
+                                      <Badge variant="warning" className="text-[10px]">Pending Putaway</Badge>
                                     )}
                                   </div>
                                 )}
