@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // Approve step now fetches bill details from Zoho
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
@@ -121,7 +122,22 @@ export async function POST(req: NextRequest) {
           });
           results.items++;
         } else if (preview.entityType === "bill") {
-          const lineItems = (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];
+          // Fetch line items from Zoho if not in preview data
+          let lineItems = (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];
+          if (lineItems.length === 0 && preview.zohoId) {
+            try {
+              const { ZohoClient } = await import("@/lib/zoho");
+              const zoho = new ZohoClient();
+              if (await zoho.init()) {
+                const detail = await zoho.getBill(preview.zohoId);
+                lineItems = (detail.bill?.line_items || []).map((li) => ({
+                  name: li.name, sku: li.sku || "", quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
+                }));
+              }
+            } catch (e) {
+              results.errors.push(`Bill ${d.billNumber}: failed to fetch details — ${e instanceof Error ? e.message : "Unknown"}`);
+            }
+          }
 
           // Find vendor — auto-create if not found
           let vendor = await prisma.vendor.findFirst({
@@ -144,8 +160,7 @@ export async function POST(req: NextRequest) {
           const total = Number(d.total || 0);
           const balance = Number(d.balance || 0);
 
-          // Pre-check: find all products for line items BEFORE creating bill
-          const missingItems: string[] = [];
+          // Match products for line items, auto-creating any missing ones
           const matchedProducts: Array<{ li: typeof lineItems[0]; product: { id: string; currentStock: number } }> = [];
 
           for (const li of lineItems) {
@@ -154,17 +169,27 @@ export async function POST(req: NextRequest) {
               select: { id: true, currentStock: true },
             });
             if (!product) {
-              missingItems.push(li.sku ? `${li.name} (SKU: ${li.sku})` : li.name);
+              // Auto-create product from bill line item
+              const autoSku = li.sku || `ZOHO-${String(Date.now()).slice(-8)}`;
+              const newProduct = await prisma.product.create({
+                data: {
+                  sku: autoSku,
+                  name: li.name,
+                  categoryId: defaultCategory.id,
+                  brandId: defaultBrand.id,
+                  type: "SPARE_PART",
+                  costPrice: li.rate || 0,
+                  sellingPrice: li.rate || 0,
+                  mrp: li.rate || 0,
+                  gstRate: 18,
+                  currentStock: 0,
+                },
+              });
+              matchedProducts.push({ li, product: { id: newProduct.id, currentStock: 0 } });
+              results.errors.push(`Bill ${d.billNumber}: auto-created "${li.name}" (${autoSku})`);
             } else {
               matchedProducts.push({ li, product });
             }
-          }
-
-          // Warn about missing items but still create the bill
-          if (missingItems.length > 0) {
-            results.errors.push(
-              `Bill ${d.billNumber}: ${missingItems.length} item(s) not in catalog (bill created, inwards skipped for these): ${missingItems.slice(0, 3).join(", ")}${missingItems.length > 3 ? ` +${missingItems.length - 3} more` : ""}`
-            );
           }
 
           // Calculate due date: use Zoho's dueDate unless it equals billDate (missing), then use vendor's payment terms

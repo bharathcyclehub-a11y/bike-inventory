@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Plus, CheckCircle2, Cloud, Loader2, ArrowDownCircle, Search, Download, ChevronRight } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -85,8 +86,9 @@ function formatCurrency(amount: number) {
 
 export default function InwardsPage() {
   const { data: session } = useSession();
+  const router = useRouter();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAddInward = role === "ADMIN";
+  const canAddInward = ["ADMIN", "SUPERVISOR", "INWARDS_CLERK"].includes(role);
   const canFetchBills = ["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "ACCOUNTS_MANAGER"].includes(role);
   const [inwards, setInwards] = useState<InwardTransaction[]>([]);
   const [loading, setLoading] = useState(true);
@@ -222,10 +224,20 @@ export default function InwardsPage() {
       if (!res.success) throw new Error(res.error || "Import failed");
       const imported = res.data?.bills || 0;
       const errors = res.data?.errors || [];
+      // Get bill numbers from selected previews for putaway redirect
+      const importedBillNumbers = billPreviews
+        .filter((b) => selectedBills.has(b.id))
+        .map((b) => b.data.billNumber)
+        .filter(Boolean);
       setFetchStep("idle");
       setBillPreviews([]);
       setSelectedBills(new Set());
-      fetchData();
+      // Redirect to putaway page for stock verification + bin assignment
+      if (importedBillNumbers.length > 0) {
+        router.push(`/inwards/putaway?ref=${encodeURIComponent(importedBillNumbers.join(","))}`);
+      } else {
+        fetchData();
+      }
       if (errors.length > 0) {
         setFetchError(`Imported ${imported} bill(s). Warnings: ${errors.join("; ")}`);
       }

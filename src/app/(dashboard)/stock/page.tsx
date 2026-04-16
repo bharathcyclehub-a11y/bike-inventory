@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { Search, MapPin, Loader2, SlidersHorizontal, ChevronDown, RefreshCw, CheckSquare, Square, X } from "lucide-react";
+import { Search, MapPin, Loader2, SlidersHorizontal, ChevronDown, RefreshCw, CheckSquare, Square, X, Cloud, Download } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -73,6 +73,15 @@ export default function StockPage() {
   const { data: session } = useSession();
   const userRole = (session?.user as { role?: string })?.role || "";
   const canBulkEdit = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(userRole);
+
+  const canFetchItems = ["ADMIN", "SUPERVISOR"].includes(userRole);
+
+  // Fetch Items from Zoho
+  const [fetchStep, setFetchStep] = useState<"idle" | "fetching" | "selecting" | "importing">("idle");
+  const [itemPreviews, setItemPreviews] = useState<Array<{ id: string; zohoId: string; data: { name: string; sku: string; costPrice: number; sellingPrice: number } }>>([]);
+  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
+  const [fetchError, setFetchError] = useState("");
+  const [fetchPullId, setFetchPullId] = useState("");
 
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -149,6 +158,81 @@ export default function StockPage() {
     } finally {
       setBulkLoading(false);
     }
+  }
+
+  const handleFetchItems = async () => {
+    setFetchStep("fetching");
+    setFetchError("");
+    try {
+      const initRes = await fetch("/api/zoho/trigger-pull", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "init" }),
+      }).then(r => r.json());
+      if (!initRes.success) throw new Error(initRes.error || "Init failed");
+      const pullId = initRes.data.pullId;
+      setFetchPullId(pullId);
+
+      const itemRes = await fetch("/api/zoho/trigger-pull", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "items", pullId, fullImport: true }),
+      }).then(r => r.json());
+      if (!itemRes.success) throw new Error(itemRes.error || "Items fetch failed");
+
+      await fetch("/api/zoho/trigger-pull", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "finalize", pullId, itemsNew: itemRes.data.itemsNew, apiCalls: itemRes.data.apiCalls, allErrors: itemRes.data.errors || [] }),
+      }).then(r => r.json()).catch(() => {});
+
+      const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
+      if (!previewRes.success) throw new Error(previewRes.error || "Preview failed");
+      const items = (previewRes.data.previews || []).filter((p: { entityType: string; status: string }) => p.entityType === "item" && p.status === "PENDING");
+      setItemPreviews(items);
+      setSelectedItems(new Set(items.map((i: { id: string }) => i.id)));
+      setFetchStep(items.length > 0 ? "selecting" : "idle");
+      if (items.length === 0) setFetchError(`No new items found (${itemRes.data.itemsNew || 0} from Zoho, all already in catalog)`);
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : "Fetch failed");
+      setFetchStep("idle");
+    }
+  };
+
+  const toggleItem = (id: string) => {
+    setSelectedItems(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleImportItems = async () => {
+    if (selectedItems.size === 0) return;
+    setFetchStep("importing");
+    try {
+      const res = await fetch("/api/zoho/pull-review/approve", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pullId: fetchPullId, action: "approve",
+          entityType: "item", previewIds: Array.from(selectedItems),
+        }),
+      }).then(r => r.json());
+      if (!res.success) throw new Error(res.error || "Import failed");
+      const imported = res.data?.items || 0;
+      const errors = res.data?.errors || [];
+      setFetchStep("idle");
+      setItemPreviews([]);
+      setSelectedItems(new Set());
+      fetchProducts(1);
+      if (errors.length > 0) {
+        setFetchError(`Imported ${imported} item(s). Warnings: ${errors.join("; ")}`);
+      }
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : "Import failed");
+      setFetchStep("selecting");
+    }
+  };
+
+  function formatCurrency(amount: number) {
+    return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
   }
 
   // Fetch brands + categories + bins once
@@ -247,6 +331,16 @@ export default function StockPage() {
           {selectMode ? `${selectedIds.size} selected` : "Stock"}
         </h1>
         <div className="flex items-center gap-2">
+          {canFetchItems && !selectMode && (
+            <button
+              onClick={handleFetchItems}
+              disabled={fetchStep === "fetching" || fetchStep === "importing"}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
+            >
+              {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+              {fetchStep === "fetching" ? "Fetching..." : "Fetch Items"}
+            </button>
+          )}
           {canBulkEdit && !selectMode && (
             <button
               onClick={() => setSelectMode(true)}
@@ -275,6 +369,72 @@ export default function StockPage() {
         <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-2.5 mb-2">
           <span className="text-xs text-green-700 font-medium">{bulkMessage}</span>
           <button onClick={() => setBulkMessage("")} className="text-green-500"><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
+
+      {/* Fetch Error */}
+      {fetchError && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-2 text-xs text-amber-700">
+          {fetchError}
+          <button onClick={() => setFetchError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
+      {/* Fetching indicator */}
+      {fetchStep === "fetching" && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
+          <span className="text-xs text-blue-700 font-medium">Fetching items from Zoho...</span>
+        </div>
+      )}
+
+      {/* Item Selection Panel */}
+      {fetchStep === "selecting" && itemPreviews.length > 0 && (
+        <Card className="mb-3 border-blue-200 bg-blue-50/50">
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-blue-800">
+                {itemPreviews.length} new item{itemPreviews.length !== 1 ? "s" : ""} from Zoho
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => { setFetchStep("idle"); setItemPreviews([]); }}
+                  className="text-xs text-slate-500 underline">Cancel</button>
+                <button onClick={handleImportItems} disabled={selectedItems.size === 0}
+                  className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50">
+                  <Download className="h-3 w-3" /> Import {selectedItems.size}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1.5 max-h-64 overflow-y-auto">
+              {itemPreviews.map((item) => (
+                <label key={item.id}
+                  className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
+                    selectedItems.has(item.id) ? "bg-blue-100 border border-blue-300" : "bg-white border border-slate-200"
+                  }`}>
+                  <input type="checkbox" checked={selectedItems.has(item.id)}
+                    onChange={() => toggleItem(item.id)} className="mt-0.5 rounded" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-slate-900">{item.data.name}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600">{item.data.sku || "No SKU"}</p>
+                    <div className="flex gap-3 mt-0.5">
+                      <span className="text-[10px] text-slate-500">Cost: {formatCurrency(item.data.costPrice)}</span>
+                      <span className="text-[10px] text-slate-500">Sell: {formatCurrency(item.data.sellingPrice)}</span>
+                    </div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Importing indicator */}
+      {fetchStep === "importing" && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+          <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+          <span className="text-xs text-blue-700 font-medium">Importing items into catalog...</span>
         </div>
       )}
 

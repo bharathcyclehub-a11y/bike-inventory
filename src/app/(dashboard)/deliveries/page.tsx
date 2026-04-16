@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
   Search, Loader2, Cloud, Download, Truck, AlertTriangle, CheckCircle2,
@@ -69,6 +70,10 @@ interface ZohoInvoicePreview {
 }
 
 export default function DeliveriesPage() {
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string })?.role || "";
+  const canFetchInvoices = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+
   const [deliveries, setDeliveries] = useState<DeliveryItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -253,19 +258,21 @@ export default function DeliveriesPage() {
     <div>
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Deliveries</h1>
-        <div className="flex items-center gap-1">
-          <input
-            type="text" placeholder="Invoice no..." value={invoiceSearch}
-            onChange={(e) => setInvoiceSearch(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleFetchInvoices()}
-            className="w-24 px-2 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400"
-          />
-          <button onClick={handleFetchInvoices} disabled={fetchStep === "fetching" || fetchStep === "importing"}
-            className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
-            {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-            {fetchStep === "fetching" ? "Fetching..." : invoiceSearch.trim() ? "Search" : "Fetch Invoices"}
-          </button>
-        </div>
+        {canFetchInvoices && (
+          <div className="flex items-center gap-1">
+            <input
+              type="text" placeholder="Invoice no..." value={invoiceSearch}
+              onChange={(e) => setInvoiceSearch(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleFetchInvoices()}
+              className="w-24 px-2 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400"
+            />
+            <button onClick={handleFetchInvoices} disabled={fetchStep === "fetching" || fetchStep === "importing"}
+              className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+              {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+              {fetchStep === "fetching" ? "Fetching..." : invoiceSearch.trim() ? "Search" : "Fetch Invoices"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Stats Row */}
@@ -464,10 +471,12 @@ export default function DeliveriesPage() {
                       <button onClick={() => handleVerify(d.id)}
                         className="flex-1 bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Mark Ready</button>
                     )}
-                    <button onClick={() => handleDelete(d.id)} disabled={deleting === d.id}
-                      className="bg-slate-100 text-slate-500 px-2 py-1.5 rounded-md text-xs hover:bg-red-50 hover:text-red-600 disabled:opacity-50">
-                      {deleting === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                    </button>
+                    {role === "ADMIN" && (
+                      <button onClick={() => handleDelete(d.id)} disabled={deleting === d.id}
+                        className="bg-slate-100 text-slate-500 px-2 py-1.5 rounded-md text-xs hover:bg-red-50 hover:text-red-600 disabled:opacity-50">
+                        {deleting === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                      </button>
+                    )}
                   </div>
                 </CardContent>
               </Card>

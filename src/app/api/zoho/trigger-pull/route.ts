@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Allow up to 60s for Zoho API calls (bill details need per-bill calls)
+export const maxDuration = 30; // Bill details now fetched in approve step
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
@@ -17,8 +17,6 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
  * Bills:     Zoho Books (fallback Zakya POS)
  * Invoices:  Zakya POS (fallback Books)
  */
-
-const MAX_DETAIL_CALLS_PER_ENTITY = 50;
 
 export async function POST(req: NextRequest) {
   try {
@@ -230,7 +228,6 @@ export async function POST(req: NextRequest) {
     if (step === "bills") {
       let billsNew = 0;
       let apiCalls = 0;
-      let detailCalls = 0;
       const errors: string[] = [];
       let source = "none";
 
@@ -266,31 +263,8 @@ export async function POST(req: NextRequest) {
           const newBills = bills.filter((b: { bill_number: string }) => !existingSet.has(b.bill_number));
 
           if (newBills.length > 0) {
-            // Fetch line items for each bill (max 50 detail calls)
-            const billsWithDetails: Array<{
-              bill_id: string; bill_number: string; vendor_name: string;
-              date: string; due_date: string; total: number; balance: number; status: string;
-              lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>;
-            }> = [];
-
-            for (const bill of newBills.slice(0, MAX_DETAIL_CALLS_PER_ENTITY) as Array<{ bill_id: string; bill_number: string; vendor_name: string; date: string; due_date: string; total: number; balance: number; status: string }>) {
-              let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
-              try {
-                if (source === "books") {
-                  const detail = await (client as ZohoClient).getBill(bill.bill_id);
-                  detailCalls++;
-                  lineItems = (detail.bill?.line_items || []).map((li) => ({
-                    name: li.name, sku: li.sku || "", quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
-                  }));
-                }
-              } catch (e) {
-                errors.push(`Bill ${bill.bill_number} details: ${e instanceof Error ? e.message : "Failed"}`);
-              }
-              billsWithDetails.push({ ...bill, lineItems });
-            }
-
             await prisma.$transaction(
-              billsWithDetails.map((bill) =>
+              newBills.map((bill: { bill_id: string; bill_number: string; vendor_name: string; date: string; due_date: string; total: number; balance: number; status: string }) =>
                 prisma.zohoPullPreview.create({
                   data: {
                     pullId: existingPullId,
@@ -304,20 +278,20 @@ export async function POST(req: NextRequest) {
                       total: bill.total,
                       balance: bill.balance,
                       status: bill.status,
-                      lineItems: bill.lineItems,
+                      lineItems: [],
                     },
                   },
                 })
               )
             );
-            billsNew = billsWithDetails.length;
+            billsNew = newBills.length;
           }
         }
       } catch (e) {
         errors.push(`Bills: ${e instanceof Error ? e.message : "Unknown"}`);
       }
 
-      return successResponse({ step: "bills", source, billsNew, apiCalls, detailCalls, errors });
+      return successResponse({ step: "bills", source, billsNew, apiCalls, errors });
     }
 
     // ─── INVOICES: via Zakya POS (fallback Books) ───
