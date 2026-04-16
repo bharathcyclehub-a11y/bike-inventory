@@ -6,15 +6,29 @@ import { ZohoClient } from "@/lib/zoho";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
-// POST — pull ONE entity type at a time (called 4x by frontend)
-// Body: { step: "init" | "items" | "contacts" | "bills" | "invoices" | "finalize", pullId?: string }
+/*
+ * API BUDGET OPTIMIZATION:
+ * ─────────────────────────
+ * Target: < 15 calls per daily pull
+ *
+ * Items:     1-2 calls (list pages since lastSync, skip if all exist)
+ * Contacts:  1 call (list since lastSync, dedup locally)
+ * Bills:     1 call (yesterday only) + 1 per NEW bill (detail, capped at 10)
+ * Invoices:  1 call (yesterday only) + 1 per NEW invoice (detail, capped at 10)
+ *
+ * Bills & invoices use YESTERDAY only — daily pull only needs 1 day
+ * Items & contacts use lastSyncAt (cheap, no detail calls)
+ */
+
+const MAX_DETAIL_CALLS_PER_ENTITY = 10; // Cap detail API calls
+
 export async function POST(req: NextRequest) {
   try {
     await requireAuth(["ADMIN", "SUPERVISOR"]);
     const body = await req.json();
     const { step, pullId: existingPullId } = body as { step: string; pullId?: string };
 
-    // ─── INIT: clear stuck syncs, create pullId ───
+    // ─── INIT ───
     if (step === "init") {
       await prisma.syncLog.updateMany({
         where: {
@@ -34,6 +48,7 @@ export async function POST(req: NextRequest) {
         data: { syncType: "cron-pull", status: "running", triggeredBy: "manual" },
       });
 
+      // Validate Zoho connection (1 API call for token refresh if needed)
       const zoho = new ZohoClient();
       const ready = await zoho.init();
       if (!ready) return errorResponse("Zoho not connected", 400);
@@ -45,24 +60,39 @@ export async function POST(req: NextRequest) {
     if (!existingPullId) return errorResponse("pullId required", 400);
 
     const config = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
-    const lastSyncAt = config?.lastSyncAt?.toISOString().slice(0, 10) || undefined;
+
+    // Default to last 30 days if never synced (prevents fetching ALL history)
+    let lastSyncAt = config?.lastSyncAt?.toISOString().slice(0, 10);
+    if (!lastSyncAt) {
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      lastSyncAt = thirtyDaysAgo.toISOString().slice(0, 10);
+    }
+
+    // Yesterday's date for bills & invoices (daily pull only needs 1 day)
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    const todayStr = new Date().toISOString().slice(0, 10);
 
     const zoho = new ZohoClient();
     const ready = await zoho.init();
     if (!ready) return errorResponse("Zoho not connected", 400);
 
-    // ─── ITEMS ───
+    // ─── ITEMS: list only, no detail calls ───
     if (step === "items") {
       let itemsNew = 0;
       let apiCalls = 0;
       const errors: string[] = [];
 
       try {
+        // Use lastModifiedTime to only get recently changed items (1-2 API calls)
         const items = await zoho.listAllItems(undefined, lastSyncAt);
         apiCalls += Math.ceil(items.length / 200) || 1;
 
         for (const item of items) {
           const zohoItem = item as Record<string, unknown>;
+          // Skip if already exists
           if (item.sku) {
             const existing = await prisma.product.findFirst({ where: { sku: item.sku } });
             if (existing) continue;
@@ -98,7 +128,7 @@ export async function POST(req: NextRequest) {
       return successResponse({ step: "items", itemsNew, apiCalls, errors });
     }
 
-    // ─── CONTACTS ───
+    // ─── CONTACTS: list only, 1 call ───
     if (step === "contacts") {
       let contactsNew = 0;
       let apiCalls = 0;
@@ -139,32 +169,44 @@ export async function POST(req: NextRequest) {
       return successResponse({ step: "contacts", contactsNew, apiCalls, errors });
     }
 
-    // ─── BILLS ───
+    // ─── BILLS: yesterday only + capped detail calls ───
     if (step === "bills") {
       let billsNew = 0;
       let apiCalls = 0;
+      let detailCalls = 0;
       const errors: string[] = [];
 
       try {
-        const bills = await zoho.listAllBills(lastSyncAt);
+        const bills = await zoho.listAllBills(yesterdayStr, todayStr);
         apiCalls += Math.ceil(bills.length / 200) || 1;
 
+        // Filter to only NEW bills first (before making any detail calls)
+        const newBills: typeof bills = [];
         for (const bill of bills) {
-          const existingBill = await prisma.vendorBill.findFirst({
+          const existing = await prisma.vendorBill.findFirst({
             where: { billNo: bill.bill_number },
           });
-          if (existingBill) continue;
+          if (!existing) newBills.push(bill);
+        }
 
+        for (const bill of newBills) {
           let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
-          try {
-            await zoho.delay(500);
-            const detail = await zoho.getBill(bill.bill_id);
-            apiCalls++;
-            lineItems = (detail.bill.line_items || []).map((li) => ({
-              name: li.name, sku: li.sku, quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
-            }));
-          } catch {
-            errors.push(`Bill ${bill.bill_number}: failed to fetch line items`);
+
+          // Only fetch detail if under the cap
+          if (detailCalls < MAX_DETAIL_CALLS_PER_ENTITY) {
+            try {
+              await zoho.delay(300);
+              const detail = await zoho.getBill(bill.bill_id);
+              apiCalls++;
+              detailCalls++;
+              lineItems = (detail.bill.line_items || []).map((li) => ({
+                name: li.name, sku: li.sku, quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
+              }));
+            } catch {
+              errors.push(`Bill ${bill.bill_number}: detail fetch skipped`);
+            }
+          } else {
+            errors.push(`Bill ${bill.bill_number}: line items skipped (API budget cap)`);
           }
 
           await prisma.zohoPullPreview.create({
@@ -193,36 +235,47 @@ export async function POST(req: NextRequest) {
       return successResponse({ step: "bills", billsNew, apiCalls, errors });
     }
 
-    // ─── INVOICES ───
+    // ─── INVOICES: yesterday only + capped detail calls ───
     if (step === "invoices") {
       let invoicesNew = 0;
       let apiCalls = 0;
+      let detailCalls = 0;
       const errors: string[] = [];
 
       try {
-        const invoices = await zoho.listAllInvoices(lastSyncAt);
+        const invoices = await zoho.listAllInvoices(yesterdayStr);
         apiCalls += Math.ceil(invoices.length / 200) || 1;
 
+        // Filter to only NEW invoices first
+        const newInvoices: typeof invoices = [];
         for (const invoice of invoices) {
           if (invoice.status === "void") continue;
-
           const existing = await prisma.delivery.findFirst({
             where: { invoiceNo: invoice.invoice_number },
           });
-          if (existing) continue;
+          if (!existing) newInvoices.push(invoice);
+        }
 
+        for (const invoice of newInvoices) {
           let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
           let salesPerson = "";
-          try {
-            await zoho.delay(500);
-            const detail = await zoho.getInvoice(invoice.invoice_id);
-            apiCalls++;
-            lineItems = (detail.invoice.line_items || []).map((li) => ({
-              name: li.name, sku: li.sku, quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
-            }));
-            salesPerson = (detail.invoice as Record<string, unknown>).salesperson_name as string || "";
-          } catch {
-            errors.push(`Invoice ${invoice.invoice_number}: failed to fetch details`);
+
+          // Only fetch detail if under the cap
+          if (detailCalls < MAX_DETAIL_CALLS_PER_ENTITY) {
+            try {
+              await zoho.delay(300);
+              const detail = await zoho.getInvoice(invoice.invoice_id);
+              apiCalls++;
+              detailCalls++;
+              lineItems = (detail.invoice.line_items || []).map((li) => ({
+                name: li.name, sku: li.sku, quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
+              }));
+              salesPerson = (detail.invoice as Record<string, unknown>).salesperson_name as string || "";
+            } catch {
+              errors.push(`Invoice ${invoice.invoice_number}: detail fetch skipped`);
+            }
+          } else {
+            errors.push(`Invoice ${invoice.invoice_number}: line items skipped (API budget cap)`);
           }
 
           await prisma.zohoPullPreview.create({
@@ -252,7 +305,7 @@ export async function POST(req: NextRequest) {
       return successResponse({ step: "invoices", invoicesNew, apiCalls, errors });
     }
 
-    // ─── FINALIZE: create pull log, update sync ───
+    // ─── FINALIZE ───
     if (step === "finalize") {
       const { itemsNew = 0, contactsNew = 0, billsNew = 0, invoicesNew = 0, apiCalls = 0, allErrors = [] } = body as {
         itemsNew?: number; contactsNew?: number; billsNew?: number; invoicesNew?: number;
@@ -273,7 +326,6 @@ export async function POST(req: NextRequest) {
 
       const totalNew = contactsNew + itemsNew + billsNew + invoicesNew;
 
-      // Update sync log
       const syncLog = await prisma.syncLog.findFirst({
         where: { status: "running", syncType: "cron-pull" },
         orderBy: { startedAt: "desc" },
