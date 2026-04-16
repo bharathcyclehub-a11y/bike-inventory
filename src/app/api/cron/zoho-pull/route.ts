@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
 
     // ─── STEP 1: Items — list only, no detail calls ───
     try {
-      const items = await zoho.listAllItems(undefined, lastSyncAt);
+      const items = await zoho.listAllItems("active", lastSyncAt);
       apiCalls += Math.ceil(items.length / 200) || 1;
 
       for (const item of items) {

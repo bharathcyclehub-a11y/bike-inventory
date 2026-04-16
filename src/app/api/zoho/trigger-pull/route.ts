@@ -86,8 +86,8 @@ export async function POST(req: NextRequest) {
       const errors: string[] = [];
 
       try {
-        // fullImport: pull ALL items (no date filter). Normal: only recently modified.
-        const items = await zoho.listAllItems(undefined, fullImport ? undefined : lastSyncAt);
+        // Always pull only active items. fullImport skips date filter to get all 5000+.
+        const items = await zoho.listAllItems("active", fullImport ? undefined : lastSyncAt);
         apiCalls += Math.ceil(items.length / 200) || 1;
 
         for (const item of items) {
