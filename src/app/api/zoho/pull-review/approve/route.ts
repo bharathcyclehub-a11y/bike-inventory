@@ -10,7 +10,9 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireAuth(["ADMIN", "SUPERVISOR"]);
     const body = await req.json();
-    const { pullId, action, entityType } = body as { pullId: string; action: "approve" | "reject"; entityType?: string };
+    const { pullId, action, entityType, previewIds } = body as {
+      pullId: string; action: "approve" | "reject"; entityType?: string; previewIds?: string[];
+    };
 
     if (!pullId || !["approve", "reject"].includes(action)) {
       return errorResponse("pullId and action (approve/reject) required", 400);
@@ -22,9 +24,14 @@ export async function POST(req: NextRequest) {
       return errorResponse(`Pull already ${pullLog.status.toLowerCase()}`, 400);
     }
 
-    // Optional entity filter: approve/reject only specific type (e.g. "invoice")
-    const previewFilter: { pullId: string; status: string; entityType?: string } = { pullId, status: "PENDING" };
-    if (entityType) previewFilter.entityType = entityType;
+    // Filter: specific IDs > entity type > all pending
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let previewFilter: any = { pullId, status: "PENDING" };
+    if (previewIds && previewIds.length > 0) {
+      previewFilter = { pullId, status: "PENDING", id: { in: previewIds } };
+    } else if (entityType) {
+      previewFilter.entityType = entityType;
+    }
 
     const previews = await prisma.zohoPullPreview.findMany({ where: previewFilter });
 

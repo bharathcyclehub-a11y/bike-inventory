@@ -72,6 +72,7 @@ export default function PullReviewPage() {
   const [acting, setActing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [expandedSection, setExpandedSection] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   function fetchData() {
     setLoading(true);
@@ -107,6 +108,56 @@ export default function PullReviewPage() {
         } else {
           setResult("Pull rejected — no data written.");
         }
+        fetchData();
+      } else {
+        setResult(`Error: ${json.error}`);
+      }
+    } catch {
+      setResult("Something went wrong");
+    } finally {
+      setActing(false);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll(section: string) {
+    if (!data?.latest) return;
+    const items = data.latest.previews[section as keyof typeof data.latest.previews] || [];
+    const allSelected = items.every((p) => selectedIds.has(p.id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      for (const p of items) {
+        if (allSelected) next.delete(p.id); else next.add(p.id);
+      }
+      return next;
+    });
+  }
+
+  async function handleApproveSelected() {
+    if (!data?.latest?.pullId || selectedIds.size === 0) return;
+    if (!confirm(`Import ${selectedIds.size} selected records?`)) return;
+
+    setActing(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/zoho/pull-review/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pullId: data.latest.pullId, action: "approve", previewIds: Array.from(selectedIds) }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        const d = json.data;
+        const imported = d.contacts + d.items + d.bills + d.invoices;
+        setResult(`Imported ${imported} selected records${d.remainingPending > 0 ? ` (${d.remainingPending} still pending)` : ""}${d.errors?.length ? ` (${d.errors.length} errors)` : ""}`);
+        setSelectedIds(new Set());
         fetchData();
       } else {
         setResult(`Error: ${json.error}`);
@@ -309,74 +360,125 @@ export default function PullReviewPage() {
             </CardContent>
           </Card>
 
-          {/* Expanded section — preview items */}
+          {/* Expanded section — preview items with checkboxes */}
           {expandedSection && (
             <Card className="mb-4">
               <CardContent className="p-3">
-                <h3 className="text-sm font-bold text-slate-900 mb-2 capitalize">{expandedSection} ({latest.previews[expandedSection as keyof typeof latest.previews].length})</h3>
-                <div className="space-y-1.5 max-h-80 overflow-y-auto">
-                  {latest.previews[expandedSection as keyof typeof latest.previews].map((p) => {
-                    const d = p.data;
-                    return (
-                      <div key={p.id} className="p-2 rounded-lg border border-slate-100 bg-slate-50/50">
-                        {p.entityType === "contact" && (
-                          <>
-                            <p className="text-sm font-medium text-slate-900">{String(d.name)}</p>
-                            <p className="text-xs text-slate-500">
-                              {d.phone ? `📞 ${d.phone}` : ""} {d.gstin ? `| GSTIN: ${d.gstin}` : ""}
-                            </p>
-                          </>
-                        )}
-                        {p.entityType === "item" && (
-                          <>
-                            <p className="text-sm font-medium text-slate-900">{String(d.name)}</p>
-                            <p className="text-xs text-slate-500">
-                              SKU: {String(d.sku)} | Cost: ₹{Number(d.costPrice).toLocaleString("en-IN")} | Sell: ₹{Number(d.sellingPrice).toLocaleString("en-IN")} | GST: {String(d.gstRate)}%
-                            </p>
-                          </>
-                        )}
-                        {p.entityType === "bill" && (
-                          <>
-                            <p className="text-sm font-medium text-slate-900">Bill #{String(d.billNumber)}</p>
-                            <p className="text-xs text-slate-500">
-                              Vendor: {String(d.vendorName)} | ₹{Number(d.total).toLocaleString("en-IN")}
-                            </p>
-                            {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>)?.length > 0 && (
-                              <div className="mt-1 pl-2 border-l-2 border-slate-200 space-y-0.5">
-                                {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>).map((li, idx) => (
-                                  <p key={idx} className="text-[11px] text-slate-600">
-                                    {li.name} {li.sku ? `(${li.sku})` : ""} — Qty: {li.quantity} × ₹{li.rate.toLocaleString("en-IN")}
-                                  </p>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        )}
-                        {p.entityType === "invoice" && (
-                          <>
-                            <p className="text-sm font-medium text-slate-900">Invoice #{String(d.invoiceNumber)}</p>
-                            <p className="text-xs text-slate-500">
-                              {String(d.customerName)} | ₹{Number(d.total).toLocaleString("en-IN")}
-                              {d.salesPerson ? ` | Sales: ${d.salesPerson}` : ""}
-                            </p>
-                            {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>)?.length > 0 && (
-                              <div className="mt-1 pl-2 border-l-2 border-slate-200 space-y-0.5">
-                                {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>).map((li, idx) => (
-                                  <p key={idx} className="text-[11px] text-slate-600">
-                                    {li.name} {li.sku ? `(${li.sku})` : ""} — Qty: {li.quantity} × ₹{li.rate.toLocaleString("en-IN")}
-                                  </p>
-                                ))}
-                              </div>
-                            )}
-                          </>
+                {(() => {
+                  const sectionItems = latest.previews[expandedSection as keyof typeof latest.previews];
+                  const sectionSelectedCount = sectionItems.filter((p) => selectedIds.has(p.id)).length;
+                  const allSelected = sectionItems.length > 0 && sectionSelectedCount === sectionItems.length;
+                  return (
+                    <>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          {isPending && sectionItems.length > 0 && (
+                            <input
+                              type="checkbox"
+                              checked={allSelected}
+                              onChange={() => toggleSelectAll(expandedSection)}
+                              className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            />
+                          )}
+                          <h3 className="text-sm font-bold text-slate-900 capitalize">{expandedSection} ({sectionItems.length})</h3>
+                        </div>
+                        {isPending && sectionSelectedCount > 0 && (
+                          <Button
+                            size="sm"
+                            className="text-xs bg-green-600 hover:bg-green-700"
+                            onClick={handleApproveSelected}
+                            disabled={acting}
+                          >
+                            {acting ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <CheckCircle2 className="h-3 w-3 mr-1" />}
+                            Import {sectionSelectedCount} Selected
+                          </Button>
                         )}
                       </div>
-                    );
-                  })}
-                  {latest.previews[expandedSection as keyof typeof latest.previews].length === 0 && (
-                    <p className="text-xs text-slate-400 text-center py-4">No new {expandedSection} in this pull</p>
-                  )}
-                </div>
+                      <div className="space-y-1.5 max-h-80 overflow-y-auto">
+                        {sectionItems.map((p) => {
+                          const d = p.data;
+                          return (
+                            <div
+                              key={p.id}
+                              className={`p-2 rounded-lg border transition-colors cursor-pointer ${
+                                selectedIds.has(p.id) ? "border-blue-300 bg-blue-50/50" : "border-slate-100 bg-slate-50/50"
+                              }`}
+                              onClick={() => isPending && toggleSelect(p.id)}
+                            >
+                              <div className="flex items-start gap-2">
+                                {isPending && (
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedIds.has(p.id)}
+                                    onChange={() => toggleSelect(p.id)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                  />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  {p.entityType === "contact" && (
+                                    <>
+                                      <p className="text-sm font-medium text-slate-900">{String(d.name)}</p>
+                                      <p className="text-xs text-slate-500">
+                                        {d.phone ? `Phone: ${d.phone}` : ""} {d.gstin ? `| GSTIN: ${d.gstin}` : ""}
+                                      </p>
+                                    </>
+                                  )}
+                                  {p.entityType === "item" && (
+                                    <>
+                                      <p className="text-sm font-medium text-slate-900">{String(d.name)}</p>
+                                      <p className="text-xs text-slate-500">
+                                        SKU: {String(d.sku)} | Cost: ₹{Number(d.costPrice).toLocaleString("en-IN")} | Sell: ₹{Number(d.sellingPrice).toLocaleString("en-IN")} | GST: {String(d.gstRate)}%
+                                      </p>
+                                    </>
+                                  )}
+                                  {p.entityType === "bill" && (
+                                    <>
+                                      <p className="text-sm font-medium text-slate-900">Bill #{String(d.billNumber)}</p>
+                                      <p className="text-xs text-slate-500">
+                                        Vendor: {String(d.vendorName)} | ₹{Number(d.total).toLocaleString("en-IN")}
+                                      </p>
+                                      {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>)?.length > 0 && (
+                                        <div className="mt-1 pl-2 border-l-2 border-slate-200 space-y-0.5">
+                                          {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>).map((li, idx) => (
+                                            <p key={idx} className="text-[11px] text-slate-600">
+                                              {li.name} {li.sku ? `(${li.sku})` : ""} — Qty: {li.quantity} × ₹{li.rate.toLocaleString("en-IN")}
+                                            </p>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                  {p.entityType === "invoice" && (
+                                    <>
+                                      <p className="text-sm font-medium text-slate-900">Invoice #{String(d.invoiceNumber)}</p>
+                                      <p className="text-xs text-slate-500">
+                                        {String(d.customerName)} | ₹{Number(d.total).toLocaleString("en-IN")}
+                                        {d.salesPerson ? ` | Sales: ${d.salesPerson}` : ""}
+                                      </p>
+                                      {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>)?.length > 0 && (
+                                        <div className="mt-1 pl-2 border-l-2 border-slate-200 space-y-0.5">
+                                          {(d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>).map((li, idx) => (
+                                            <p key={idx} className="text-[11px] text-slate-600">
+                                              {li.name} {li.sku ? `(${li.sku})` : ""} — Qty: {li.quantity} × ₹{li.rate.toLocaleString("en-IN")}
+                                            </p>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {sectionItems.length === 0 && (
+                          <p className="text-xs text-slate-400 text-center py-4">No new {expandedSection} in this pull</p>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
               </CardContent>
             </Card>
           )}
