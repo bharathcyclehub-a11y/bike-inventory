@@ -173,10 +173,15 @@ export default function BillsPage() {
         }),
       }).then(r => r.json());
       if (!res.success) throw new Error(res.error || "Import failed");
+      const imported = res.data?.bills || 0;
+      const errors = res.data?.errors || [];
       setFetchStep("idle");
       setBillPreviews([]);
       setSelectedBills(new Set());
       fetchData();
+      if (errors.length > 0) {
+        setFetchError(`Imported ${imported} bill(s). Warnings: ${errors.join("; ")}`);
+      }
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Import failed");
       setFetchStep("selecting");

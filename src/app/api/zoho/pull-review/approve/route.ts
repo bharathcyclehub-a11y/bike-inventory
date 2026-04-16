@@ -115,13 +115,18 @@ export async function POST(req: NextRequest) {
         } else if (preview.entityType === "bill") {
           const lineItems = (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];
 
-          // Find vendor
-          const vendor = await prisma.vendor.findFirst({
+          // Find vendor — auto-create if not found
+          let vendor = await prisma.vendor.findFirst({
             where: { name: { equals: String(d.vendorName), mode: "insensitive" } },
           });
           if (!vendor) {
-            results.errors.push(`Bill ${d.billNumber}: vendor "${d.vendorName}" not found`);
-            continue;
+            const code = String(d.vendorName || "")
+              .replace(/[^a-zA-Z0-9]/g, "")
+              .substring(0, 6)
+              .toUpperCase() + String(Date.now()).slice(-4);
+            vendor = await prisma.vendor.create({
+              data: { name: String(d.vendorName), code },
+            });
           }
 
           // Dedup
@@ -147,12 +152,11 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Block if any line items don't have matching products
+          // Warn about missing items but still create the bill
           if (missingItems.length > 0) {
             results.errors.push(
-              `Bill ${d.billNumber}: ${missingItems.length} item(s) not found — import them first: ${missingItems.slice(0, 5).join(", ")}${missingItems.length > 5 ? ` +${missingItems.length - 5} more` : ""}`
+              `Bill ${d.billNumber}: ${missingItems.length} item(s) not in catalog (bill created, inwards skipped for these): ${missingItems.slice(0, 3).join(", ")}${missingItems.length > 3 ? ` +${missingItems.length - 3} more` : ""}`
             );
-            continue;
           }
 
           // Calculate due date: use Zoho's dueDate unless it equals billDate (missing), then use vendor's payment terms
