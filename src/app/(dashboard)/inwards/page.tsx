@@ -145,17 +145,19 @@ export default function InwardsPage() {
       setFetchPullId(pullId);
 
       setFetchProgress("Pulling bills from Zoho...");
-      const now = new Date();
-      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       const billRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "bills", pullId, fromDate: monthStart }),
+        body: JSON.stringify({ step: "bills", pullId, fromDate: yesterday }),
       }, 30000).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
 
       const src = billRes.data.source === "inventory" ? "Zoho Inventory" : billRes.data.source === "pos" ? "Zakya" : "Zoho Books";
-      setFetchProgress(`Found ${billRes.data.billsNew || 0} new bills from ${src}, saving...`);
-      await fetchWithTimeout("/api/zoho/trigger-pull", {
+      const billsFound = billRes.data.billsNew || 0;
+      setFetchProgress(`Found ${billsFound} new bills from ${src}, saving...`);
+
+      // Finalize — create pull log (check response!)
+      const finalizeRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           step: "finalize", pullId,
@@ -163,6 +165,10 @@ export default function InwardsPage() {
           allErrors: billRes.data.errors || [],
         }),
       }).then(r => r.json());
+      if (!finalizeRes.success) {
+        console.warn("Finalize failed:", finalizeRes.error);
+        // Continue anyway — pull-review can find previews without pullLog
+      }
 
       setFetchProgress("Loading preview...");
       const previewRes = await fetchWithTimeout(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
@@ -176,7 +182,8 @@ export default function InwardsPage() {
       const billErrors = billRes.data.errors || [];
       if (billItems.length === 0) {
         const errDetail = billErrors.length > 0 ? `: ${billErrors.join("; ")}` : "";
-        setFetchError(`No new bills found (${src})${errDetail}`);
+        const debugInfo = billsFound > 0 ? ` (${billsFound} found from API but 0 in preview — check finalize)` : "";
+        setFetchError(`No new bills found (${src})${errDetail}${debugInfo}`);
       } else if (billErrors.length > 0) {
         setFetchError(`Warnings: ${billErrors.join("; ")}`);
       }

@@ -12,20 +12,27 @@ export async function GET(req: NextRequest) {
 
     const pullIdParam = req.nextUrl.searchParams.get("pullId");
 
-    // Find the target pull
+    // Find the target pull log (may not exist if finalize failed)
     const targetPull = pullIdParam
       ? await prisma.zohoPullLog.findUnique({ where: { pullId: pullIdParam } })
       : await prisma.zohoPullLog.findFirst({ orderBy: { createdAt: "desc" } });
 
-    if (!targetPull) {
+    // Even if no pullLog found, check for preview records directly by pullId
+    const effectivePullId = pullIdParam || targetPull?.pullId;
+
+    if (!effectivePullId) {
       return successResponse({ latest: null, history: [], previews: [] });
     }
 
-    // Preview items for target pull
+    // Preview items — query by pullId directly (works even if pullLog missing)
     const previews = await prisma.zohoPullPreview.findMany({
-      where: { pullId: targetPull.pullId },
+      where: { pullId: effectivePullId },
       orderBy: { createdAt: "asc" },
     });
+
+    if (!targetPull && previews.length === 0) {
+      return successResponse({ latest: null, history: [], previews: [] });
+    }
 
     const grouped = {
       contacts: previews.filter((p) => p.entityType === "contact"),
@@ -41,10 +48,9 @@ export async function GET(req: NextRequest) {
     });
 
     return successResponse({
-      latest: {
-        ...targetPull,
-        previews: grouped,
-      },
+      latest: targetPull
+        ? { ...targetPull, previews: grouped }
+        : { pullId: effectivePullId, previews: grouped, status: "PENDING_REVIEW" },
       previews,
       history,
     });

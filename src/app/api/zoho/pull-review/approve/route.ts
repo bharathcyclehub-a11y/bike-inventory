@@ -18,8 +18,16 @@ export async function POST(req: NextRequest) {
       return errorResponse("pullId and action (approve/reject) required", 400);
     }
 
-    const pullLog = await prisma.zohoPullLog.findUnique({ where: { pullId } });
-    if (!pullLog) return errorResponse("Pull not found", 404);
+    // Find or auto-create pullLog (handles case where finalize step failed)
+    let pullLog = await prisma.zohoPullLog.findUnique({ where: { pullId } });
+    if (!pullLog) {
+      // Check that previews exist for this pullId before creating log
+      const previewCount = await prisma.zohoPullPreview.count({ where: { pullId } });
+      if (previewCount === 0) return errorResponse("Pull not found", 404);
+      pullLog = await prisma.zohoPullLog.create({
+        data: { pullId, billsNew: previewCount, apiCallsUsed: 0 },
+      });
+    }
     if (pullLog.status !== "PENDING_REVIEW" && pullLog.status !== "PARTIAL") {
       return errorResponse(`Pull already ${pullLog.status.toLowerCase()}`, 400);
     }

@@ -120,13 +120,15 @@ export default function BillsPage() {
       setFetchProgress("Pulling bills from Zoho...");
       const billRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "bills", pullId, fromDate: "2026-04-01" }),
+        body: JSON.stringify({ step: "bills", pullId, fromDate: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10) }),
       }, 30000).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
 
       const src = billRes.data.source === "inventory" ? "Zoho Inventory" : billRes.data.source === "pos" ? "Zakya" : "Zoho Books";
-      setFetchProgress(`Found ${billRes.data.billsNew || 0} new bills from ${src}, saving...`);
-      await fetchWithTimeout("/api/zoho/trigger-pull", {
+      const billsFound = billRes.data.billsNew || 0;
+      setFetchProgress(`Found ${billsFound} new bills from ${src}, saving...`);
+
+      const finalizeRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           step: "finalize", pullId,
@@ -134,6 +136,9 @@ export default function BillsPage() {
           allErrors: billRes.data.errors || [],
         }),
       }).then(r => r.json());
+      if (!finalizeRes.success) {
+        console.warn("Finalize failed:", finalizeRes.error);
+      }
 
       setFetchProgress("Loading preview...");
       const previewRes = await fetchWithTimeout(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
@@ -147,7 +152,8 @@ export default function BillsPage() {
       const billErrors = billRes.data.errors || [];
       if (billItems.length === 0) {
         const errDetail = billErrors.length > 0 ? `: ${billErrors.join("; ")}` : "";
-        setFetchError(`No new bills found (${src})${errDetail}`);
+        const debugInfo = billsFound > 0 ? ` (${billsFound} found from API but 0 in preview — check finalize)` : "";
+        setFetchError(`No new bills found (${src})${errDetail}${debugInfo}`);
       } else if (billErrors.length > 0) {
         setFetchError(`Warnings: ${billErrors.join("; ")}`);
       }
