@@ -225,22 +225,39 @@ export async function POST(req: NextRequest) {
       return successResponse({ step: "contacts", source: "books", contactsNew, apiCalls, errors });
     }
 
-    // ─── BILLS: via Zoho Books ───
+    // ─── BILLS: via Zakya POS (fallback Books) ───
     if (step === "bills") {
       let billsNew = 0;
       let apiCalls = 0;
       let detailCalls = 0;
       const errors: string[] = [];
+      let source = "none";
 
       try {
-        const zoho = new ZohoClient();
-        const booksReady = await zoho.init();
-        if (!booksReady) {
-          return successResponse({ step: "bills", source: "skipped", billsNew: 0, apiCalls: 0, errors: ["Books not connected"] });
+        // Try Zakya POS first, then fallback to Books
+        const zakya = new ZakyaClient();
+        const posReady = await zakya.init();
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let client: any = null;
+        if (posReady) {
+          client = zakya;
+          source = "pos";
+        } else {
+          const zoho = new ZohoClient();
+          const booksReady = await zoho.init();
+          if (booksReady) {
+            client = zoho;
+            source = "books";
+          }
+        }
+
+        if (!client) {
+          return successResponse({ step: "bills", source: "skipped", billsNew: 0, apiCalls: 0, errors: ["No source connected for bills"] });
         }
 
         const billsFromDate = fromDate || todayStr;
-        const bills = await zoho.listAllBills(billsFromDate, todayStr);
+        const bills = await client.listAllBills(billsFromDate, todayStr);
         apiCalls += Math.ceil(bills.length / 200) || 1;
 
         const newBills: typeof bills = [];
@@ -256,11 +273,11 @@ export async function POST(req: NextRequest) {
 
           if (detailCalls < MAX_DETAIL_CALLS_PER_ENTITY) {
             try {
-              await zoho.delay(300);
-              const detail = await zoho.getBill(bill.bill_id);
+              await client.delay(300);
+              const detail = await client.getBill(bill.bill_id);
               apiCalls++;
               detailCalls++;
-              lineItems = (detail.bill.line_items || []).map((li) => ({
+              lineItems = (detail.bill.line_items || []).map((li: { name: string; sku: string; quantity: number; rate: number; item_total: number }) => ({
                 name: li.name, sku: li.sku, quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
               }));
             } catch {
@@ -293,7 +310,7 @@ export async function POST(req: NextRequest) {
         errors.push(`Bills: ${e instanceof Error ? e.message : "Unknown"}`);
       }
 
-      return successResponse({ step: "bills", source: "books", billsNew, apiCalls, errors });
+      return successResponse({ step: "bills", source, billsNew, apiCalls, errors });
     }
 
     // ─── INVOICES: via Zakya POS (fallback Books) ───

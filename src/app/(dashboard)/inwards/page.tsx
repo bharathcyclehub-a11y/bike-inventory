@@ -129,11 +129,12 @@ export default function InwardsPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
-      // Pull today's bills
-      const today = new Date().toISOString().split("T")[0];
+      // Pull bills from 1st of current month
+      const now = new Date();
+      const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-01`;
       const billRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "bills", pullId, fromDate: today }),
+        body: JSON.stringify({ step: "bills", pullId, fromDate: monthStart }),
       }).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
 
@@ -154,7 +155,7 @@ export default function InwardsPage() {
         setBillPreviews(billItems);
         setSelectedBills(new Set(billItems.map((b: ZohoBillPreview) => b.id)));
         setFetchStep(billItems.length > 0 ? "selecting" : "idle");
-        if (billItems.length === 0) setFetchError("No new bills found for today");
+        if (billItems.length === 0) setFetchError("No new bills found this month");
       }
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
@@ -280,7 +281,7 @@ export default function InwardsPage() {
           <CardContent className="p-3">
             <div className="flex items-center justify-between mb-2">
               <p className="text-xs font-semibold text-blue-800">
-                {billPreviews.length} new bill{billPreviews.length !== 1 ? "s" : ""} from Zoho (today)
+                {billPreviews.length} new bill{billPreviews.length !== 1 ? "s" : ""} from Zoho (this month)
               </p>
               <div className="flex gap-2">
                 <button onClick={() => { setFetchStep("idle"); setBillPreviews([]); }}

@@ -120,6 +120,73 @@ export class ZakyaClient {
     return data as T;
   }
 
+  // ---- Bills (Purchases) ----
+
+  async listBills(page = 1, dateFrom?: string, dateTo?: string) {
+    const dateParam = dateFrom ? `&date_start=${dateFrom}` : "";
+    const dateEndParam = dateTo ? `&date_end=${dateTo}` : "";
+    return this.apiCall<{
+      bills: Array<{
+        bill_id: string;
+        bill_number: string;
+        vendor_name: string;
+        vendor_id: string;
+        date: string;
+        due_date: string;
+        total: number;
+        balance: number;
+        status: string;
+      }>;
+      page_context?: { has_more_page: boolean };
+    }>("GET", `/bills?page=${page}&per_page=200${dateParam}${dateEndParam}`);
+  }
+
+  async listAllBills(dateFrom?: string, dateTo?: string) {
+    const all: Array<{
+      bill_id: string;
+      bill_number: string;
+      vendor_name: string;
+      vendor_id: string;
+      date: string;
+      due_date: string;
+      total: number;
+      balance: number;
+      status: string;
+    }> = [];
+    let page = 1;
+    while (true) {
+      const data = await this.listBills(page, dateFrom, dateTo);
+      all.push(...(data.bills || []));
+      if (!data.page_context?.has_more_page) break;
+      page++;
+    }
+    return all;
+  }
+
+  async getBill(billId: string) {
+    return this.apiCall<{
+      bill: {
+        bill_id: string;
+        bill_number: string;
+        vendor_name: string;
+        date: string;
+        due_date: string;
+        total: number;
+        balance: number;
+        status: string;
+        line_items: Array<{
+          line_item_id: string;
+          item_id: string;
+          name: string;
+          sku: string;
+          quantity: number;
+          rate: number;
+          item_total: number;
+        }>;
+      };
+    }>("GET", `/bills/${billId}`);
+  }
+
   // ---- Invoices (Sales) ----
 
   async listInvoices(page = 1, dateFrom?: string, dateTo?: string) {
