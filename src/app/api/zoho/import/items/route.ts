@@ -26,10 +26,10 @@ export async function POST() {
     const errors: string[] = [];
 
     // We need a default category and brand for imported items
-    let defaultCategory = await prisma.category.findFirst({ where: { name: "Imported" } });
+    let defaultCategory = await prisma.category.findFirst({ where: { name: "General" } });
     if (!defaultCategory) {
       defaultCategory = await prisma.category.create({
-        data: { name: "Imported", description: "Items imported from Zoho" },
+        data: { name: "General", description: "General items" },
       });
     }
 

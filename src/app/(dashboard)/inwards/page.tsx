@@ -112,6 +112,7 @@ export default function InwardsPage() {
     const params = new URLSearchParams({ limit: "100" });
     const dateFrom = getDateFrom(dateFilter);
     if (dateFrom) params.set("dateFrom", dateFrom);
+    if (role === "INWARDS_CLERK") params.set("excludeStockCounts", "true");
 
     fetch(`/api/inventory/inwards?${params}`)
       .then((r) => r.json())
@@ -148,13 +149,13 @@ export default function InwardsPage() {
       setFetchPullId(pullId);
 
       const searchTerm = billSearch.trim();
-      setFetchProgress(searchTerm ? `Searching "${searchTerm}" in Zoho...` : "Pulling bills from Zoho (last 24h)...");
-      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      setFetchProgress(searchTerm ? `Searching "${searchTerm}" in Zoho...` : "Pulling bills from Zoho (this month)...");
+      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
       const billRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           step: "bills", pullId,
-          ...(searchTerm ? { searchText: searchTerm } : { fromDate: yesterday }),
+          ...(searchTerm ? { searchText: searchTerm } : { fromDate: monthStart }),
         }),
       }, 60000).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
@@ -490,6 +491,12 @@ export default function InwardsPage() {
                       <span className="text-[10px] text-slate-400">{totalItems} items</span>
                     </div>
                   </button>
+                  {hasUnverified && group.ref !== "No Reference" && (
+                    <Link href={`/inwards/putaway?ref=${encodeURIComponent(group.ref)}`}
+                      className="flex items-center gap-1 ml-8 mt-1 text-[10px] font-medium text-blue-600 hover:text-blue-800">
+                      <CheckCircle2 className="h-3 w-3" /> Putaway &amp; Verify All
+                    </Link>
+                  )}
 
                   {/* Expanded Content */}
                   {isExpanded && (

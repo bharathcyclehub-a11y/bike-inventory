@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
                   hsnCode: String(item.hsn_or_sac || ""),
                   stockOnHand: Number(item.stock_on_hand || 0),
                   productType: String(item.product_type || item.item_type || ""),
+                  brand: String(item.brand || item.manufacturer || ""),
                 },
               },
             });
@@ -159,6 +160,7 @@ export async function POST(req: NextRequest) {
                     hsnCode: String(zohoItem.hsn_or_sac || ""),
                     stockOnHand: Number(zohoItem.stock_on_hand || 0),
                     productType: String(zohoItem.product_type || zohoItem.item_type || ""),
+                    brand: String(item.brand || item.manufacturer || ""),
                   },
                 },
               });

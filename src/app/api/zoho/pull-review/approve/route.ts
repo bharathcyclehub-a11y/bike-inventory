@@ -64,9 +64,9 @@ export async function POST(req: NextRequest) {
     const results = { contacts: 0, items: 0, bills: 0, invoices: 0, errors: [] as string[] };
 
     // Default category/brand for new items
-    let defaultCategory = await prisma.category.findFirst({ where: { name: "Imported" } });
+    let defaultCategory = await prisma.category.findFirst({ where: { name: "General" } });
     if (!defaultCategory) {
-      defaultCategory = await prisma.category.create({ data: { name: "Imported", description: "Items imported from Zoho" } });
+      defaultCategory = await prisma.category.create({ data: { name: "General", description: "General items" } });
     }
     let defaultBrand = await prisma.brand.findFirst({ where: { name: "Imported" } });
     if (!defaultBrand) {
@@ -104,12 +104,23 @@ export async function POST(req: NextRequest) {
           const exists = await prisma.product.findFirst({ where: { sku } });
           if (exists) continue;
 
+          // Resolve brand from Zoho data (free — comes from list API)
+          let itemBrandId = defaultBrand.id;
+          const zohoBrand = String(d.brand || "").trim();
+          if (zohoBrand) {
+            let brand = await prisma.brand.findFirst({ where: { name: { equals: zohoBrand, mode: "insensitive" } } });
+            if (!brand) {
+              brand = await prisma.brand.create({ data: { name: zohoBrand } });
+            }
+            itemBrandId = brand.id;
+          }
+
           await prisma.product.create({
             data: {
               sku,
               name: String(d.name),
               categoryId: defaultCategory.id,
-              brandId: defaultBrand.id,
+              brandId: itemBrandId,
               type: "SPARE_PART",
               costPrice: Number(d.costPrice || 0),
               sellingPrice: Number(d.sellingPrice || 0),

@@ -119,13 +119,13 @@ export default function BillsPage() {
       setFetchPullId(pullId);
 
       const searchTerm = billSearch.trim();
-      setFetchProgress(searchTerm ? `Searching "${searchTerm}" in Zoho...` : "Pulling bills from Zoho (last 24h)...");
-      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      setFetchProgress(searchTerm ? `Searching "${searchTerm}" in Zoho...` : "Pulling bills from Zoho (this month)...");
+      const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
       const billRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           step: "bills", pullId,
-          ...(searchTerm ? { searchText: searchTerm } : { fromDate: yesterday }),
+          ...(searchTerm ? { searchText: searchTerm } : { fromDate: monthStart }),
         }),
       }, 60000).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");

@@ -28,6 +28,7 @@ interface CEOData {
   todayOutwards: number;
   // Service
   openTickets: number;
+  openVendorIssues: number;
   // Lists
   overdueBillsList: Array<{ id: string; billNo: string; amount: number; paidAmount: number; dueDate: string; vendor: { name: string } }>;
   insights: Array<{ type: string; title: string; severity: string; value: number }>;
@@ -53,8 +54,9 @@ function AdminDashboard() {
       safeFetch(`/api/inventory/outwards?dateFrom=${today}&limit=1`),
       safeFetch("/api/service-tickets/stats"),
       safeFetch("/api/health/summary"),
+      safeFetch("/api/vendor-issues?limit=1"),
     ])
-      .then(([accountsRes, insightsRes, inwardsRes, outwardsRes, ticketsRes, healthRes]) => {
+      .then(([accountsRes, insightsRes, inwardsRes, outwardsRes, ticketsRes, healthRes, issuesRes]) => {
         const acct = accountsRes.success ? accountsRes.data : null;
         const insightData = insightsRes.success ? insightsRes.data : [];
         const stockValueInsight = insightData.find((i: { type: string }) => i.type === "stock_value");
@@ -70,6 +72,7 @@ function AdminDashboard() {
           todayInwards: inwardsRes.success ? (inwardsRes.pagination?.total || 0) : 0,
           todayOutwards: outwardsRes.success ? (outwardsRes.pagination?.total || 0) : 0,
           openTickets: ticketsRes.success ? (ticketsRes.data?.totalOpen || 0) : 0,
+          openVendorIssues: issuesRes.success ? (issuesRes.pagination?.total || 0) : 0,
           overdueBillsList: acct?.overdueBillsList || [],
           insights: insightData.filter((i: { type: string }) => i.type !== "stock_value" && i.type !== "reorder"),
           people: healthRes.success ? (healthRes.data?.people || []) : [],
@@ -146,7 +149,7 @@ function AdminDashboard() {
       </div>
 
       {/* Operations + Service Row */}
-      <div className="grid grid-cols-3 gap-2 mt-3">
+      <div className="grid grid-cols-2 gap-2 mt-3">
         <Link href="/reorder">
           <Card>
             <CardContent className="p-2.5 text-center">
@@ -162,6 +165,15 @@ function AdminDashboard() {
               <Flag className="h-4 w-4 text-orange-500 mx-auto mb-0.5" />
               <p className="text-base font-bold text-slate-900">{data.openTickets}</p>
               <p className="text-[9px] text-slate-500">Open Tickets</p>
+            </CardContent>
+          </Card>
+        </Link>
+        <Link href="/vendor-issues">
+          <Card className={data.openVendorIssues > 0 ? "border-red-200" : ""}>
+            <CardContent className="p-2.5 text-center">
+              <ShieldAlert className="h-4 w-4 text-red-500 mx-auto mb-0.5" />
+              <p className="text-base font-bold text-slate-900">{data.openVendorIssues}</p>
+              <p className="text-[9px] text-slate-500">Vendor Issues</p>
             </CardContent>
           </Card>
         </Link>

@@ -31,6 +31,10 @@ export async function GET(req: NextRequest) {
           id: true, name: true, code: true, city: true, phone: true,
           whatsappNumber: true, isActive: true, paymentTermDays: true,
           _count: { select: { purchaseOrders: true, bills: true } },
+          bills: {
+            where: { status: { not: "PAID" } },
+            select: { amount: true, paidAmount: true },
+          },
         },
         orderBy: { name: "asc" },
         skip,
@@ -39,7 +43,14 @@ export async function GET(req: NextRequest) {
       prisma.vendor.count({ where }),
     ]);
 
-    return paginatedResponse(vendors, total, page, limit);
+    // Compute outstanding balance per vendor
+    const vendorsWithBalance = vendors.map((v) => {
+      const balance = v.bills.reduce((sum, b) => sum + (b.amount - b.paidAmount), 0);
+      const { bills: _bills, ...rest } = v;
+      return { ...rest, outstandingBalance: balance };
+    });
+
+    return paginatedResponse(vendorsWithBalance, total, page, limit);
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch vendors", 500);

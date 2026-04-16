@@ -61,7 +61,7 @@ function getTabsForRole(role: Role): TabConfig[] {
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/expenses", label: "Expenses", icon: Receipt, key: "expenses" },
-        { href: "/accounts", label: "Accounts", icon: Building2, key: "accounts" },
+        { href: "/vendor-issues", label: "Issues", icon: Building2, key: "vendor-issues" },
         { href: "/stock-audit", label: "Audit", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];

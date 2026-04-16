@@ -33,6 +33,7 @@ interface VendorItem {
   whatsappNumber?: string;
   isActive: boolean;
   paymentTermDays: number;
+  outstandingBalance: number;
   _count: { purchaseOrders: number; bills: number };
 }
 
@@ -285,15 +286,17 @@ export default function VendorsPage() {
                         <p className="text-sm font-medium text-slate-900">{v.name}</p>
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5 ml-6">
-                        {v.code} {v.city ? `| ${v.city}` : ""}
+                        {v.city || "—"} {v._count.purchaseOrders > 0 || v._count.bills > 0 ? `| ${v._count.purchaseOrders} POs | ${v._count.bills} Bills` : ""}
                       </p>
                       <div className="flex items-center gap-2 mt-1.5 ml-6">
                         <Badge variant={v.isActive ? "success" : "default"}>
                           {v.isActive ? "Active" : "Inactive"}
                         </Badge>
-                        <span className="text-xs text-slate-400">
-                          {v._count.purchaseOrders} POs | {v._count.bills} Bills
-                        </span>
+                        {v.outstandingBalance > 0 && (
+                          <span className="text-xs font-medium text-red-600">
+                            ₹{v.outstandingBalance.toLocaleString("en-IN")} due
+                          </span>
+                        )}
                       </div>
                     </div>
                     {v.phone && (

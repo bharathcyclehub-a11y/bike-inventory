@@ -62,19 +62,19 @@ const menuItems: MenuItem[] = [
     label: "Bills & Payments",
     icon: FileText,
     href: "/bills",
-    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR"],
   },
   {
     label: "Record Payment",
     icon: CreditCard,
     href: "/payments/new",
-    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR"],
   },
   {
     label: "Receivables",
     icon: HandCoins,
     href: "/receivables",
-    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR"],
   },
   {
     label: "Vendor Issues",
@@ -98,7 +98,7 @@ const menuItems: MenuItem[] = [
     label: "Expenses",
     icon: Receipt,
     href: "/expenses",
-    roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"],
+    roles: ["ADMIN", "SUPERVISOR"],
   },
   {
     label: "Transfers",
@@ -140,6 +140,12 @@ const menuItems: MenuItem[] = [
     label: "Bins & Locations",
     icon: Warehouse,
     href: "/more/bins",
+    roles: ["ADMIN"],
+  },
+  {
+    label: "Brand Management",
+    icon: Settings,
+    href: "/more/brands",
     roles: ["ADMIN"],
   },
   {

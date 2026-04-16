@@ -15,6 +15,8 @@ export async function GET(req: NextRequest) {
     const dateTo = searchParams.get("dateTo");
     const mine = searchParams.get("mine") === "true";
 
+    const excludeStockCounts = searchParams.get("excludeStockCounts") === "true";
+
     const where = {
       type: "INWARD" as const,
       ...((dateFrom || dateTo) && {
@@ -24,6 +26,7 @@ export async function GET(req: NextRequest) {
         },
       }),
       ...(mine && { userId: user.id }),
+      ...(excludeStockCounts && { NOT: { notes: { contains: "[STOCK_COUNT]" } } }),
     };
 
     const [transactions, total] = await Promise.all([

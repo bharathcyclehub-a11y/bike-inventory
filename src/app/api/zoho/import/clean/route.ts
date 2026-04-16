@@ -49,10 +49,10 @@ export async function POST() {
     });
 
     // Step 4: Ensure default category exists
-    let defaultCategory = await prisma.category.findFirst({ where: { name: "Imported" } });
+    let defaultCategory = await prisma.category.findFirst({ where: { name: "General" } });
     if (!defaultCategory) {
       defaultCategory = await prisma.category.create({
-        data: { name: "Imported", description: "Items imported from Zoho" },
+        data: { name: "General", description: "General items" },
       });
     }
 
