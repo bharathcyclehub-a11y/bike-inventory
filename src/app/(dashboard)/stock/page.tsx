@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { Search, MapPin, Loader2, SlidersHorizontal, ChevronDown, RefreshCw } from "lucide-react";
+import { useSession } from "next-auth/react";
+import { Search, MapPin, Loader2, SlidersHorizontal, ChevronDown, RefreshCw, CheckSquare, Square, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -69,6 +70,10 @@ function getStockBadge(p: ProductItem) {
 }
 
 export default function StockPage() {
+  const { data: session } = useSession();
+  const userRole = (session?.user as { role?: string })?.role || "";
+  const canBulkEdit = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(userRole);
+
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -87,6 +92,64 @@ export default function StockPage() {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Bulk select mode
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkAction, setBulkAction] = useState<"" | "brand" | "status">("");
+  const [bulkBrandId, setBulkBrandId] = useState("");
+  const [bulkStatus, setBulkStatus] = useState<"ACTIVE" | "INACTIVE">("INACTIVE");
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState("");
+
+  function toggleSelect(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function selectAll() {
+    setSelectedIds(new Set(filtered.map((p) => p.id)));
+  }
+
+  function deselectAll() {
+    setSelectedIds(new Set());
+  }
+
+  function exitSelectMode() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+    setBulkAction("");
+    setBulkMessage("");
+  }
+
+  async function handleBulkApply() {
+    if (selectedIds.size === 0) return;
+    setBulkLoading(true);
+    setBulkMessage("");
+    try {
+      const body: Record<string, unknown> = { productIds: Array.from(selectedIds) };
+      if (bulkAction === "brand" && bulkBrandId) body.brandId = bulkBrandId;
+      if (bulkAction === "status") body.status = bulkStatus;
+
+      const res = await fetch("/api/products/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }).then((r) => r.json());
+
+      if (!res.success) throw new Error(res.error || "Update failed");
+      setBulkMessage(`Updated ${res.data.updated} products`);
+      exitSelectMode();
+      fetchProducts(1);
+    } catch (e) {
+      setBulkMessage(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setBulkLoading(false);
+    }
+  }
 
   // Fetch brands + categories + bins once
   useEffect(() => {
@@ -180,14 +243,40 @@ export default function StockPage() {
     <div>
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
-        <h1 className="text-lg font-bold text-slate-900">Stock</h1>
+        <h1 className="text-lg font-bold text-slate-900">
+          {selectMode ? `${selectedIds.size} selected` : "Stock"}
+        </h1>
         <div className="flex items-center gap-2">
-          <ExportButtons
-            onExcel={() => exportToExcel(filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
-            onPDF={() => exportToPDF("Stock Inventory", filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
-          />
+          {canBulkEdit && !selectMode && (
+            <button
+              onClick={() => setSelectMode(true)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200"
+            >
+              <CheckSquare className="h-3.5 w-3.5" /> Select
+            </button>
+          )}
+          {selectMode && (
+            <button onClick={exitSelectMode}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white">
+              <X className="h-3.5 w-3.5" /> Cancel
+            </button>
+          )}
+          {!selectMode && (
+            <ExportButtons
+              onExcel={() => exportToExcel(filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
+              onPDF={() => exportToPDF("Stock Inventory", filtered as unknown as Record<string, unknown>[], STOCK_COLUMNS, "stock-inventory")}
+            />
+          )}
         </div>
       </div>
+
+      {/* Bulk success/error message */}
+      {bulkMessage && (
+        <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-2.5 mb-2">
+          <span className="text-xs text-green-700 font-medium">{bulkMessage}</span>
+          <button onClick={() => setBulkMessage("")} className="text-green-500"><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
 
       {/* Quick Views */}
       <div className="flex gap-2 mb-3">
@@ -333,40 +422,66 @@ export default function StockPage() {
         </div>
       ) : (
         <div className="space-y-2">
+          {/* Select all / deselect all in select mode */}
+          {selectMode && filtered.length > 0 && (
+            <div className="flex items-center gap-2 mb-1">
+              <button onClick={selectedIds.size === filtered.length ? deselectAll : selectAll}
+                className="text-xs text-blue-600 font-medium">
+                {selectedIds.size === filtered.length ? "Deselect All" : `Select All (${filtered.length})`}
+              </button>
+            </div>
+          )}
+
           {filtered.map((p) => {
             const badge = getStockBadge(p);
-            return (
-              <Link key={p.id} href={`/stock/${p.id}`}>
-                <Card className="hover:border-slate-300 transition-colors mb-2">
-                  <CardContent className="p-3">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1 min-w-0 mr-3">
-                        <p className="text-sm font-medium text-slate-900">{p.name}</p>
-                        <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                          <span className="text-xs text-slate-400">{p.sku}</span>
-                          {p.brand && (
-                            <span className="text-xs font-medium text-blue-600">{p.brand.name}</span>
-                          )}
-                          {p.category && (
-                            <span className="text-xs text-slate-400">{p.category.name}</span>
-                          )}
-                          {p.size && (
-                            <Badge variant="default" className="text-[9px] py-0">{p.size}</Badge>
-                          )}
-                        </div>
-                        {p.bin && (
-                          <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-0.5">
-                            <MapPin className="h-3 w-3" />{p.bin.code} — {p.bin.location}
-                          </p>
+            const isSelected = selectedIds.has(p.id);
+            const content = (
+              <Card className={`transition-colors mb-2 ${selectMode && isSelected ? "border-blue-400 bg-blue-50/30" : "hover:border-slate-300"}`}>
+                <CardContent className="p-3">
+                  <div className="flex items-start justify-between">
+                    {selectMode && (
+                      <div className="mr-2.5 pt-0.5 shrink-0">
+                        {isSelected
+                          ? <CheckSquare className="h-5 w-5 text-blue-600" />
+                          : <Square className="h-5 w-5 text-slate-300" />}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0 mr-3">
+                      <p className="text-sm font-medium text-slate-900">{p.name}</p>
+                      <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                        <span className="text-xs text-slate-400">{p.sku}</span>
+                        {p.brand && (
+                          <span className="text-xs font-medium text-blue-600">{p.brand.name}</span>
+                        )}
+                        {p.category && (
+                          <span className="text-xs text-slate-400">{p.category.name}</span>
+                        )}
+                        {p.size && (
+                          <Badge variant="default" className="text-[9px] py-0">{p.size}</Badge>
                         )}
                       </div>
-                      <div className="text-right shrink-0">
-                        <p className={`text-xl font-bold ${getStockColor(p)}`}>{p.currentStock}</p>
-                        <Badge variant={badge.variant} className="text-[10px]">{badge.label}</Badge>
-                      </div>
+                      {p.bin && (
+                        <p className="text-[11px] text-slate-400 mt-1 flex items-center gap-0.5">
+                          <MapPin className="h-3 w-3" />{p.bin.code} — {p.bin.location}
+                        </p>
+                      )}
                     </div>
-                  </CardContent>
-                </Card>
+                    <div className="text-right shrink-0">
+                      <p className={`text-xl font-bold ${getStockColor(p)}`}>{p.currentStock}</p>
+                      <Badge variant={badge.variant} className="text-[10px]">{badge.label}</Badge>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+
+            return selectMode ? (
+              <div key={p.id} onClick={() => toggleSelect(p.id)} className="cursor-pointer">
+                {content}
+              </div>
+            ) : (
+              <Link key={p.id} href={`/stock/${p.id}`}>
+                {content}
               </Link>
             );
           })}
@@ -384,6 +499,79 @@ export default function StockPage() {
       {!loading && filtered.length === 0 && (
         <div className="text-center py-12">
           <p className="text-sm text-slate-400">No products found</p>
+        </div>
+      )}
+
+      {/* Floating Bulk Action Bar */}
+      {selectMode && selectedIds.size > 0 && (
+        <div className="fixed bottom-16 left-0 right-0 z-50 px-3">
+          <div className="max-w-lg mx-auto bg-slate-900 text-white rounded-xl shadow-lg p-3 space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold">{selectedIds.size} product{selectedIds.size !== 1 ? "s" : ""} selected</p>
+              <button onClick={exitSelectMode} className="text-slate-400 hover:text-white"><X className="h-4 w-4" /></button>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => setBulkAction("brand")}
+                className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors ${
+                  bulkAction === "brand" ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                }`}
+              >
+                Change Brand
+              </button>
+              <button
+                onClick={() => setBulkAction("status")}
+                className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors ${
+                  bulkAction === "status" ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                }`}
+              >
+                Change Status
+              </button>
+            </div>
+
+            {bulkAction === "brand" && (
+              <div className="flex gap-2">
+                <select
+                  value={bulkBrandId}
+                  onChange={(e) => setBulkBrandId(e.target.value)}
+                  className="flex-1 h-9 rounded-lg bg-slate-700 border-0 px-2 text-xs text-white focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select brand...</option>
+                  {brands.filter((b) => b.name !== "Imported").map((b) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleBulkApply}
+                  disabled={!bulkBrandId || bulkLoading}
+                  className="px-4 py-2 bg-blue-600 rounded-lg text-xs font-medium disabled:opacity-50"
+                >
+                  {bulkLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
+                </button>
+              </div>
+            )}
+
+            {bulkAction === "status" && (
+              <div className="flex gap-2">
+                <select
+                  value={bulkStatus}
+                  onChange={(e) => setBulkStatus(e.target.value as "ACTIVE" | "INACTIVE")}
+                  className="flex-1 h-9 rounded-lg bg-slate-700 border-0 px-2 text-xs text-white focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="INACTIVE">Set Inactive</option>
+                  <option value="ACTIVE">Set Active</option>
+                </select>
+                <button
+                  onClick={handleBulkApply}
+                  disabled={bulkLoading}
+                  className="px-4 py-2 bg-red-600 rounded-lg text-xs font-medium disabled:opacity-50"
+                >
+                  {bulkLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
