@@ -72,7 +72,8 @@ interface ZohoInvoicePreview {
 export default function DeliveriesPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canFetchInvoices = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const canFetchInvoices = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER", "OUTWARDS_CLERK"].includes(role);
+  const isAdmin = role === "ADMIN";
 
   const [deliveries, setDeliveries] = useState<DeliveryItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -89,6 +90,8 @@ export default function DeliveriesPage() {
   const [fetchPullId, setFetchPullId] = useState("");
   const [invoiceSearch, setInvoiceSearch] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [fetchProgress, setFetchProgress] = useState("");
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -159,9 +162,27 @@ export default function DeliveriesPage() {
     } finally { setDeleting(null); }
   };
 
+  const handleBulkDelete = async () => {
+    if (!confirm(`Delete ALL ${deliveries.length} deliveries in current view? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    setFetchError("");
+    try {
+      let deleted = 0;
+      for (const d of deliveries) {
+        const res = await fetch(`/api/deliveries/${d.id}`, { method: "DELETE" }).then(r => r.json());
+        if (res.success) deleted++;
+      }
+      setFetchError(`Deleted ${deleted} of ${deliveries.length} deliveries`);
+      fetchData();
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : "Bulk delete failed");
+    } finally { setBulkDeleting(false); }
+  };
+
   const handleFetchInvoices = async () => {
     setFetchStep("fetching");
     setFetchError("");
+    setFetchProgress("Connecting to Zoho...");
     try {
       // Step 1: Init
       const initRes = await fetch("/api/zoho/trigger-pull", {
@@ -175,6 +196,7 @@ export default function DeliveriesPage() {
       // Step 2: Pull invoices only (last 24h or by search)
       const searchTerm = invoiceSearch.trim();
       const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      setFetchProgress(searchTerm ? `Searching for "${searchTerm}"...` : "Pulling invoices (last 24h)...");
       const invRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -185,6 +207,8 @@ export default function DeliveriesPage() {
       if (!invRes.success) throw new Error(invRes.error || "Invoice fetch failed");
 
       // Step 3: Finalize
+      const invFound = invRes.data.invoicesNew || 0;
+      setFetchProgress(`Found ${invFound} invoice${invFound !== 1 ? "s" : ""}. Finalizing...`);
       await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -195,6 +219,7 @@ export default function DeliveriesPage() {
       }).then(r => r.json()).catch(() => {});
 
       // Step 4: Load previews
+      setFetchProgress("Loading preview...");
       const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
       if (previewRes.success) {
         const invoices = (previewRes.data.previews || []).filter(
@@ -203,7 +228,6 @@ export default function DeliveriesPage() {
         setInvoicePreviews(invoices);
         setSelectedInvoices(new Set(invoices.map((inv: ZohoInvoicePreview) => inv.id)));
         setFetchStep(invoices.length > 0 ? "selecting" : "idle");
-        const invFound = invRes.data.invoicesNew || 0;
         if (invoices.length === 0) {
           setFetchError(invFound > 0 ? `${invFound} found but already imported` : `No new invoices found${searchTerm ? ` for "${searchTerm}"` : " (last 24h)"}`);
         }
@@ -211,6 +235,8 @@ export default function DeliveriesPage() {
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
       setFetchStep("idle");
+    } finally {
+      setFetchProgress("");
     }
   };
 
@@ -258,21 +284,30 @@ export default function DeliveriesPage() {
     <div>
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Deliveries</h1>
-        {canFetchInvoices && (
-          <div className="flex items-center gap-1">
-            <input
-              type="text" placeholder="Invoice no..." value={invoiceSearch}
-              onChange={(e) => setInvoiceSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleFetchInvoices()}
-              className="w-24 px-2 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400"
-            />
-            <button onClick={handleFetchInvoices} disabled={fetchStep === "fetching" || fetchStep === "importing"}
-              className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
-              {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-              {fetchStep === "fetching" ? "Fetching..." : invoiceSearch.trim() ? "Search" : "Fetch Invoices"}
+        <div className="flex items-center gap-1">
+          {isAdmin && deliveries.length > 0 && (
+            <button onClick={handleBulkDelete} disabled={bulkDeleting}
+              className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-50">
+              {bulkDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+              {bulkDeleting ? "Deleting..." : `Del All (${deliveries.length})`}
             </button>
-          </div>
-        )}
+          )}
+          {canFetchInvoices && (
+            <>
+              <input
+                type="text" placeholder="Invoice no..." value={invoiceSearch}
+                onChange={(e) => setInvoiceSearch(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleFetchInvoices()}
+                className="w-24 px-2 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400"
+              />
+              <button onClick={handleFetchInvoices} disabled={fetchStep === "fetching" || fetchStep === "importing"}
+                className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+                {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+                {fetchStep === "fetching" ? "Fetching..." : invoiceSearch.trim() ? "Search" : "Fetch"}
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Stats Row */}
@@ -314,6 +349,14 @@ export default function DeliveriesPage() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
         <Input placeholder="Search invoice, customer..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
       </div>
+
+      {/* Fetch Progress */}
+      {fetchStep === "fetching" && fetchProgress && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
+          <span className="text-xs text-blue-700 font-medium">{fetchProgress}</span>
+        </div>
+      )}
 
       {/* Fetch Error */}
       {fetchError && (

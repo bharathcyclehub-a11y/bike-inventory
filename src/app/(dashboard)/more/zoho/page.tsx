@@ -843,7 +843,7 @@ export default function ZohoSettingsPage() {
 }
 
 function CleanupSection() {
-  const [preview, setPreview] = useState<{ transactions: number; vendorBills: number; previews: number } | null>(null);
+  const [preview, setPreview] = useState<{ transactions: number; verifiedTransactions: number; vendorBills: number; previews: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState("");
 
@@ -856,15 +856,21 @@ function CleanupSection() {
     setLoading(false);
   }
 
-  async function runCleanup() {
-    if (!confirm("This will permanently delete all Zoho-imported inward/outward entries and vendor bills. Stock count entries will NOT be touched. Continue?")) return;
+  async function runCleanup(reverse: boolean) {
+    const msg = reverse
+      ? "This will DELETE all Zoho transactions/bills AND REVERSE stock changes (undo all verified putaway). Stock counts are preserved. Continue?"
+      : "This will DELETE all Zoho transactions/bills but KEEP current stock levels. Continue?";
+    if (!confirm(msg)) return;
     setLoading(true);
     setResult("");
     try {
-      const res = await fetch("/api/inventory/cleanup", { method: "DELETE" }).then((r) => r.json());
+      const res = await fetch(`/api/inventory/cleanup?reverse=${reverse}`, { method: "DELETE" }).then((r) => r.json());
       if (res.success) {
         const d = res.data.deleted;
-        setResult(`Deleted ${d.transactions} transactions, ${d.vendorBills} vendor bills, ${d.previews} previews, ${d.pullLogs} pull logs`);
+        setResult(
+          `Deleted ${d.transactions} transactions, ${d.vendorBills} bills, ${d.previews} previews, ${d.pullLogs} pull logs` +
+          (res.data.reversed ? ` | Reversed stock on ${res.data.stockReversals} items` : " | Stock kept as-is")
+        );
         setPreview(null);
       } else {
         setResult(res.error || "Failed");
@@ -880,18 +886,28 @@ function CleanupSection() {
       <CardContent className="p-3">
         <h2 className="text-sm font-semibold text-red-700 mb-1">Cleanup Zoho Imports</h2>
         <p className="text-[10px] text-slate-500 mb-2">
-          Delete all Zoho-imported inward/outward transactions and vendor bills. Stock count entries are preserved.
+          Delete all Zoho-imported transactions and vendor bills. Stock count entries are preserved.
         </p>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button size="sm" variant="outline" onClick={loadPreview} disabled={loading} className="text-xs h-7">
             {loading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null} Preview
           </Button>
           {preview && (
-            <Button size="sm" variant="destructive" onClick={runCleanup} disabled={loading} className="text-xs h-7">
-              Delete {preview.transactions} transactions + {preview.vendorBills} bills
-            </Button>
+            <>
+              <Button size="sm" variant="destructive" onClick={() => runCleanup(true)} disabled={loading} className="text-xs h-7">
+                Delete & Reverse Stock ({preview.verifiedTransactions} verified)
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => runCleanup(false)} disabled={loading} className="text-xs h-7 border-red-200 text-red-600">
+                Delete & Keep Stock
+              </Button>
+            </>
           )}
         </div>
+        {preview && (
+          <p className="text-[10px] text-slate-400 mt-1">
+            {preview.transactions} transactions ({preview.verifiedTransactions} verified) | {preview.vendorBills} bills | {preview.previews} previews
+          </p>
+        )}
         {result && <p className="text-xs text-green-700 mt-2">{result}</p>}
       </CardContent>
     </Card>

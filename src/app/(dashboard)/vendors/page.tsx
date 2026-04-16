@@ -63,6 +63,7 @@ export default function VendorsPage() {
   const [selectedVendors, setSelectedVendors] = useState<Set<string>>(new Set());
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
+  const [fetchProgress, setFetchProgress] = useState("");
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -86,6 +87,7 @@ export default function VendorsPage() {
   const handleFetchVendors = async () => {
     setFetchStep("fetching");
     setFetchError("");
+    setFetchProgress("Connecting to Zoho...");
     try {
       const initRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -95,12 +97,15 @@ export default function VendorsPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
+      setFetchProgress("Pulling vendors from Zoho...");
       const contactRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "contacts", pullId }),
       }).then(r => r.json());
       if (!contactRes.success) throw new Error(contactRes.error || "Contacts fetch failed");
 
+      const found = contactRes.data.contactsNew || 0;
+      setFetchProgress(`Found ${found} vendor${found !== 1 ? "s" : ""}. Finalizing...`);
       await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -110,6 +115,7 @@ export default function VendorsPage() {
         }),
       });
 
+      setFetchProgress("Loading preview...");
       const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
       if (previewRes.success) {
         const contactItems = (previewRes.data.previews || []).filter(
@@ -123,6 +129,8 @@ export default function VendorsPage() {
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
       setFetchStep("idle");
+    } finally {
+      setFetchProgress("");
     }
   };
 
@@ -183,6 +191,14 @@ export default function VendorsPage() {
           </Link>
         </div>
       </div>
+
+      {/* Fetch Progress */}
+      {fetchStep === "fetching" && fetchProgress && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
+          <span className="text-xs text-blue-700 font-medium">{fetchProgress}</span>
+        </div>
+      )}
 
       {/* Fetch Error */}
       {fetchError && (

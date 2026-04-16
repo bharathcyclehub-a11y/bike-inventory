@@ -59,6 +59,7 @@ export default function ReceivablesPage() {
   const [selectedInvoices, setSelectedInvoices] = useState<Set<string>>(new Set());
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
+  const [fetchProgress, setFetchProgress] = useState("");
 
   // Summary stats
   const totalOutstanding = invoices.reduce((sum, inv) => sum + Math.max(0, inv.amount - inv.paidAmount), 0);
@@ -88,6 +89,7 @@ export default function ReceivablesPage() {
   const handleFetchInvoices = async () => {
     setFetchStep("fetching");
     setFetchError("");
+    setFetchProgress("Connecting to Zoho...");
     try {
       // Step 1: Init
       const initRes = await fetch("/api/zoho/trigger-pull", {
@@ -105,6 +107,7 @@ export default function ReceivablesPage() {
       }
 
       // Step 2: Pull invoices from April 1
+      setFetchProgress("Pulling unpaid invoices from Apr 1...");
       const invRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "invoices", pullId, fromDate: "2026-04-01" }),
@@ -113,7 +116,6 @@ export default function ReceivablesPage() {
 
       // Check if source was skipped
       if (invRes.data.source === "skipped") {
-        // Still finalize to clean up
         await fetch("/api/zoho/trigger-pull", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ step: "finalize", pullId, invoicesNew: 0, apiCalls: 0, allErrors: invRes.data.errors || [] }),
@@ -122,6 +124,8 @@ export default function ReceivablesPage() {
       }
 
       // Step 3: Finalize
+      const found = invRes.data.invoicesNew || 0;
+      setFetchProgress(`Found ${found} invoice${found !== 1 ? "s" : ""}. Finalizing...`);
       await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -132,6 +136,7 @@ export default function ReceivablesPage() {
       });
 
       // Step 4: Load previews — filter for unpaid invoices
+      setFetchProgress("Loading preview...");
       const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
       if (previewRes.success) {
         const invPreviews = (previewRes.data.previews || []).filter(
@@ -146,6 +151,8 @@ export default function ReceivablesPage() {
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
       setFetchStep("idle");
+    } finally {
+      setFetchProgress("");
     }
   };
 
@@ -231,6 +238,14 @@ export default function ReceivablesPage() {
           </button>
         )}
       </div>
+
+      {/* Fetch Progress */}
+      {fetchStep === "fetching" && fetchProgress && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
+          <span className="text-xs text-blue-700 font-medium">{fetchProgress}</span>
+        </div>
+      )}
 
       {/* Fetch Error */}
       {fetchError && (

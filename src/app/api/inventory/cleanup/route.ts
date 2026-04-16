@@ -1,27 +1,48 @@
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
+import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
-// DELETE — remove all Zoho-imported inward/outward transactions
-// Keeps stock count entries (referenceNo starting with "BCH-" or from stock count approve)
-export async function DELETE() {
+// DELETE — remove all Zoho-imported transactions + optionally reverse stock
+// Query param: ?reverse=true (default) reverses stock, ?reverse=false keeps stock
+export async function DELETE(req: NextRequest) {
   try {
     await requireAuth(["ADMIN"]);
 
-    // Delete inward/outward transactions that came from Zoho (have [ZOHO] in notes)
+    const reverseStock = req.nextUrl.searchParams.get("reverse") !== "false";
+    let stockReversals = 0;
+
+    if (reverseStock) {
+      // Find all VERIFIED Zoho transactions and reverse stock changes
+      const verifiedTransactions = await prisma.inventoryTransaction.findMany({
+        where: {
+          notes: { contains: "[ZOHO][VERIFIED]" },
+        },
+        select: { id: true, productId: true, quantity: true, type: true },
+      });
+
+      // Reverse stock for each verified transaction
+      for (const tx of verifiedTransactions) {
+        const delta = tx.type === "INWARD" ? -tx.quantity : tx.quantity;
+        await prisma.product.update({
+          where: { id: tx.productId },
+          data: { currentStock: { increment: delta } },
+        });
+        stockReversals++;
+      }
+    }
+
+    // Delete all Zoho transactions
     const zohoTransactions = await prisma.inventoryTransaction.deleteMany({
-      where: {
-        notes: { contains: "[ZOHO]" },
-      },
+      where: { notes: { contains: "[ZOHO]" } },
     });
 
-    // Also delete vendor bills that were imported from Zoho pulls
+    // Delete vendor bills
     const zohoBills = await prisma.vendorBill.deleteMany({
-      where: {
-        billNo: { not: "" }, // all bills (they all came from Zoho)
-      },
+      where: { billNo: { not: "" } },
     });
 
     // Clean up pull previews and logs
@@ -35,6 +56,8 @@ export async function DELETE() {
         previews: previews.count,
         pullLogs: pullLogs.count,
       },
+      stockReversals,
+      reversed: reverseStock,
     });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
@@ -51,13 +74,17 @@ export async function GET() {
       where: { notes: { contains: "[ZOHO]" } },
     });
 
-    const vendorBills = await prisma.vendorBill.count();
+    const verifiedTransactions = await prisma.inventoryTransaction.count({
+      where: { notes: { contains: "[ZOHO][VERIFIED]" } },
+    });
 
+    const vendorBills = await prisma.vendorBill.count();
     const previews = await prisma.zohoPullPreview.count();
 
     return successResponse({
       wouldDelete: {
         transactions: zohoTransactions,
+        verifiedTransactions,
         vendorBills,
         previews,
       },

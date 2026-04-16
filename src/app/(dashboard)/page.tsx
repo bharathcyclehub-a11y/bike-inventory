@@ -640,22 +640,24 @@ function PurchaseManagerDashboard() {
 }
 
 function AccountsManagerDashboard() {
-  const [stats, setStats] = useState<{ expenses30d: number; payable: number; overdueBills: number; pendingAudits: number } | null>(null);
+  const [stats, setStats] = useState<{ openIssues: number; pendingAudits: number; openTickets: number; expenses30d: number } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const safeFetch = (url: string) => fetch(url).then((r) => r.ok ? r.json() : { success: false }).catch(() => ({ success: false }));
     Promise.all([
-      safeFetch("/api/accounts/summary"),
+      safeFetch("/api/vendor-issues?status=OPEN&limit=1"),
       safeFetch("/api/stock-counts?status=PENDING&limit=1"),
+      safeFetch("/api/service-tickets/stats"),
+      safeFetch("/api/accounts/summary"),
     ])
-      .then(([accountsRes, auditsRes]) => {
+      .then(([issuesRes, auditsRes, ticketsRes, accountsRes]) => {
         const acct = accountsRes.success ? accountsRes.data : null;
         setStats({
-          expenses30d: acct?.stats?.totalExpenses30d || 0,
-          payable: acct?.stats?.outstandingPayable || 0,
-          overdueBills: acct?.stats?.overdueBills || 0,
+          openIssues: issuesRes.success ? (issuesRes.pagination?.total || 0) : 0,
           pendingAudits: auditsRes.success ? (auditsRes.pagination?.total || 0) : 0,
+          openTickets: ticketsRes.success ? (ticketsRes.data?.totalOpen || 0) : 0,
+          expenses30d: acct?.stats?.totalExpenses30d || 0,
         });
       })
       .catch(() => {})
@@ -670,10 +672,10 @@ function AccountsManagerDashboard() {
   }
   return (
     <div className="grid grid-cols-2 gap-3">
-      <Link href="/expenses"><DashboardCard label="Expenses (30d)" value={formatINR(stats.expenses30d)} icon={IndianRupee} color="bg-green-100 text-green-700" /></Link>
-      <Link href="/accounts"><DashboardCard label="Outstanding Payable" value={formatINR(stats.payable)} icon={IndianRupee} color="bg-red-100 text-red-600" /></Link>
-      <Link href="/bills"><DashboardCard label="Overdue Bills" value={stats.overdueBills} icon={AlertTriangle} color="bg-amber-100 text-amber-600" /></Link>
+      <Link href="/vendor-issues"><DashboardCard label="Vendor Issues" value={stats.openIssues} icon={ShieldAlert} color={stats.openIssues > 0 ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"} /></Link>
       <Link href="/stock-audit"><DashboardCard label="Pending Audits" value={stats.pendingAudits} icon={Package} color="bg-blue-100 text-blue-700" /></Link>
+      <Link href="/service"><DashboardCard label="Open Service" value={stats.openTickets} icon={Flag} color={stats.openTickets > 0 ? "bg-orange-100 text-orange-600" : "bg-green-100 text-green-600"} /></Link>
+      <Link href="/expenses"><DashboardCard label="Expenses (30d)" value={formatINR(stats.expenses30d)} icon={IndianRupee} color="bg-green-100 text-green-700" /></Link>
     </div>
   );
 }

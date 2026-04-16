@@ -82,6 +82,7 @@ export default function StockPage() {
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
+  const [fetchProgress, setFetchProgress] = useState("");
 
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -163,6 +164,7 @@ export default function StockPage() {
   const handleFetchItems = async () => {
     setFetchStep("fetching");
     setFetchError("");
+    setFetchProgress("Connecting to Zoho...");
     try {
       const initRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -172,27 +174,33 @@ export default function StockPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
+      setFetchProgress("Pulling items from Zoho (this may take a moment)...");
       const itemRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "items", pullId, fullImport: true }),
       }).then(r => r.json());
       if (!itemRes.success) throw new Error(itemRes.error || "Items fetch failed");
 
+      const found = itemRes.data.itemsNew || 0;
+      setFetchProgress(`Found ${found} new item${found !== 1 ? "s" : ""}. Finalizing...`);
       await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "finalize", pullId, itemsNew: itemRes.data.itemsNew, apiCalls: itemRes.data.apiCalls, allErrors: itemRes.data.errors || [] }),
       }).then(r => r.json()).catch(() => {});
 
+      setFetchProgress("Loading preview...");
       const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
       if (!previewRes.success) throw new Error(previewRes.error || "Preview failed");
       const items = (previewRes.data.previews || []).filter((p: { entityType: string; status: string }) => p.entityType === "item" && p.status === "PENDING");
       setItemPreviews(items);
       setSelectedItems(new Set(items.map((i: { id: string }) => i.id)));
       setFetchStep(items.length > 0 ? "selecting" : "idle");
-      if (items.length === 0) setFetchError(`No new items found (${itemRes.data.itemsNew || 0} from Zoho, all already in catalog)`);
+      if (items.length === 0) setFetchError(`No new items found (${found} from Zoho, all already in catalog)`);
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
       setFetchStep("idle");
+    } finally {
+      setFetchProgress("");
     }
   };
 
@@ -380,11 +388,11 @@ export default function StockPage() {
         </div>
       )}
 
-      {/* Fetching indicator */}
-      {fetchStep === "fetching" && (
+      {/* Fetch Progress */}
+      {fetchStep === "fetching" && fetchProgress && (
         <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
-          <span className="text-xs text-blue-700 font-medium">Fetching items from Zoho...</span>
+          <span className="text-xs text-blue-700 font-medium">{fetchProgress}</span>
         </div>
       )}
 

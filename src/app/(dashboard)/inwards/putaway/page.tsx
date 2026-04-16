@@ -187,7 +187,7 @@ export default function PutawayPage() {
   }
 
   return (
-    <div className="pb-28">
+    <div className="pb-40">
       {/* Header */}
       <div className="flex items-center gap-3 mb-4">
         <Link href="/inwards" className="rounded-lg border border-slate-200 p-2 hover:bg-slate-50">
@@ -328,8 +328,8 @@ export default function PutawayPage() {
             </div>
           )}
 
-          {/* Confirm Button — fixed bottom */}
-          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-4 z-40">
+          {/* Confirm Button — fixed above bottom nav */}
+          <div className="fixed bottom-16 left-0 right-0 bg-white border-t border-slate-200 p-4 z-50">
             <Button
               onClick={handleConfirmSelected}
               disabled={submitting || selected.size === 0}
