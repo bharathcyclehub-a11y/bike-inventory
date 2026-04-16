@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { Plus, CheckCircle2, Cloud, Loader2, ArrowDownCircle, Search, Download } from "lucide-react";
+import { Plus, CheckCircle2, Cloud, Loader2, ArrowDownCircle, Search, Download, ChevronRight } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -94,6 +94,7 @@ export default function InwardsPage() {
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [verifying, setVerifying] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   // Fetch Bills from Zoho
   const [fetchStep, setFetchStep] = useState<"idle" | "fetching" | "selecting" | "importing">("idle");
@@ -388,86 +389,113 @@ export default function InwardsPage() {
           ) : filtered.length === 0 ? (
             <p className="text-sm text-slate-400 text-center py-6">No inwards found</p>
           ) : (
-            grouped.map((group) => (
-              <div key={group.ref} className="mb-4 last:mb-0">
-                {/* Invoice Header */}
-                <div className="flex items-center justify-between px-1 py-2 border-b-2 border-slate-200">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-900">{group.ref === "No Reference" ? "Manual Entry" : `Bill: ${group.ref}`}</span>
-                    {group.vendor && <span className="text-[10px] text-slate-500">| {group.vendor}</span>}
-                  </div>
-                  <span className="text-[10px] text-slate-400">{group.date}</span>
-                </div>
+            grouped.map((group) => {
+              const isExpanded = expandedGroups.has(group.ref);
+              const totalItems = group.brands.reduce((sum, bg) => sum + bg.items.length, 0);
+              const totalQtyGroup = group.brands.reduce((sum, bg) => sum + bg.items.reduce((s, t) => s + t.quantity, 0), 0);
+              const hasUnverified = group.brands.some(bg => bg.items.some(t => isZoho(t.notes) && !isVerified(t.notes)));
 
-                {/* Brand Groups */}
-                {group.brands.map((bg) => (
-                  <div key={bg.brand}>
-                    {group.brands.length > 1 && (
-                      <div className="px-1 py-1 bg-slate-50">
-                        <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wide">{bg.brand}</span>
-                      </div>
-                    )}
-                    {bg.items.map((t) => {
-                      const zoho = isZoho(t.notes);
-                      const verified = isVerified(t.notes);
+              return (
+                <div key={group.ref} className="mb-1 last:mb-0">
+                  {/* Collapsible Invoice Header */}
+                  <button
+                    onClick={() => setExpandedGroups(prev => {
+                      const next = new Set(prev);
+                      next.has(group.ref) ? next.delete(group.ref) : next.add(group.ref);
+                      return next;
+                    })}
+                    className="w-full flex items-center gap-2 px-2 py-2.5 bg-slate-50 hover:bg-slate-100 rounded-lg transition-colors"
+                  >
+                    <ChevronRight className={`h-4 w-4 text-slate-400 shrink-0 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                    <div className="flex-1 min-w-0 text-left">
+                      <p className="text-xs font-bold text-slate-900 truncate">
+                        {group.ref === "No Reference" ? "Manual Entry" : `Bill: ${group.ref}`}
+                      </p>
+                      <p className="text-[10px] text-slate-500 truncate">
+                        {group.vendor || "—"} · {group.date}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {hasUnverified && <Badge variant="warning" className="text-[9px] px-1.5 py-0">Pending</Badge>}
+                      <span className="text-xs font-semibold text-blue-600">+{totalQtyGroup}</span>
+                      <span className="text-[10px] text-slate-400">{totalItems} items</span>
+                    </div>
+                  </button>
 
-                      const unverified = zoho && !verified;
-                      const aging = unverified ? getAging(t.createdAt) : null;
-
-                      return (
-                        <div key={t.id} className={`border-b border-slate-100 last:border-0 ${aging ? AGING_COLORS[aging.level] : ""}`}>
-                          <div className="flex items-center gap-3 py-2.5">
-                            <div className={`rounded-full p-2 ${zoho ? "bg-blue-50" : "bg-blue-50"}`}>
-                              {zoho ? (
-                                <Cloud className="h-4 w-4 text-blue-500" />
-                              ) : (
-                                <ArrowDownCircle className="h-4 w-4 text-blue-600" />
-                              )}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-slate-900">{t.product.name}</p>
-                              <p className="text-xs text-slate-500">
-                                {t.product.sku}
-                                {t.product.brand?.name ? ` | ${t.product.brand.name}` : ""}
-                              </p>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <p className="text-sm font-semibold text-blue-600">+{t.quantity}</p>
-                              <p className="text-xs text-slate-400">{formatTime(t.createdAt)}</p>
-                              {aging && aging.level !== "ok" && (
-                                <span className={`inline-block mt-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full ${AGING_BADGE[aging.level]}`}>
-                                  {aging.text}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {zoho && (
-                            <div className="flex items-center justify-between pb-2 pl-12">
-                              {verified ? (
-                                <Badge variant="success" className="text-[10px]">
-                                  <CheckCircle2 className="h-3 w-3 mr-0.5" /> Verified & Stocked
-                                </Badge>
-                              ) : (
-                                <Badge variant="warning" className="text-[10px]">Pending Receipt</Badge>
-                              )}
-                              {!verified && (
-                                <Button size="sm" variant="outline"
-                                  className="h-6 text-[10px] text-green-600 border-green-200 hover:bg-green-50"
-                                  onClick={() => handleVerify(t.id)}
-                                  disabled={verifying === t.id}>
-                                  {verifying === t.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm Receipt"}
-                                </Button>
-                              )}
+                  {/* Expanded Content */}
+                  {isExpanded && (
+                    <div className="ml-2 border-l-2 border-slate-200 pl-2 mt-1">
+                      {group.brands.map((bg) => (
+                        <div key={bg.brand}>
+                          {group.brands.length > 1 && (
+                            <div className="px-1 py-1 bg-slate-50 rounded">
+                              <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-wide">{bg.brand}</span>
                             </div>
                           )}
+                          {bg.items.map((t) => {
+                            const zoho = isZoho(t.notes);
+                            const verified = isVerified(t.notes);
+
+                            const unverified = zoho && !verified;
+                            const aging = unverified ? getAging(t.createdAt) : null;
+
+                            return (
+                              <div key={t.id} className={`border-b border-slate-100 last:border-0 ${aging ? AGING_COLORS[aging.level] : ""}`}>
+                                <div className="flex items-center gap-3 py-2">
+                                  <div className={`rounded-full p-1.5 ${zoho ? "bg-blue-50" : "bg-blue-50"}`}>
+                                    {zoho ? (
+                                      <Cloud className="h-3.5 w-3.5 text-blue-500" />
+                                    ) : (
+                                      <ArrowDownCircle className="h-3.5 w-3.5 text-blue-600" />
+                                    )}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="text-sm font-medium text-slate-900">{t.product.name}</p>
+                                    <p className="text-xs text-slate-500">
+                                      {t.product.sku}
+                                      {t.product.brand?.name ? ` | ${t.product.brand.name}` : ""}
+                                    </p>
+                                  </div>
+                                  <div className="text-right shrink-0">
+                                    <p className="text-sm font-semibold text-blue-600">+{t.quantity}</p>
+                                    <p className="text-xs text-slate-400">{formatTime(t.createdAt)}</p>
+                                    {aging && aging.level !== "ok" && (
+                                      <span className={`inline-block mt-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full ${AGING_BADGE[aging.level]}`}>
+                                        {aging.text}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {zoho && (
+                                  <div className="flex items-center justify-between pb-2 pl-10">
+                                    {verified ? (
+                                      <Badge variant="success" className="text-[10px]">
+                                        <CheckCircle2 className="h-3 w-3 mr-0.5" /> Verified & Stocked
+                                      </Badge>
+                                    ) : (
+                                      <Badge variant="warning" className="text-[10px]">Pending Receipt</Badge>
+                                    )}
+                                    {!verified && (
+                                      <Button size="sm" variant="outline"
+                                        className="h-6 text-[10px] text-green-600 border-green-200 hover:bg-green-50"
+                                        onClick={(e) => { e.stopPropagation(); handleVerify(t.id); }}
+                                        disabled={verifying === t.id}>
+                                        {verifying === t.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Confirm Receipt"}
+                                      </Button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            ))
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </CardContent>
       </Card>
