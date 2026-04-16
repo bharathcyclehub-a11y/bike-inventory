@@ -8,7 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 // POST — approve or reject a pull
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"]);
     const body = await req.json();
     const { pullId, action, entityType, previewIds } = body as {
       pullId: string; action: "approve" | "reject"; entityType?: string; previewIds?: string[];
@@ -131,6 +131,30 @@ export async function POST(req: NextRequest) {
           const total = Number(d.total || 0);
           const balance = Number(d.balance || 0);
 
+          // Pre-check: find all products for line items BEFORE creating bill
+          const missingItems: string[] = [];
+          const matchedProducts: Array<{ li: typeof lineItems[0]; product: { id: string; currentStock: number } }> = [];
+
+          for (const li of lineItems) {
+            const product = await prisma.product.findFirst({
+              where: li.sku ? { sku: li.sku } : { name: { contains: li.name, mode: "insensitive" } },
+              select: { id: true, currentStock: true },
+            });
+            if (!product) {
+              missingItems.push(li.sku ? `${li.name} (SKU: ${li.sku})` : li.name);
+            } else {
+              matchedProducts.push({ li, product });
+            }
+          }
+
+          // Block if any line items don't have matching products
+          if (missingItems.length > 0) {
+            results.errors.push(
+              `Bill ${d.billNumber}: ${missingItems.length} item(s) not found — import them first: ${missingItems.slice(0, 5).join(", ")}${missingItems.length > 5 ? ` +${missingItems.length - 5} more` : ""}`
+            );
+            continue;
+          }
+
           await prisma.vendorBill.create({
             data: {
               billNo: String(d.billNumber),
@@ -143,13 +167,8 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          // Create UNVERIFIED inward transactions for line items
-          for (const li of lineItems) {
-            const product = await prisma.product.findFirst({
-              where: li.sku ? { sku: li.sku } : { name: { contains: li.name, mode: "insensitive" } },
-            });
-            if (!product) continue;
-
+          // Create UNVERIFIED inward transactions for line items (all products verified above)
+          for (const { li, product } of matchedProducts) {
             await prisma.inventoryTransaction.create({
               data: {
                 type: "INWARD",

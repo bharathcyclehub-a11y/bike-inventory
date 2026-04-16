@@ -24,7 +24,7 @@ const MAX_DETAIL_CALLS_PER_ENTITY = 150; // Covers busy days; yesterday-only fil
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"]);
     const body = await req.json();
     const { step, pullId: existingPullId, fullImport } = body as { step: string; pullId?: string; fullImport?: boolean };
 

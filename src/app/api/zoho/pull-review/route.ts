@@ -1,26 +1,29 @@
 export const dynamic = "force-dynamic";
 
+import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
-// GET — latest pull summary + history
-export async function GET() {
+// GET — pull summary (by pullId or latest) + history
+export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"]);
 
-    // Latest pull log
-    const latestPull = await prisma.zohoPullLog.findFirst({
-      orderBy: { createdAt: "desc" },
-    });
+    const pullIdParam = req.nextUrl.searchParams.get("pullId");
 
-    if (!latestPull) {
-      return successResponse({ latest: null, history: [] });
+    // Find the target pull
+    const targetPull = pullIdParam
+      ? await prisma.zohoPullLog.findUnique({ where: { pullId: pullIdParam } })
+      : await prisma.zohoPullLog.findFirst({ orderBy: { createdAt: "desc" } });
+
+    if (!targetPull) {
+      return successResponse({ latest: null, history: [], previews: [] });
     }
 
-    // Preview items for latest pull
+    // Preview items for target pull
     const previews = await prisma.zohoPullPreview.findMany({
-      where: { pullId: latestPull.pullId },
+      where: { pullId: targetPull.pullId },
       orderBy: { createdAt: "asc" },
     });
 
@@ -39,9 +42,10 @@ export async function GET() {
 
     return successResponse({
       latest: {
-        ...latestPull,
+        ...targetPull,
         previews: grouped,
       },
+      previews,
       history,
     });
   } catch (error) {

@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
       prisma.delivery.findMany({
         where,
         include: { verifiedBy: { select: { name: true } } },
-        orderBy: { createdAt: "desc" },
+        orderBy: { invoiceAmount: "desc" },
         skip,
         take: limit,
       }),
