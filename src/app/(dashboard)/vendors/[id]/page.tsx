@@ -3,7 +3,7 @@
 import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Phone, MessageSquare, FileText, CreditCard, Building2, AlertCircle, Check, Loader2 } from "lucide-react";
+import { ArrowLeft, Phone, MessageSquare, FileText, CreditCard, Building2, AlertCircle, Check, Loader2, Power } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -87,9 +87,32 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
           <h1 className="text-lg font-bold text-slate-900">{vendor.name}</h1>
           <p className="text-xs text-slate-500">{vendor.code}</p>
         </div>
-        <Badge variant={vendor.isActive ? "success" : "default"}>
-          {vendor.isActive ? "Active" : "Inactive"}
-        </Badge>
+        {canEditBalance ? (
+          <button
+            onClick={async () => {
+              const newStatus = !vendor.isActive;
+              if (!confirm(`Mark this vendor as ${newStatus ? "Active" : "Inactive"}?`)) return;
+              const res = await fetch(`/api/vendors/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ isActive: newStatus }),
+              }).then(r => r.json());
+              if (res.success) setVendor({ ...vendor, isActive: newStatus });
+            }}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+              vendor.isActive
+                ? "bg-green-100 text-green-700 hover:bg-green-200"
+                : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+            }`}
+          >
+            <Power className="h-3 w-3" />
+            {vendor.isActive ? "Active" : "Inactive"}
+          </button>
+        ) : (
+          <Badge variant={vendor.isActive ? "success" : "default"}>
+            {vendor.isActive ? "Active" : "Inactive"}
+          </Badge>
+        )}
       </div>
 
       {/* Contact Actions */}

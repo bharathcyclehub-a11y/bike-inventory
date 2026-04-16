@@ -3,7 +3,7 @@
 import { use, useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, QrCode, MapPin, Tag, Package, IndianRupee, Pencil, Save, X } from "lucide-react";
+import { ArrowLeft, QrCode, MapPin, Tag, Package, IndianRupee, Pencil, Save, X, Power } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -158,6 +158,28 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       <div className="flex items-center gap-3 mb-4">
         <Link href="/stock" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <h1 className="text-lg font-bold text-slate-900 truncate flex-1">{product.name}</h1>
+        {canEdit && (
+          <button
+            onClick={async () => {
+              const newStatus = product.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+              if (!confirm(`Mark this item as ${newStatus}?`)) return;
+              const res = await fetch(`/api/products/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ status: newStatus }),
+              }).then(r => r.json());
+              if (res.success) setProduct({ ...product, status: newStatus });
+            }}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium shrink-0 transition-colors ${
+              product.status === "ACTIVE"
+                ? "bg-green-100 text-green-700 hover:bg-green-200"
+                : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+            }`}
+          >
+            <Power className="h-3 w-3" />
+            {product.status === "ACTIVE" ? "Active" : "Inactive"}
+          </button>
+        )}
         {canEdit && !editing && (
           <button onClick={startEdit} className="p-2 rounded-lg hover:bg-slate-100">
             <Pencil className="h-4 w-4 text-slate-500" />
