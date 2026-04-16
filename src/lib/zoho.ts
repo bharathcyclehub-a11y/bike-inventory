@@ -147,8 +147,8 @@ export class ZohoClient {
 
   async listItems(page = 1, statusFilter?: string, lastModifiedTime?: string) {
     const statusParam = statusFilter ? `&status=${statusFilter}` : "";
-    // Zoho expects ISO 8601 with timezone: 2026-04-15T00:00:00+0530
-    const modifiedParam = lastModifiedTime ? `&last_modified_time=${lastModifiedTime}T00:00:00+0530` : "";
+    // Zoho expects ISO 8601 with timezone, + must be URL-encoded as %2B
+    const modifiedParam = lastModifiedTime ? `&last_modified_time=${encodeURIComponent(lastModifiedTime + "T00:00:00+0530")}` : "";
     return this.apiCall<{
       items: Array<{
         item_id: string; sku: string; name: string; status?: string;
@@ -247,8 +247,8 @@ export class ZohoClient {
   // ---- Pull/Import from Zoho ----
 
   async listContacts(page = 1, lastModifiedTime?: string) {
-    // Zoho expects ISO 8601 with timezone: 2026-04-15T00:00:00+0530
-    const modifiedParam = lastModifiedTime ? `&last_modified_time=${lastModifiedTime}T00:00:00+0530` : "";
+    // Zoho expects ISO 8601 with timezone, + must be URL-encoded as %2B
+    const modifiedParam = lastModifiedTime ? `&last_modified_time=${encodeURIComponent(lastModifiedTime + "T00:00:00+0530")}` : "";
     return this.apiCall<{
       contacts: Array<{
         contact_id: string;
