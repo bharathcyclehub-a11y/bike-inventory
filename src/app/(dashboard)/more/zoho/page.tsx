@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, Cloud, CloudOff, CheckCircle2, XCircle,
@@ -40,24 +40,13 @@ interface SyncLogEntry {
   completedAt?: string;
 }
 
-interface PullResult {
-  pullId: string;
-  status: string;
-  contactsNew: number;
-  itemsNew: number;
-  billsNew: number;
-  invoicesNew: number;
-  apiCallsUsed: number;
-  errors: string[];
-}
-
 const PULL_STEPS = [
-  { key: "connecting", label: "Connecting", icon: Cloud, duration: 3000 },
-  { key: "items", label: "Items", icon: Package, duration: 8000 },
-  { key: "vendors", label: "Vendors", icon: Users, duration: 6000 },
-  { key: "bills", label: "Bills", icon: FileText, duration: 10000 },
-  { key: "invoices", label: "Invoices", icon: ShoppingCart, duration: 10000 },
-  { key: "saving", label: "Saving", icon: CheckCircle2, duration: 2000 },
+  { key: "init", label: "Connecting", icon: Cloud, apiStep: "init" },
+  { key: "items", label: "Items", icon: Package, apiStep: "items" },
+  { key: "contacts", label: "Vendors", icon: Users, apiStep: "contacts" },
+  { key: "bills", label: "Bills", icon: FileText, apiStep: "bills" },
+  { key: "invoices", label: "Invoices", icon: ShoppingCart, apiStep: "invoices" },
+  { key: "finalize", label: "Saving", icon: CheckCircle2, apiStep: "finalize" },
 ];
 
 export default function ZohoSettingsPage() {
@@ -71,12 +60,12 @@ export default function ZohoSettingsPage() {
 
   // Pull state
   const [pulling, setPulling] = useState(false);
-  const [pullResult, setPullResult] = useState<PullResult | null>(null);
+  const [currentStepIdx, setCurrentStepIdx] = useState(-1);
+  const [stepMessage, setStepMessage] = useState("");
+  const [pullDone, setPullDone] = useState(false);
   const [pullError, setPullError] = useState<string | null>(null);
-  const [currentStep, setCurrentStep] = useState(0);
-  const [progress, setProgress] = useState(0);
-  const stepTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const progressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [pullCounts, setPullCounts] = useState({ itemsNew: 0, contactsNew: 0, billsNew: 0, invoicesNew: 0 });
+  const [pullErrors, setPullErrors] = useState<string[]>([]);
 
   // Setup form
   const [clientId, setClientId] = useState("");
@@ -89,42 +78,6 @@ export default function ZohoSettingsPage() {
     fetchStatus();
     fetchLogs();
   }, []);
-
-  // Animated step progression while pull is running
-  useEffect(() => {
-    if (!pulling) return;
-
-    let stepIdx = 0;
-    setCurrentStep(0);
-    setProgress(0);
-
-    // Progress within each step
-    const progressInterval = setInterval(() => {
-      setProgress((p) => {
-        const stepWeight = 100 / PULL_STEPS.length;
-        const baseProgress = stepIdx * stepWeight;
-        const maxForStep = baseProgress + stepWeight - 2;
-        if (p >= maxForStep) return p;
-        return p + 0.5;
-      });
-    }, 200);
-    progressTimerRef.current = progressInterval;
-
-    // Move to next step on timer
-    function advanceStep() {
-      stepIdx++;
-      if (stepIdx < PULL_STEPS.length) {
-        setCurrentStep(stepIdx);
-        stepTimerRef.current = setTimeout(advanceStep, PULL_STEPS[stepIdx].duration);
-      }
-    }
-    stepTimerRef.current = setTimeout(advanceStep, PULL_STEPS[0].duration);
-
-    return () => {
-      if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
-      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-    };
-  }, [pulling]);
 
   async function fetchStatus() {
     try {
@@ -199,37 +152,107 @@ export default function ZohoSettingsPage() {
     } finally { setImporting(null); }
   }
 
+  async function callStep(step: string, pullId: string, extras?: Record<string, unknown>) {
+    const res = await fetch("/api/zoho/trigger-pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ step, pullId, ...extras }),
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || `Step ${step} failed`);
+    return data.data;
+  }
+
   async function handleTriggerPull() {
     if (!confirm("Pull new data from Zoho into preview for review?")) return;
 
     setPulling(true);
-    setPullResult(null);
+    setPullDone(false);
     setPullError(null);
+    setPullCounts({ itemsNew: 0, contactsNew: 0, billsNew: 0, invoicesNew: 0 });
+    setPullErrors([]);
 
     try {
-      const res = await fetch("/api/zoho/trigger-pull", { method: "POST" });
-      const data = await res.json();
+      // Step 0: Init
+      setCurrentStepIdx(0);
+      setStepMessage("Connecting to Zoho...");
+      const initResult = await callStep("init", "");
+      const pullId = initResult.pullId;
 
-      // Stop animations
-      if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
-      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
+      // Step 1: Items
+      setCurrentStepIdx(1);
+      setStepMessage("Fetching items...");
+      const itemsResult = await callStep("items", pullId);
+      const counts = { itemsNew: itemsResult.itemsNew || 0, contactsNew: 0, billsNew: 0, invoicesNew: 0 };
+      const allErrors: string[] = [...(itemsResult.errors || [])];
+      let totalApiCalls = itemsResult.apiCalls || 0;
+      setPullCounts({ ...counts });
+      setStepMessage(`${counts.itemsNew} new items found`);
 
-      if (data.success) {
-        setProgress(100);
-        setCurrentStep(PULL_STEPS.length); // All done
-        setPullResult(data.data);
-        fetchLogs();
-      } else {
-        setPullError(data.error || "Pull failed");
-        setProgress(0);
-      }
-    } catch {
-      if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
-      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-      setPullError("Network error — check your connection and try again");
+      // Step 2: Contacts
+      setCurrentStepIdx(2);
+      setStepMessage("Fetching vendors...");
+      const contactsResult = await callStep("contacts", pullId);
+      counts.contactsNew = contactsResult.contactsNew || 0;
+      allErrors.push(...(contactsResult.errors || []));
+      totalApiCalls += contactsResult.apiCalls || 0;
+      setPullCounts({ ...counts });
+      setStepMessage(`${counts.contactsNew} new vendors found`);
+
+      // Step 3: Bills
+      setCurrentStepIdx(3);
+      setStepMessage("Fetching bills...");
+      const billsResult = await callStep("bills", pullId);
+      counts.billsNew = billsResult.billsNew || 0;
+      allErrors.push(...(billsResult.errors || []));
+      totalApiCalls += billsResult.apiCalls || 0;
+      setPullCounts({ ...counts });
+      setStepMessage(`${counts.billsNew} new bills found`);
+
+      // Step 4: Invoices
+      setCurrentStepIdx(4);
+      setStepMessage("Fetching invoices...");
+      const invoicesResult = await callStep("invoices", pullId);
+      counts.invoicesNew = invoicesResult.invoicesNew || 0;
+      allErrors.push(...(invoicesResult.errors || []));
+      totalApiCalls += invoicesResult.apiCalls || 0;
+      setPullCounts({ ...counts });
+      setStepMessage(`${counts.invoicesNew} new invoices found`);
+
+      // Step 5: Finalize
+      setCurrentStepIdx(5);
+      setStepMessage("Saving pull log...");
+      await callStep("finalize", pullId, {
+        itemsNew: counts.itemsNew,
+        contactsNew: counts.contactsNew,
+        billsNew: counts.billsNew,
+        invoicesNew: counts.invoicesNew,
+        apiCalls: totalApiCalls,
+        allErrors,
+      });
+
+      // Done!
+      setPullCounts(counts);
+      setPullErrors(allErrors);
+      setPullDone(true);
+      const total = counts.itemsNew + counts.contactsNew + counts.billsNew + counts.invoicesNew;
+      setStepMessage(total > 0 ? "Pull complete! Review the data." : "No new data — everything synced!");
+      setCurrentStepIdx(6); // All done
+      fetchLogs();
+    } catch (e) {
+      setPullError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
       setPulling(false);
     }
+  }
+
+  function dismissPull() {
+    setPullDone(false);
+    setPullError(null);
+    setCurrentStepIdx(-1);
+    setStepMessage("");
+    setPullCounts({ itemsNew: 0, contactsNew: 0, billsNew: 0, invoicesNew: 0 });
+    setPullErrors([]);
   }
 
   const IMPORT_TYPES = [
@@ -238,7 +261,9 @@ export default function ZohoSettingsPage() {
     { key: "bills", label: "Purchase Bills", icon: Receipt, desc: "Pull bills from Zoho (creates inward for verification)" },
   ];
 
-  const showPullUI = pulling || pullResult || pullError;
+  const showPullUI = pulling || pullDone || pullError;
+  const progress = currentStepIdx >= 0 ? Math.min(Math.round(((pullDone ? 6 : currentStepIdx) / 6) * 100), 100) : 0;
+  const totalNew = pullCounts.itemsNew + pullCounts.contactsNew + pullCounts.billsNew + pullCounts.invoicesNew;
 
   return (
     <div>
@@ -288,25 +313,23 @@ export default function ZohoSettingsPage() {
                 Pulls new vendors, items, bills, and invoices. All data goes to preview for approval first.
               </p>
 
-              {/* Progress UI — shows during and after pull */}
+              {/* Progress UI */}
               {showPullUI && (
                 <div className="bg-white rounded-lg border border-blue-200 p-3 mb-3">
-                  {/* Header with status */}
+                  {/* Header */}
                   <div className="flex items-center gap-2 mb-2">
                     {pullError ? (
                       <XCircle className="h-4 w-4 text-red-500 shrink-0" />
-                    ) : pullResult ? (
+                    ) : pullDone ? (
                       <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
                     ) : (
                       <Loader2 className="h-4 w-4 text-blue-500 animate-spin shrink-0" />
                     )}
                     <p className="text-xs font-medium text-slate-700 flex-1">
-                      {pullError ? pullError :
-                       pullResult ? (pullResult.status === "NO_NEW_DATA" ? "No new data — everything synced!" : "Pull complete! Review the data below.") :
-                       `Pulling from Zoho... ${PULL_STEPS[Math.min(currentStep, PULL_STEPS.length - 1)].label}`}
+                      {pullError || stepMessage}
                     </p>
                     {!pullError && (
-                      <span className="text-xs font-bold text-blue-600">{Math.round(progress)}%</span>
+                      <span className="text-xs font-bold text-blue-600">{progress}%</span>
                     )}
                   </div>
 
@@ -314,8 +337,8 @@ export default function ZohoSettingsPage() {
                   {!pullError && (
                     <div className="w-full bg-slate-100 rounded-full h-2 mb-3 overflow-hidden">
                       <div
-                        className={`h-full rounded-full transition-all duration-300 ease-out ${
-                          pullResult ? "bg-green-500" : "bg-blue-500"
+                        className={`h-full rounded-full transition-all duration-500 ease-out ${
+                          pullDone ? "bg-green-500" : "bg-blue-500"
                         }`}
                         style={{ width: `${progress}%` }}
                       />
@@ -326,8 +349,8 @@ export default function ZohoSettingsPage() {
                   <div className="grid grid-cols-6 gap-1">
                     {PULL_STEPS.map((s, idx) => {
                       const Icon = s.icon;
-                      const isDone = pullResult ? true : idx < currentStep;
-                      const isActive = !pullResult && idx === currentStep && pulling;
+                      const isDone = pullDone || idx < currentStepIdx;
+                      const isActive = !pullDone && !pullError && idx === currentStepIdx;
                       return (
                         <div key={s.key} className="flex flex-col items-center">
                           <div className={`w-7 h-7 rounded-full flex items-center justify-center mb-0.5 transition-colors ${
@@ -349,14 +372,14 @@ export default function ZohoSettingsPage() {
                     })}
                   </div>
 
-                  {/* Results summary when done */}
-                  {pullResult && pullResult.status !== "NO_NEW_DATA" && (
+                  {/* Results grid */}
+                  {pullDone && totalNew > 0 && (
                     <div className="mt-3 grid grid-cols-4 gap-2">
                       {[
-                        { label: "Items", count: pullResult.itemsNew, icon: Package },
-                        { label: "Vendors", count: pullResult.contactsNew, icon: Users },
-                        { label: "Bills", count: pullResult.billsNew, icon: FileText },
-                        { label: "Invoices", count: pullResult.invoicesNew, icon: ShoppingCart },
+                        { label: "Items", count: pullCounts.itemsNew, icon: Package },
+                        { label: "Vendors", count: pullCounts.contactsNew, icon: Users },
+                        { label: "Bills", count: pullCounts.billsNew, icon: FileText },
+                        { label: "Invoices", count: pullCounts.invoicesNew, icon: ShoppingCart },
                       ].map((r) => {
                         const RIcon = r.icon;
                         return (
@@ -371,27 +394,25 @@ export default function ZohoSettingsPage() {
                   )}
 
                   {/* Errors */}
-                  {pullResult?.errors && pullResult.errors.length > 0 && (
+                  {pullErrors.length > 0 && (
                     <details className="mt-2">
-                      <summary className="text-[10px] text-orange-600 cursor-pointer">{pullResult.errors.length} warning(s)</summary>
+                      <summary className="text-[10px] text-orange-600 cursor-pointer">{pullErrors.length} warning(s)</summary>
                       <div className="mt-1 space-y-0.5">
-                        {pullResult.errors.map((e, i) => (
+                        {pullErrors.map((e, i) => (
                           <p key={i} className="text-[10px] text-orange-500">{e}</p>
                         ))}
                       </div>
                     </details>
                   )}
 
-                  {/* Dismiss / Go to review */}
-                  {(pullResult || pullError) && !pulling && (
+                  {/* Actions */}
+                  {(pullDone || pullError) && !pulling && (
                     <div className="mt-3 flex gap-2">
-                      <button
-                        onClick={() => { setPullResult(null); setPullError(null); setProgress(0); setCurrentStep(0); }}
-                        className="flex-1 text-xs text-slate-500 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50"
-                      >
+                      <button onClick={dismissPull}
+                        className="flex-1 text-xs text-slate-500 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50">
                         Dismiss
                       </button>
-                      {pullResult && pullResult.status !== "NO_NEW_DATA" && (
+                      {pullDone && totalNew > 0 && (
                         <Link href="/more/zoho/pull-review"
                           className="flex-1 text-xs text-center text-white bg-green-600 py-1.5 rounded-lg font-medium hover:bg-green-700">
                           Review & Approve
@@ -506,18 +527,14 @@ export default function ZohoSettingsPage() {
         </>
       ) : (
         <>
-          {/* Not Connected */}
           <Card className="mb-4 border-slate-200">
             <CardContent className="p-4 text-center">
               <CloudOff className="h-10 w-10 text-slate-300 mx-auto mb-2" />
               <p className="text-sm font-medium text-slate-700">Not connected to Zoho</p>
-              <p className="text-xs text-slate-500 mt-1">
-                Enter your Zoho API credentials below to connect
-              </p>
+              <p className="text-xs text-slate-500 mt-1">Enter your Zoho API credentials below to connect</p>
             </CardContent>
           </Card>
 
-          {/* Setup Instructions */}
           <Card className="mb-4 bg-blue-50 border-blue-200">
             <CardContent className="p-3">
               <p className="text-xs font-semibold text-blue-900 mb-1">Setup Steps:</p>
