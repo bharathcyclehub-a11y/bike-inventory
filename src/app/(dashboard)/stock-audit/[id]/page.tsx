@@ -257,13 +257,19 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
   const handleStatusChange = async (newStatus: string, extras?: Record<string, string>) => {
     setActionLoading(true);
     try {
-      await fetch(`/api/stock-counts/${id}`, {
+      const res = await fetch(`/api/stock-counts/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: newStatus, ...extras }),
       });
+      const data = await res.json();
+      if (!data.success) {
+        alert(data.error || `Failed to change status to ${newStatus}`);
+      }
       fetchSummary();
-    } catch { /* */ }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Network error");
+    }
     finally { setActionLoading(false); }
   };
 
