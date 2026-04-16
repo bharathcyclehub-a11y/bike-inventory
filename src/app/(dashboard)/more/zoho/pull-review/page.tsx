@@ -118,6 +118,34 @@ export default function PullReviewPage() {
     }
   }
 
+  async function handleApproveEntity(entityType: string) {
+    if (!data?.latest?.pullId) return;
+    const label = entityType === "invoice" ? "invoices" : entityType === "item" ? "items" : entityType === "bill" ? "bills" : "contacts";
+    if (!confirm(`Approve only ${label}? Other data stays pending for review.`)) return;
+
+    setActing(true);
+    setResult(null);
+    try {
+      const res = await fetch("/api/zoho/pull-review/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pullId: data.latest.pullId, action: "approve", entityType }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        const d = json.data;
+        setResult(`Approved ${label}: ${d[label] || 0} imported${d.remainingPending > 0 ? ` (${d.remainingPending} other records still pending)` : ""}${d.errors?.length ? ` (${d.errors.length} errors)` : ""}`);
+        fetchData();
+      } else {
+        setResult(`Error: ${json.error}`);
+      }
+    } catch {
+      setResult("Something went wrong");
+    } finally {
+      setActing(false);
+    }
+  }
+
   function handleExport() {
     if (!data?.latest?.pullId) return;
     window.open(`/api/zoho/pull-review/export?pullId=${data.latest.pullId}`, "_blank");
@@ -133,7 +161,7 @@ export default function PullReviewPage() {
 
   const latest = data?.latest;
   const totalNew = latest ? latest.contactsNew + latest.itemsNew + latest.billsNew + latest.invoicesNew : 0;
-  const isPending = latest?.status === "PENDING_REVIEW";
+  const isPending = latest?.status === "PENDING_REVIEW" || latest?.status === "PARTIAL";
 
   return (
     <div>
@@ -207,6 +235,32 @@ export default function PullReviewPage() {
                 </div>
               )}
 
+              {/* Per-entity approve buttons */}
+              {isPending && totalNew > 0 && (
+                <div className="flex gap-1.5 mb-2 flex-wrap">
+                  {latest.invoicesNew > 0 && (
+                    <Button size="sm" variant="outline" className="text-xs border-green-200 text-green-700 hover:bg-green-50" onClick={() => handleApproveEntity("invoice")} disabled={acting}>
+                      <ShoppingCart className="h-3 w-3 mr-1" /> Import {latest.invoicesNew} Invoices
+                    </Button>
+                  )}
+                  {latest.itemsNew > 0 && (
+                    <Button size="sm" variant="outline" className="text-xs border-green-200 text-green-700 hover:bg-green-50" onClick={() => handleApproveEntity("item")} disabled={acting}>
+                      <Package className="h-3 w-3 mr-1" /> Import {latest.itemsNew} Items
+                    </Button>
+                  )}
+                  {latest.billsNew > 0 && (
+                    <Button size="sm" variant="outline" className="text-xs border-green-200 text-green-700 hover:bg-green-50" onClick={() => handleApproveEntity("bill")} disabled={acting}>
+                      <FileText className="h-3 w-3 mr-1" /> Import {latest.billsNew} Bills
+                    </Button>
+                  )}
+                  {latest.contactsNew > 0 && (
+                    <Button size="sm" variant="outline" className="text-xs border-green-200 text-green-700 hover:bg-green-50" onClick={() => handleApproveEntity("contact")} disabled={acting}>
+                      <Users className="h-3 w-3 mr-1" /> Import {latest.contactsNew} Contacts
+                    </Button>
+                  )}
+                </div>
+              )}
+
               {isPending && totalNew > 0 && (
                 <div className="flex gap-2">
                   <Button
@@ -216,7 +270,7 @@ export default function PullReviewPage() {
                     onClick={() => handleAction("reject")}
                     disabled={acting}
                   >
-                    <XCircle className="h-4 w-4 mr-1" /> Reject
+                    <XCircle className="h-4 w-4 mr-1" /> Reject All
                   </Button>
                   <Button
                     size="sm"

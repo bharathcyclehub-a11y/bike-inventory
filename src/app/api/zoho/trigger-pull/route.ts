@@ -69,10 +69,7 @@ export async function POST(req: NextRequest) {
       lastSyncAt = thirtyDaysAgo.toISOString().slice(0, 10);
     }
 
-    // Yesterday's date for bills & invoices (daily pull only needs 1 day)
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    // Today's date for bills & invoices (pull current day only)
     const todayStr = new Date().toISOString().slice(0, 10);
 
     const zoho = new ZohoClient();
@@ -177,7 +174,7 @@ export async function POST(req: NextRequest) {
       const errors: string[] = [];
 
       try {
-        const bills = await zoho.listAllBills(yesterdayStr, todayStr);
+        const bills = await zoho.listAllBills(todayStr, todayStr);
         apiCalls += Math.ceil(bills.length / 200) || 1;
 
         // Filter to only NEW bills first (before making any detail calls)
@@ -243,7 +240,7 @@ export async function POST(req: NextRequest) {
       const errors: string[] = [];
 
       try {
-        const invoices = await zoho.listAllInvoices(yesterdayStr, todayStr);
+        const invoices = await zoho.listAllInvoices(todayStr, todayStr);
         apiCalls += Math.ceil(invoices.length / 200) || 1;
 
         // Filter to only NEW invoices first

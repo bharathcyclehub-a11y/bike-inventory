@@ -10,7 +10,7 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireAuth(["ADMIN", "SUPERVISOR"]);
     const body = await req.json();
-    const { pullId, action } = body as { pullId: string; action: "approve" | "reject" };
+    const { pullId, action, entityType } = body as { pullId: string; action: "approve" | "reject"; entityType?: string };
 
     if (!pullId || !["approve", "reject"].includes(action)) {
       return errorResponse("pullId and action (approve/reject) required", 400);
@@ -18,22 +18,30 @@ export async function POST(req: NextRequest) {
 
     const pullLog = await prisma.zohoPullLog.findUnique({ where: { pullId } });
     if (!pullLog) return errorResponse("Pull not found", 404);
-    if (pullLog.status !== "PENDING_REVIEW") return errorResponse(`Pull already ${pullLog.status.toLowerCase()}`, 400);
+    if (pullLog.status !== "PENDING_REVIEW" && pullLog.status !== "PARTIAL") {
+      return errorResponse(`Pull already ${pullLog.status.toLowerCase()}`, 400);
+    }
 
-    const previews = await prisma.zohoPullPreview.findMany({
-      where: { pullId, status: "PENDING" },
-    });
+    // Optional entity filter: approve/reject only specific type (e.g. "invoice")
+    const previewFilter: { pullId: string; status: string; entityType?: string } = { pullId, status: "PENDING" };
+    if (entityType) previewFilter.entityType = entityType;
+
+    const previews = await prisma.zohoPullPreview.findMany({ where: previewFilter });
 
     if (action === "reject") {
       await prisma.zohoPullPreview.updateMany({
-        where: { pullId },
+        where: previewFilter,
         data: { status: "REJECTED", reviewedAt: new Date(), reviewedById: user.id },
       });
-      await prisma.zohoPullLog.update({
-        where: { pullId },
-        data: { status: "REJECTED", approvedAt: new Date() },
-      });
-      return successResponse({ action: "rejected", count: previews.length });
+      // Only mark pull as rejected if ALL previews are now rejected
+      const remaining = await prisma.zohoPullPreview.count({ where: { pullId, status: "PENDING" } });
+      if (remaining === 0) {
+        await prisma.zohoPullLog.update({
+          where: { pullId },
+          data: { status: "REJECTED", approvedAt: new Date() },
+        });
+      }
+      return successResponse({ action: "rejected", count: previews.length, entityType: entityType || "all" });
     }
 
     // ─── APPROVE: write to real tables ───
@@ -181,13 +189,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Check if any previews are still pending (partial approval by entity type)
+    const remainingPending = await prisma.zohoPullPreview.count({ where: { pullId, status: "PENDING" } });
+    const newStatus = remainingPending > 0 ? "PARTIAL" : (results.errors.length > 0 ? "PARTIAL" : "APPROVED");
+
     await prisma.zohoPullLog.update({
       where: { pullId },
-      data: { status: results.errors.length > 0 ? "PARTIAL" : "APPROVED", approvedAt: new Date() },
+      data: { status: newStatus, approvedAt: remainingPending === 0 ? new Date() : undefined },
     });
 
     return successResponse({
       action: "approved",
+      entityType: entityType || "all",
+      remainingPending,
       ...results,
     });
   } catch (error) {
