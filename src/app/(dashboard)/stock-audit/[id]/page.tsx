@@ -184,9 +184,9 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
     }).catch(() => {});
   }, []);
 
-  // Auto-save: whenever counts change, debounce 2s then save (not for ADMIN)
+  // Auto-save: whenever counts change, debounce 2s then save
   useEffect(() => {
-    if (isAdmin || dirtyRef.current.size === 0) return;
+    if (dirtyRef.current.size === 0) return;
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     autoSaveTimer.current = setTimeout(() => {
       doAutoSave();
@@ -474,7 +474,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         </button>
       )}
 
-      {summary.status === "IN_PROGRESS" && !isAdmin && (
+      {summary.status === "IN_PROGRESS" && (
         <div className="flex gap-2 mb-3">
           <button onClick={handleManualSave} disabled={saving || dirtyRef.current.size === 0}
             className="flex-1 flex items-center justify-center gap-2 bg-slate-900 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
