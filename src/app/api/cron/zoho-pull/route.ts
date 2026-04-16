@@ -19,7 +19,7 @@ import { successResponse, errorResponse } from "@/lib/api-utils";
  * Items & contacts use lastSyncAt (cheap, no detail calls)
  */
 
-const MAX_DETAIL_CALLS_PER_ENTITY = 10;
+const MAX_DETAIL_CALLS_PER_ENTITY = 150; // Covers busy days; yesterday-only filter is the real limiter
 
 // Vercel Cron Job: Daily at 1 PM IST (07:30 UTC)
 // All data goes to ZohoPullPreview for admin approval. Nothing touches real tables.
@@ -214,7 +214,7 @@ export async function GET(req: NextRequest) {
       apiCalls += Math.ceil(invoices.length / 200) || 1;
       let detailCalls = 0;
 
-      // Pre-filter to only NEW invoices before making any detail calls
+      // Pre-filter to only NEW invoices before making detail calls
       const newInvoices: typeof invoices = [];
       for (const invoice of invoices) {
         if (invoice.status === "void") continue;
@@ -239,7 +239,7 @@ export async function GET(req: NextRequest) {
             }));
             salesPerson = (detail.invoice as Record<string, unknown>).salesperson_name as string || "";
           } catch {
-            allErrors.push(`Invoice ${invoice.invoice_number}: detail fetch skipped`);
+            allErrors.push(`Invoice ${invoice.invoice_number}: detail fetch failed`);
           }
         } else {
           allErrors.push(`Invoice ${invoice.invoice_number}: line items skipped (API budget cap)`);

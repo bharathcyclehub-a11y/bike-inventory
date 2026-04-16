@@ -20,7 +20,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
  * Items & contacts use lastSyncAt (cheap, no detail calls)
  */
 
-const MAX_DETAIL_CALLS_PER_ENTITY = 10; // Cap detail API calls
+const MAX_DETAIL_CALLS_PER_ENTITY = 150; // Covers busy days; yesterday-only filter is the real limiter
 
 export async function POST(req: NextRequest) {
   try {
@@ -235,7 +235,7 @@ export async function POST(req: NextRequest) {
       return successResponse({ step: "bills", billsNew, apiCalls, errors });
     }
 
-    // ─── INVOICES: yesterday only + capped detail calls ───
+    // ─── INVOICES: yesterday only + detail calls for line items (essential for outward check) ───
     if (step === "invoices") {
       let invoicesNew = 0;
       let apiCalls = 0;
@@ -260,7 +260,6 @@ export async function POST(req: NextRequest) {
           let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
           let salesPerson = "";
 
-          // Only fetch detail if under the cap
           if (detailCalls < MAX_DETAIL_CALLS_PER_ENTITY) {
             try {
               await zoho.delay(300);
@@ -272,7 +271,7 @@ export async function POST(req: NextRequest) {
               }));
               salesPerson = (detail.invoice as Record<string, unknown>).salesperson_name as string || "";
             } catch {
-              errors.push(`Invoice ${invoice.invoice_number}: detail fetch skipped`);
+              errors.push(`Invoice ${invoice.invoice_number}: detail fetch failed`);
             }
           } else {
             errors.push(`Invoice ${invoice.invoice_number}: line items skipped (API budget cap)`);
