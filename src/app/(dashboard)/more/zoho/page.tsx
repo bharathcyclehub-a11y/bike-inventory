@@ -833,8 +833,67 @@ export default function ZohoSettingsPage() {
 
             </>
           )}
+
+          {/* Cleanup Section */}
+          <CleanupSection />
         </>
       )}
     </div>
+  );
+}
+
+function CleanupSection() {
+  const [preview, setPreview] = useState<{ transactions: number; vendorBills: number; previews: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState("");
+
+  async function loadPreview() {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/inventory/cleanup").then((r) => r.json());
+      if (res.success) setPreview(res.data.wouldDelete);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }
+
+  async function runCleanup() {
+    if (!confirm("This will permanently delete all Zoho-imported inward/outward entries and vendor bills. Stock count entries will NOT be touched. Continue?")) return;
+    setLoading(true);
+    setResult("");
+    try {
+      const res = await fetch("/api/inventory/cleanup", { method: "DELETE" }).then((r) => r.json());
+      if (res.success) {
+        const d = res.data.deleted;
+        setResult(`Deleted ${d.transactions} transactions, ${d.vendorBills} vendor bills, ${d.previews} previews, ${d.pullLogs} pull logs`);
+        setPreview(null);
+      } else {
+        setResult(res.error || "Failed");
+      }
+    } catch (e) {
+      setResult(e instanceof Error ? e.message : "Failed");
+    }
+    setLoading(false);
+  }
+
+  return (
+    <Card className="mt-4 border-red-200">
+      <CardContent className="p-3">
+        <h2 className="text-sm font-semibold text-red-700 mb-1">Cleanup Zoho Imports</h2>
+        <p className="text-[10px] text-slate-500 mb-2">
+          Delete all Zoho-imported inward/outward transactions and vendor bills. Stock count entries are preserved.
+        </p>
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={loadPreview} disabled={loading} className="text-xs h-7">
+            {loading ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null} Preview
+          </Button>
+          {preview && (
+            <Button size="sm" variant="destructive" onClick={runCleanup} disabled={loading} className="text-xs h-7">
+              Delete {preview.transactions} transactions + {preview.vendorBills} bills
+            </Button>
+          )}
+        </div>
+        {result && <p className="text-xs text-green-700 mt-2">{result}</p>}
+      </CardContent>
+    </Card>
   );
 }
