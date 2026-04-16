@@ -269,25 +269,8 @@ export async function POST(req: NextRequest) {
         const existingSet = new Set(existingBills.map((b) => b.billNo));
         const newBills = bills.filter((b: { bill_number: string }) => !existingSet.has(b.bill_number));
 
+        // Save previews without detail calls — line items fetched on import
         for (const bill of newBills) {
-          let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
-
-          if (detailCalls < MAX_DETAIL_CALLS_PER_ENTITY) {
-            try {
-              await client.delay(100);
-              const detail = await client.getBill(bill.bill_id);
-              apiCalls++;
-              detailCalls++;
-              lineItems = (detail.bill.line_items || []).map((li: { name: string; sku: string; quantity: number; rate: number; item_total: number }) => ({
-                name: li.name, sku: li.sku, quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
-              }));
-            } catch {
-              errors.push(`Bill ${bill.bill_number}: detail fetch skipped`);
-            }
-          } else {
-            errors.push(`Bill ${bill.bill_number}: line items skipped (API budget cap)`);
-          }
-
           await prisma.zohoPullPreview.create({
             data: {
               pullId: existingPullId,
@@ -301,7 +284,7 @@ export async function POST(req: NextRequest) {
                 total: bill.total,
                 balance: bill.balance,
                 status: bill.status,
-                lineItems,
+                lineItems: [],
               },
             },
           });
@@ -363,27 +346,8 @@ export async function POST(req: NextRequest) {
           (inv: { status: string; invoice_number: string }) => inv.status !== "void" && !existingInvSet.has(inv.invoice_number)
         );
 
+        // Save previews without detail calls — line items fetched on import
         for (const invoice of newInvoices) {
-          let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
-          let salesPerson = "";
-
-          if (detailCalls < MAX_DETAIL_CALLS_PER_ENTITY) {
-            try {
-              await client.delay(100);
-              const detail = await client.getInvoice(invoice.invoice_id);
-              apiCalls++;
-              detailCalls++;
-              lineItems = (detail.invoice.line_items || []).map((li: { name: string; sku: string; quantity: number; rate: number; item_total: number }) => ({
-                name: li.name, sku: li.sku, quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
-              }));
-              salesPerson = (detail.invoice as Record<string, unknown>).salesperson_name as string || "";
-            } catch {
-              errors.push(`Invoice ${invoice.invoice_number}: detail fetch failed`);
-            }
-          } else {
-            errors.push(`Invoice ${invoice.invoice_number}: line items skipped (API budget cap)`);
-          }
-
           await prisma.zohoPullPreview.create({
             data: {
               pullId: existingPullId,
@@ -397,8 +361,8 @@ export async function POST(req: NextRequest) {
                 total: invoice.total,
                 balance: invoice.balance,
                 status: invoice.status,
-                salesPerson,
-                lineItems,
+                salesPerson: "",
+                lineItems: [],
               },
             },
           });
