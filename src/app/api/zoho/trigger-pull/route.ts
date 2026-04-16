@@ -14,7 +14,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
  * ─────────────────────────
  * Items:     Zoho Inventory (fallback Books)
  * Contacts:  Zoho Books
- * Bills:     Zoho Inventory + line items (fallback Zakya → Books)
+ * Bills:     Zoho Books (fallback Zakya POS)
  * Invoices:  Zakya POS (fallback Books)
  */
 
@@ -237,87 +237,17 @@ export async function POST(req: NextRequest) {
       try {
         const billsFromDate = fromDate || todayStr;
 
-        // Try Zoho Inventory first, fall back to Zakya/Books if bills scope not authorized
-        let usedInventory = false;
-        const inventory = new ZohoInventoryClient();
-        const inventoryReady = await inventory.init();
-
-        if (inventoryReady) {
-          try {
-            source = "inventory";
-            const bills = await inventory.listAllBills(billsFromDate, todayStr);
-            apiCalls += Math.ceil(bills.length / 200) || 1;
-            usedInventory = true;
-
-            const totalFromApi = bills.length;
-            const billNumbers = bills.map((b) => b.bill_number);
-            const existingBills = billNumbers.length > 0
-              ? await prisma.vendorBill.findMany({
-                  where: { billNo: { in: billNumbers } },
-                  select: { billNo: true },
-                })
-              : [];
-            const existingSet = new Set(existingBills.map((b) => b.billNo));
-            const newBills = bills.filter((b) => !existingSet.has(b.bill_number));
-
-            if (newBills.length === 0 && totalFromApi === 0) {
-              errors.push(`Zoho Inventory returned 0 bills for ${billsFromDate} to ${todayStr}`);
-            } else if (newBills.length === 0 && totalFromApi > 0) {
-              errors.push(`${totalFromApi} bills from API but all already imported (${existingSet.size} in DB). Sample: ${billNumbers.slice(0, 3).join(", ")}`);
-            }
-
-            if (newBills.length > 0) {
-              const details = await inventory.getBillDetails(newBills.map((b) => b.bill_id));
-              detailCalls = newBills.length;
-              apiCalls += detailCalls;
-              const detailMap = new Map(details.map((d) => [d.bill_id, d.line_items]));
-
-              await prisma.$transaction(
-                newBills.map((bill) =>
-                  prisma.zohoPullPreview.create({
-                    data: {
-                      pullId: existingPullId,
-                      entityType: "bill",
-                      zohoId: bill.bill_id,
-                      data: {
-                        billNumber: bill.bill_number,
-                        vendorName: bill.vendor_name,
-                        date: bill.date,
-                        dueDate: bill.due_date,
-                        total: bill.total,
-                        balance: bill.balance,
-                        status: bill.status,
-                        lineItems: (detailMap.get(bill.bill_id) || []).map((li) => ({
-                          name: li.name,
-                          sku: li.sku,
-                          quantity: li.quantity,
-                          rate: li.rate,
-                          itemTotal: li.item_total,
-                        })),
-                      },
-                    },
-                  })
-                )
-              );
-              billsNew = newBills.length;
-            }
-          } catch (invErr) {
-            // Inventory bills not authorized — fall back to Zakya/Books
-            usedInventory = false;
-            source = "none";
-          }
-        }
-
-        // Fallback: Zakya POS → Books (if Inventory not available or bills scope missing)
-        if (!usedInventory) {
-          const zakya = new ZakyaClient();
-          const posReady = await zakya.init();
+        // Use Zoho Books for bills (Inventory token lacks bills scope)
+        {
+          const zoho = new ZohoClient();
+          const booksReady = await zoho.init();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           let client: any = null;
-          if (posReady) { client = zakya; source = "pos"; }
+          if (booksReady) { client = zoho; source = "books"; }
           else {
-            const zoho = new ZohoClient();
-            if (await zoho.init()) { client = zoho; source = "books"; }
+            // Fallback to Zakya POS
+            const zakya = new ZakyaClient();
+            if (await zakya.init()) { client = zakya; source = "pos"; }
           }
 
           if (!client) {
