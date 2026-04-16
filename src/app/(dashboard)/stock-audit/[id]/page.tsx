@@ -665,11 +665,24 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
                         </label>
                         <select
                           value={brands[item.id] ?? item.suggestedBrand ?? ""}
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             if (e.target.value === "__custom__") {
                               const custom = prompt("Enter new brand name:");
                               if (custom && custom.trim()) {
-                                setBrands((prev) => ({ ...prev, [item.id]: custom.trim() }));
+                                const brandName = custom.trim();
+                                // Create brand in DB
+                                try {
+                                  await fetch("/api/brands", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ name: brandName }),
+                                  });
+                                } catch { /* ignore — will still work locally */ }
+                                // Add to dropdown if not already there
+                                setBrandList((prev) =>
+                                  prev.includes(brandName) ? prev : [...prev, brandName].sort()
+                                );
+                                setBrands((prev) => ({ ...prev, [item.id]: brandName }));
                                 dirtyRef.current.add(item.id);
                               }
                             } else {
