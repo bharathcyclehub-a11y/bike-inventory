@@ -1,4 +1,5 @@
 export const dynamic = "force-dynamic";
+export const maxDuration = 30; // Allow up to 30s for Zoho API calls
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
@@ -269,26 +270,30 @@ export async function POST(req: NextRequest) {
         const existingSet = new Set(existingBills.map((b) => b.billNo));
         const newBills = bills.filter((b: { bill_number: string }) => !existingSet.has(b.bill_number));
 
-        // Save previews without detail calls — line items fetched on import
-        for (const bill of newBills) {
-          await prisma.zohoPullPreview.create({
-            data: {
-              pullId: existingPullId,
-              entityType: "bill",
-              zohoId: bill.bill_id,
-              data: {
-                billNumber: bill.bill_number,
-                vendorName: bill.vendor_name,
-                date: bill.date,
-                dueDate: bill.due_date,
-                total: bill.total,
-                balance: bill.balance,
-                status: bill.status,
-                lineItems: [],
-              },
-            },
-          });
-          billsNew++;
+        // Batch create all previews in one transaction
+        if (newBills.length > 0) {
+          await prisma.$transaction(
+            newBills.map((bill: { bill_id: string; bill_number: string; vendor_name: string; date: string; due_date: string; total: number; balance: number; status: string }) =>
+              prisma.zohoPullPreview.create({
+                data: {
+                  pullId: existingPullId,
+                  entityType: "bill",
+                  zohoId: bill.bill_id,
+                  data: {
+                    billNumber: bill.bill_number,
+                    vendorName: bill.vendor_name,
+                    date: bill.date,
+                    dueDate: bill.due_date,
+                    total: bill.total,
+                    balance: bill.balance,
+                    status: bill.status,
+                    lineItems: [],
+                  },
+                },
+              })
+            )
+          );
+          billsNew = newBills.length;
         }
       } catch (e) {
         errors.push(`Bills: ${e instanceof Error ? e.message : "Unknown"}`);
@@ -346,27 +351,31 @@ export async function POST(req: NextRequest) {
           (inv: { status: string; invoice_number: string }) => inv.status !== "void" && !existingInvSet.has(inv.invoice_number)
         );
 
-        // Save previews without detail calls — line items fetched on import
-        for (const invoice of newInvoices) {
-          await prisma.zohoPullPreview.create({
-            data: {
-              pullId: existingPullId,
-              entityType: "invoice",
-              zohoId: invoice.invoice_id,
-              data: {
-                invoiceNumber: invoice.invoice_number,
-                customerName: invoice.customer_name,
-                phone: invoice.phone || "",
-                date: invoice.date,
-                total: invoice.total,
-                balance: invoice.balance,
-                status: invoice.status,
-                salesPerson: "",
-                lineItems: [],
-              },
-            },
-          });
-          invoicesNew++;
+        // Batch create all previews in one transaction
+        if (newInvoices.length > 0) {
+          await prisma.$transaction(
+            newInvoices.map((invoice: { invoice_id: string; invoice_number: string; customer_name: string; phone?: string; date: string; total: number; balance: number; status: string }) =>
+              prisma.zohoPullPreview.create({
+                data: {
+                  pullId: existingPullId,
+                  entityType: "invoice",
+                  zohoId: invoice.invoice_id,
+                  data: {
+                    invoiceNumber: invoice.invoice_number,
+                    customerName: invoice.customer_name,
+                    phone: invoice.phone || "",
+                    date: invoice.date,
+                    total: invoice.total,
+                    balance: invoice.balance,
+                    status: invoice.status,
+                    salesPerson: "",
+                    lineItems: [],
+                  },
+                },
+              })
+            )
+          );
+          invoicesNew = newInvoices.length;
         }
       } catch (e) {
         errors.push(`Invoices: ${e instanceof Error ? e.message : "Unknown"}`);

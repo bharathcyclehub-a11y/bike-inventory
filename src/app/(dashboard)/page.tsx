@@ -505,7 +505,7 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
   useEffect(() => {
     const today = new Date().toISOString().split("T")[0];
     const endpoint = type === "inward" ? "/api/inventory/inwards" : "/api/inventory/outwards";
-    fetch(`${endpoint}?dateFrom=${today}&limit=50`)
+    fetch(`${endpoint}?dateFrom=${today}&limit=50&mine=true`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setTransactions(res.data); })
       .catch(() => {})

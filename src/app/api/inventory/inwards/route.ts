@@ -9,10 +9,11 @@ import { generateSerialCode, getNextSerialSequence } from "@/lib/barcode";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK"]);
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const dateFrom = searchParams.get("dateFrom");
     const dateTo = searchParams.get("dateTo");
+    const mine = searchParams.get("mine") === "true";
 
     const where = {
       type: "INWARD" as const,
@@ -22,6 +23,7 @@ export async function GET(req: NextRequest) {
           ...(dateTo && { lte: new Date(dateTo) }),
         },
       }),
+      ...(mine && { userId: user.id }),
     };
 
     const [transactions, total] = await Promise.all([
