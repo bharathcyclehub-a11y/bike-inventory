@@ -237,74 +237,79 @@ export async function POST(req: NextRequest) {
       try {
         const billsFromDate = fromDate || todayStr;
 
-        // Try Zoho Inventory first (faster + separate quota + line items)
+        // Try Zoho Inventory first, fall back to Zakya/Books if bills scope not authorized
+        let usedInventory = false;
         const inventory = new ZohoInventoryClient();
         const inventoryReady = await inventory.init();
 
         if (inventoryReady) {
-          source = "inventory";
-          const bills = await inventory.listAllBills(billsFromDate, todayStr);
-          apiCalls += Math.ceil(bills.length / 200) || 1;
+          try {
+            source = "inventory";
+            const bills = await inventory.listAllBills(billsFromDate, todayStr);
+            apiCalls += Math.ceil(bills.length / 200) || 1;
+            usedInventory = true;
 
-          // Diagnostic: total bills returned from API
-          const totalFromApi = bills.length;
-
-          // Batch check existing bills
-          const billNumbers = bills.map((b) => b.bill_number);
-          const existingBills = billNumbers.length > 0
-            ? await prisma.vendorBill.findMany({
-                where: { billNo: { in: billNumbers } },
-                select: { billNo: true },
-              })
-            : [];
-          const existingSet = new Set(existingBills.map((b) => b.billNo));
-          const newBills = bills.filter((b) => !existingSet.has(b.bill_number));
-
-          // Also check zohoPullPreview for bills stuck in PENDING from previous attempts
-          if (newBills.length === 0 && totalFromApi === 0) {
-            errors.push(`Zoho Inventory returned 0 bills for ${billsFromDate} to ${todayStr}`);
-          } else if (newBills.length === 0 && totalFromApi > 0) {
-            errors.push(`${totalFromApi} bills from API but all already imported (${existingSet.size} in DB). Sample: ${billNumbers.slice(0, 3).join(", ")}`);
-          }
-
-          if (newBills.length > 0) {
-            // Fetch line items for new bills (5 concurrent, ~200ms between batches)
-            const details = await inventory.getBillDetails(newBills.map((b) => b.bill_id));
-            detailCalls = newBills.length;
-            apiCalls += detailCalls;
-            const detailMap = new Map(details.map((d) => [d.bill_id, d.line_items]));
-
-            await prisma.$transaction(
-              newBills.map((bill) =>
-                prisma.zohoPullPreview.create({
-                  data: {
-                    pullId: existingPullId,
-                    entityType: "bill",
-                    zohoId: bill.bill_id,
-                    data: {
-                      billNumber: bill.bill_number,
-                      vendorName: bill.vendor_name,
-                      date: bill.date,
-                      dueDate: bill.due_date,
-                      total: bill.total,
-                      balance: bill.balance,
-                      status: bill.status,
-                      lineItems: (detailMap.get(bill.bill_id) || []).map((li) => ({
-                        name: li.name,
-                        sku: li.sku,
-                        quantity: li.quantity,
-                        rate: li.rate,
-                        itemTotal: li.item_total,
-                      })),
-                    },
-                  },
+            const totalFromApi = bills.length;
+            const billNumbers = bills.map((b) => b.bill_number);
+            const existingBills = billNumbers.length > 0
+              ? await prisma.vendorBill.findMany({
+                  where: { billNo: { in: billNumbers } },
+                  select: { billNo: true },
                 })
-              )
-            );
-            billsNew = newBills.length;
+              : [];
+            const existingSet = new Set(existingBills.map((b) => b.billNo));
+            const newBills = bills.filter((b) => !existingSet.has(b.bill_number));
+
+            if (newBills.length === 0 && totalFromApi === 0) {
+              errors.push(`Zoho Inventory returned 0 bills for ${billsFromDate} to ${todayStr}`);
+            } else if (newBills.length === 0 && totalFromApi > 0) {
+              errors.push(`${totalFromApi} bills from API but all already imported (${existingSet.size} in DB). Sample: ${billNumbers.slice(0, 3).join(", ")}`);
+            }
+
+            if (newBills.length > 0) {
+              const details = await inventory.getBillDetails(newBills.map((b) => b.bill_id));
+              detailCalls = newBills.length;
+              apiCalls += detailCalls;
+              const detailMap = new Map(details.map((d) => [d.bill_id, d.line_items]));
+
+              await prisma.$transaction(
+                newBills.map((bill) =>
+                  prisma.zohoPullPreview.create({
+                    data: {
+                      pullId: existingPullId,
+                      entityType: "bill",
+                      zohoId: bill.bill_id,
+                      data: {
+                        billNumber: bill.bill_number,
+                        vendorName: bill.vendor_name,
+                        date: bill.date,
+                        dueDate: bill.due_date,
+                        total: bill.total,
+                        balance: bill.balance,
+                        status: bill.status,
+                        lineItems: (detailMap.get(bill.bill_id) || []).map((li) => ({
+                          name: li.name,
+                          sku: li.sku,
+                          quantity: li.quantity,
+                          rate: li.rate,
+                          itemTotal: li.item_total,
+                        })),
+                      },
+                    },
+                  })
+                )
+              );
+              billsNew = newBills.length;
+            }
+          } catch (invErr) {
+            // Inventory bills not authorized — fall back to Zakya/Books
+            usedInventory = false;
+            source = "none";
           }
-        } else {
-          // Fallback: Zakya POS → Books (header-only, no line items)
+        }
+
+        // Fallback: Zakya POS → Books (if Inventory not available or bills scope missing)
+        if (!usedInventory) {
           const zakya = new ZakyaClient();
           const posReady = await zakya.init();
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
