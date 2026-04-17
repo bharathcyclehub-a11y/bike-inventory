@@ -26,6 +26,8 @@ interface DeliveryItem {
   flagReason: string | null;
   prebookNotes: string | null;
   verifiedBy: { name: string } | null;
+  salesPerson: string | null;
+  isOutstation: boolean;
 }
 
 interface Stats {
@@ -112,12 +114,14 @@ export default function DeliveriesPage() {
 
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showOutstation, setShowOutstation] = useState(false);
 
   const fetchData = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams();
     if (filter !== "ALL") params.set("status", filter);
     if (debouncedSearch) params.set("search", debouncedSearch);
+    if (showOutstation) params.set("outstation", "true");
     params.set("limit", "100");
 
     Promise.all([
@@ -130,7 +134,7 @@ export default function DeliveriesPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch]);
+  }, [filter, debouncedSearch, showOutstation]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -463,6 +467,16 @@ export default function DeliveriesPage() {
         ))}
       </div>
 
+      {/* Outstation Filter */}
+      <div className="flex gap-1.5 mb-2">
+        <button onClick={() => setShowOutstation(!showOutstation)}
+          className={`shrink-0 px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors ${
+            showOutstation ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"
+          }`}>
+          Outstation
+        </button>
+      </div>
+
       {/* Local search */}
       <div className="relative mb-2">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -646,6 +660,9 @@ export default function DeliveriesPage() {
                         <p className="text-sm font-semibold text-slate-900">{d.invoiceNo}</p>
                       </Link>
                       <p className="text-xs text-slate-600">{d.customerName}</p>
+                      {d.salesPerson && (
+                        <p className="text-[10px] text-purple-600">Sales: {d.salesPerson}</p>
+                      )}
                       <p className="text-[10px] text-slate-400">
                         {formatINR(d.invoiceAmount)} | {new Date(d.invoiceDate).toLocaleDateString("en-IN")}
                       </p>
@@ -654,6 +671,9 @@ export default function DeliveriesPage() {
                       <Badge variant={cfg.variant as "warning" | "info" | "success" | "danger" | "default"}>
                         {cfg.label}
                       </Badge>
+                      {d.isOutstation && (
+                        <Badge variant={"warning"} className="text-[9px]">Outstation</Badge>
+                      )}
                       {aging && aging.level !== "ok" && (
                         <span className={`block text-[9px] font-medium px-1.5 py-0.5 rounded-full ${AGING_BADGE[aging.level]}`}>
                           {aging.text}

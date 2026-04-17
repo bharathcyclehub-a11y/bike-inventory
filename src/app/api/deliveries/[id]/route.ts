@@ -17,7 +17,26 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     });
 
     if (!delivery) return errorResponse("Delivery not found", 404);
-    return successResponse(delivery);
+
+    // Check payment status from receivables
+    let paymentStatus: { hasPending: boolean; balance: number; paidAmount: number; totalAmount: number } | null = null;
+    try {
+      const invoice = await prisma.customerInvoice.findFirst({
+        where: { invoiceNo: delivery.invoiceNo },
+        select: { amount: true, paidAmount: true, status: true },
+      });
+      if (invoice) {
+        const balance = invoice.amount - invoice.paidAmount;
+        paymentStatus = {
+          hasPending: balance > 0,
+          balance,
+          paidAmount: invoice.paidAmount,
+          totalAmount: invoice.amount,
+        };
+      }
+    } catch { /* CustomerInvoice table might not exist yet */ }
+
+    return successResponse({ ...delivery, paymentStatus });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch delivery", 500);

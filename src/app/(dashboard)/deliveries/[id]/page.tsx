@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Phone, MapPin, Clock, CheckCircle2, Truck,
   Flag, AlertTriangle, Loader2, Package, Download,
-  MessageCircle, Check, Globe,
+  MessageCircle, Check, Globe, IndianRupee,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -46,6 +46,12 @@ interface DeliveryData {
   courierName: string | null;
   courierTrackingNo: string | null;
   courierCost: number | null;
+  paymentStatus: {
+    hasPending: boolean;
+    balance: number;
+    paidAmount: number;
+    totalAmount: number;
+  } | null;
 }
 
 const STATUS_STEPS = ["PENDING", "VERIFIED", "SCHEDULED", "OUT_FOR_DELIVERY", "DELIVERED"];
@@ -76,8 +82,13 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const [courierTrackingNo, setCourierTrackingNo] = useState("");
   const [courierCost, setCourierCost] = useState("");
 
+  // Inline date editing
+  const [editingDate, setEditingDate] = useState(false);
+  const [newDate, setNewDate] = useState("");
+
   // Free accessories
   const [freeAccessories, setFreeAccessories] = useState("");
+  const [editingAccessories, setEditingAccessories] = useState(false);
 
   const fetchData = () => {
     fetch(`/api/deliveries/${id}`)
@@ -167,6 +178,21 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           courierCost: courierCost ? parseFloat(courierCost) : undefined,
         }),
       });
+      fetchData();
+    } catch { /* */ }
+    finally { setActionLoading(false); }
+  };
+
+  const handleDateChange = async () => {
+    if (!newDate) return;
+    setActionLoading(true);
+    try {
+      await fetch(`/api/deliveries/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduledDate: newDate }),
+      });
+      setEditingDate(false);
       fetchData();
     } catch { /* */ }
     finally { setActionLoading(false); }
@@ -375,6 +401,25 @@ Thank you!
         </CardContent>
       </Card>
 
+      {/* Payment Pending Warning */}
+      {data.paymentStatus?.hasPending && (
+        <Card className="mb-3 border-red-200 bg-red-50">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2">
+              <IndianRupee className="h-4 w-4 text-red-600 shrink-0" />
+              <div className="flex-1">
+                <p className="text-xs font-semibold text-red-900">Payment Pending</p>
+                <p className="text-[10px] text-red-700">
+                  Balance: {formatINR(data.paymentStatus.balance)} of {formatINR(data.paymentStatus.totalAmount)}
+                  {data.paymentStatus.paidAmount > 0 && ` (Paid: ${formatINR(data.paymentStatus.paidAmount)})`}
+                </p>
+              </div>
+              <Link href="/receivables" className="text-[10px] text-red-600 underline shrink-0">View</Link>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Courier Info (outstation, after scheduling) */}
       {isOuts && data.courierName && (
         <Card className="mb-3 border-amber-200 bg-amber-50">
@@ -431,6 +476,56 @@ Thank you!
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Free Accessories */}
+      {["SCHEDULED", "OUT_FOR_DELIVERY", "PACKED", "SHIPPED", "IN_TRANSIT"].includes(data.status) && (
+        <Card className="mb-3">
+          <CardContent className="p-3">
+            <p className="text-xs font-semibold text-slate-700 mb-2">Free Accessories (included with delivery)</p>
+            {data.freeAccessories && !editingAccessories ? (
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-700">{data.freeAccessories}</p>
+                <button
+                  onClick={() => setEditingAccessories(true)}
+                  className="text-[10px] text-blue-600 font-medium"
+                >
+                  Edit
+                </button>
+              </div>
+            ) : (
+              <div className="flex gap-2">
+                <Input
+                  value={freeAccessories}
+                  onChange={(e) => setFreeAccessories(e.target.value)}
+                  placeholder="e.g. Lock, Bell, Pump, Toolkit"
+                  className="text-xs flex-1"
+                />
+                <button
+                  onClick={async () => {
+                    await saveFreeAccessories();
+                    setEditingAccessories(false);
+                  }}
+                  disabled={actionLoading}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
+                >
+                  Save
+                </button>
+                {editingAccessories && (
+                  <button
+                    onClick={() => {
+                      setFreeAccessories(data.freeAccessories || "");
+                      setEditingAccessories(false);
+                    }}
+                    className="px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium shrink-0"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -555,18 +650,101 @@ Thank you!
       )}
 
       {/* Delivery Info */}
-      {data.scheduledDate && (
-        <Card className="mb-3">
-          <CardContent className="p-3">
+      {data.scheduledDate && (() => {
+        const canEditDate = ["SCHEDULED", "OUT_FOR_DELIVERY", "PACKED", "SHIPPED", "IN_TRANSIT"].includes(data.status);
+        return (
+          <Card className="mb-3">
+            <CardContent className="p-3">
+              {editingDate ? (
+                <div className="flex items-center gap-2">
+                  <Input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} className="text-xs flex-1" />
+                  <button onClick={handleDateChange} disabled={actionLoading} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50">Save</button>
+                  <button onClick={() => setEditingDate(false)} className="text-slate-500 text-xs">Cancel</button>
+                </div>
+              ) : (
+                <div
+                  className={`flex items-center gap-2 ${canEditDate ? "cursor-pointer" : ""}`}
+                  onClick={() => {
+                    if (canEditDate) {
+                      setNewDate(data.scheduledDate ? data.scheduledDate.slice(0, 10) : "");
+                      setEditingDate(true);
+                    }
+                  }}
+                >
+                  <Clock className="h-4 w-4 text-blue-600" />
+                  <p className="text-xs text-slate-700">
+                    Delivery: <span className="font-medium">{new Date(data.scheduledDate).toLocaleDateString("en-IN")}</span>
+                    {data.deliveryNotes && ` — ${data.deliveryNotes}`}
+                  </p>
+                  {canEditDate && <span className="text-[10px] text-blue-500 ml-auto">tap to change</span>}
+                </div>
+              )}
+              {data.dispatchedAt && <p className="text-[10px] text-slate-500 ml-6 mt-0.5">Dispatched: {new Date(data.dispatchedAt).toLocaleString("en-IN")}</p>}
+              {data.deliveredAt && <p className="text-[10px] text-green-600 ml-6 mt-0.5">Delivered: {new Date(data.deliveredAt).toLocaleString("en-IN")}</p>}
+            </CardContent>
+          </Card>
+        );
+      })()}
+
+      {/* WhatsApp Action Buttons */}
+      {data.customerPhone && (
+        <Card className="mb-3 border-green-200 bg-green-50">
+          <CardContent className="p-3 space-y-2">
             <div className="flex items-center gap-2">
-              <Clock className="h-4 w-4 text-blue-600" />
-              <p className="text-xs text-slate-700">
-                Delivery: <span className="font-medium">{new Date(data.scheduledDate).toLocaleDateString("en-IN")}</span>
-                {data.deliveryNotes && ` — ${data.deliveryNotes}`}
-              </p>
+              <MessageCircle className="h-4 w-4 text-green-600" />
+              <p className="text-xs font-semibold text-green-900">WhatsApp Messages</p>
             </div>
-            {data.dispatchedAt && <p className="text-[10px] text-slate-500 ml-6 mt-0.5">Dispatched: {new Date(data.dispatchedAt).toLocaleString("en-IN")}</p>}
-            {data.deliveredAt && <p className="text-[10px] text-green-600 ml-6 mt-0.5">Delivered: {new Date(data.deliveredAt).toLocaleString("en-IN")}</p>}
+
+            {/* Scheduled message */}
+            {data.status === "SCHEDULED" && (
+              data.whatsAppScheduledSent ? (
+                <div className="flex items-center gap-1.5">
+                  <Check className="h-3.5 w-3.5 text-green-600" />
+                  <p className="text-xs text-green-600">Scheduled msg sent</p>
+                </div>
+              ) : (
+                <button
+                  onClick={sendScheduledWhatsApp}
+                  className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2 rounded-lg text-xs font-medium"
+                >
+                  <MessageCircle className="h-3.5 w-3.5" /> Send Scheduled
+                </button>
+              )
+            )}
+
+            {/* Dispatched message */}
+            {["OUT_FOR_DELIVERY", "SHIPPED", "IN_TRANSIT"].includes(data.status) && (
+              data.whatsAppDispatchedSent ? (
+                <div className="flex items-center gap-1.5">
+                  <Check className="h-3.5 w-3.5 text-green-600" />
+                  <p className="text-xs text-green-600">Dispatched msg sent</p>
+                </div>
+              ) : (
+                <button
+                  onClick={sendDispatchedWhatsApp}
+                  className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2 rounded-lg text-xs font-medium"
+                >
+                  <MessageCircle className="h-3.5 w-3.5" /> Send Dispatched
+                </button>
+              )
+            )}
+
+            {/* Delivered message */}
+            {data.status === "DELIVERED" && (
+              data.whatsAppDeliveredSent ? (
+                <div className="flex items-center gap-1.5">
+                  <Check className="h-3.5 w-3.5 text-green-600" />
+                  <p className="text-xs text-green-600">Delivered msg sent</p>
+                </div>
+              ) : (
+                <button
+                  onClick={sendDeliveredWhatsApp}
+                  className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2 rounded-lg text-xs font-medium"
+                >
+                  <MessageCircle className="h-3.5 w-3.5" /> Send Delivered
+                </button>
+              )
+            )}
           </CardContent>
         </Card>
       )}
@@ -589,7 +767,10 @@ Thank you!
         {data.status === "VERIFIED" && (
           <div className="flex gap-2">
             <button onClick={() => {
-              if (!confirm("Mark as walk-out? Stock will be deducted.")) return;
+              const woWarning = data.paymentStatus?.hasPending
+                ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
+                : "";
+              if (!confirm(`${woWarning}Mark as walk-out? Stock will be deducted.`)) return;
               updateStatus("WALK_OUT");
             }} disabled={actionLoading}
               className="flex-1 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
@@ -637,7 +818,10 @@ Thank you!
         {/* Outstation: IN_TRANSIT -> DELIVERED */}
         {data.status === "IN_TRANSIT" && (
           <button onClick={() => {
-            if (!confirm("Mark as delivered? Stock will be deducted.")) return;
+            const delWarning = data.paymentStatus?.hasPending
+              ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
+              : "";
+            if (!confirm(`${delWarning}Mark as delivered? Stock will be deducted.`)) return;
             updateStatus("DELIVERED");
           }} disabled={actionLoading}
             className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
@@ -647,7 +831,10 @@ Thank you!
 
         {data.status === "OUT_FOR_DELIVERY" && (
           <button onClick={() => {
-            if (!confirm("Mark as delivered? Stock will be deducted.")) return;
+            const delWarning = data.paymentStatus?.hasPending
+              ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
+              : "";
+            if (!confirm(`${delWarning}Mark as delivered? Stock will be deducted.`)) return;
             updateStatus("DELIVERED");
           }} disabled={actionLoading}
             className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">

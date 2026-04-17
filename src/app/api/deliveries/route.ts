@@ -14,10 +14,13 @@ export async function GET(req: NextRequest) {
     const area = searchParams.get("area") || undefined;
     const date = searchParams.get("date") || undefined;
     const search = searchParams.get("search") || undefined;
+    const outstation = searchParams.get("outstation") || undefined;
+    const sortBy = searchParams.get("sortBy") || undefined;
 
     const where: Record<string, unknown> = {};
     if (status) where.status = status;
     if (area) where.customerArea = area;
+    if (outstation === "true") where.isOutstation = true;
     if (date) {
       const d = new Date(date);
       const next = new Date(d);
@@ -36,7 +39,7 @@ export async function GET(req: NextRequest) {
       prisma.delivery.findMany({
         where,
         include: { verifiedBy: { select: { name: true } } },
-        orderBy: { invoiceAmount: "desc" },
+        orderBy: sortBy === "scheduledDate" ? { scheduledDate: "asc" } : { invoiceAmount: "desc" },
         skip,
         take: limit,
       }),
