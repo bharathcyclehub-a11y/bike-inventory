@@ -39,6 +39,7 @@ export async function GET(req: NextRequest) {
       const countedItems = c.items.filter((i) => i.countedQty !== null).length;
       return {
         id: c.id,
+        countNo: c.countNo,
         title: c.title,
         assignedTo: c.assignedTo,
         status: c.status,
@@ -73,9 +74,9 @@ export async function POST(req: NextRequest) {
     const locationScope = body.location as string | undefined;
     const productType = data.productType || undefined;
 
+    let binIds: string[] | undefined;
     if (!productIds || productIds.length === 0) {
       // Location-level scope: find all bins in that location, then get products from those bins
-      let binIds: string[] | undefined;
       if (locationScope) {
         const locationBins = await prisma.bin.findMany({
           where: { location: locationScope, isActive: true },
@@ -111,11 +112,23 @@ export async function POST(req: NextRequest) {
 
     const products = await prisma.product.findMany({
       where: { id: { in: productIds } },
-      select: { id: true, currentStock: true },
+      select: { id: true, currentStock: true, binId: true },
     });
+
+    // Generate countNo: SC-YYYYMM-NNNN
+    const now = new Date();
+    const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const lastCount = await prisma.stockCount.findFirst({
+      where: { countNo: { startsWith: `SC-${ym}-` } },
+      orderBy: { countNo: "desc" },
+      select: { countNo: true },
+    });
+    const seq = lastCount?.countNo ? parseInt(lastCount.countNo.split("-").pop()!) + 1 : 1;
+    const countNo = `SC-${ym}-${String(seq).padStart(4, "0")}`;
 
     const stockCount = await prisma.stockCount.create({
       data: {
+        countNo,
         title: data.title,
         assignedToId: data.assignedToId || user.id,
         binId: binId || null,
@@ -126,7 +139,14 @@ export async function POST(req: NextRequest) {
         items: {
           create: products.map((p) => ({
             productId: p.id,
-            systemQty: p.currentStock,
+            // Only show system stock if product belongs to THIS bin/location
+            // Products from other bins show systemQty=0 so clerks aren't confused
+            systemQty: (() => {
+              if (!p.binId) return p.currentStock; // unassigned product — show its stock
+              if (binId && p.binId !== binId) return 0; // belongs to a different bin
+              if (binIds && !binIds.includes(p.binId)) return 0; // belongs to a bin outside this location
+              return p.currentStock;
+            })(),
           })),
         },
       },
