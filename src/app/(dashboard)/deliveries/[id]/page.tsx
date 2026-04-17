@@ -77,6 +77,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const [delNotes, setDelNotes] = useState("");
   const [isOutstation, setIsOutstation] = useState(false);
 
+  // Dispatch form
+  const [showDispatch, setShowDispatch] = useState(false);
+
   // Courier fields (outstation)
   const [courierName, setCourierName] = useState("");
   const [courierTrackingNo, setCourierTrackingNo] = useState("");
@@ -150,11 +153,6 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         deliveryNotes: delNotes,
         isOutstation,
       };
-      if (isOutstation) {
-        payload.courierName = courierName;
-        payload.courierTrackingNo = courierTrackingNo;
-        if (courierCost) payload.courierCost = parseFloat(courierCost);
-      }
       await fetch(`/api/deliveries/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -367,28 +365,9 @@ Thank you!
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-slate-900">{data.customerName}</p>
             {data.customerPhone && (
-              <div className="flex items-center gap-2">
-                <a href={`tel:${data.customerPhone}`} className="flex items-center gap-1 text-xs text-blue-600">
-                  <Phone className="h-3.5 w-3.5" /> {data.customerPhone}
-                </a>
-                <button
-                  onClick={() => {
-                    const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
-                    const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${data.customerName} - ${data.invoiceNo}\nTEL:+91${phone}\nEND:VCARD`;
-                    const blob = new Blob([vcard], { type: "text/vcard" });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `${data.customerName}.vcf`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                  className="p-1 rounded-md bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
-                  title="Save Contact"
-                >
-                  <Download className="h-3.5 w-3.5" />
-                </button>
-              </div>
+              <a href={`tel:${data.customerPhone}`} className="flex items-center gap-1 text-xs text-blue-600">
+                <Phone className="h-3.5 w-3.5" /> {data.customerPhone}
+              </a>
             )}
           </div>
           {data.customerAddress && (
@@ -400,6 +379,30 @@ Thank you!
           {data.customerArea && <p className="text-[10px] text-slate-500">Area: {data.customerArea} {data.customerPincode ? `| ${data.customerPincode}` : ""}</p>}
         </CardContent>
       </Card>
+
+      {/* Save Contact Card (only at VERIFIED step) */}
+      {data.status === "VERIFIED" && data.customerPhone && (
+        <Card className="mb-3 border-blue-200 bg-blue-50">
+          <CardContent className="p-3">
+            <button
+              onClick={() => {
+                const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
+                const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${data.customerName} - ${data.invoiceNo}\nTEL:+91${phone}\nEND:VCARD`;
+                const blob = new Blob([vcard], { type: "text/vcard" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${data.customerName}.vcf`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
+            >
+              <Download className="h-4 w-4" /> Save Customer Contact
+            </button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Payment Pending Warning */}
       {data.paymentStatus?.hasPending && (
@@ -420,23 +423,23 @@ Thank you!
         </Card>
       )}
 
-      {/* Courier Info (outstation, after scheduling) */}
-      {isOuts && data.courierName && (
-        <Card className="mb-3 border-amber-200 bg-amber-50">
+      {/* Courier / Delivery Info */}
+      {data.courierName && (
+        <Card className="mb-3 border-blue-200 bg-blue-50">
           <CardContent className="p-3 space-y-1">
             <div className="flex items-center gap-2">
-              <Truck className="h-4 w-4 text-amber-600 shrink-0" />
-              <p className="text-xs font-semibold text-amber-900">Courier Details</p>
+              <Truck className="h-4 w-4 text-blue-600 shrink-0" />
+              <p className="text-xs font-semibold text-blue-900">Courier Details</p>
             </div>
-            <p className="text-xs text-amber-800">Courier: {data.courierName}</p>
-            {data.courierTrackingNo && <p className="text-xs text-amber-800">Tracking: {data.courierTrackingNo}</p>}
-            {data.courierCost != null && <p className="text-xs text-amber-800">Cost: {formatINR(data.courierCost)}</p>}
+            <p className="text-xs text-blue-800">Courier: {data.courierName}</p>
+            {data.courierTrackingNo && <p className="text-xs text-blue-800">Tracking: {data.courierTrackingNo}</p>}
+            {data.courierCost != null && <p className="text-xs text-blue-800">Cost: {formatINR(data.courierCost)}</p>}
           </CardContent>
         </Card>
       )}
 
-      {/* Editable courier section for outstation deliveries in SCHEDULED/PACKED/SHIPPED/IN_TRANSIT */}
-      {isOuts && ["SCHEDULED", "PACKED", "SHIPPED", "IN_TRANSIT"].includes(data.status) && (
+      {/* Editable courier section for dispatched deliveries */}
+      {["OUT_FOR_DELIVERY", "PACKED", "SHIPPED", "IN_TRANSIT"].includes(data.status) && (
         <Card className="mb-3 border-amber-200">
           <CardContent className="p-3 space-y-2">
             <p className="text-xs font-semibold text-slate-700">Update Courier Info</p>
@@ -611,25 +614,6 @@ Thank you!
               <p className="text-[10px] text-green-600">Auto-detected: {getAreaFromPincode(pincode)}</p>
             )}
 
-            {/* Courier fields for outstation */}
-            {isOutstation && (
-              <div className="space-y-2 border-t border-amber-200 pt-2">
-                <p className="text-[10px] font-semibold text-amber-700">Courier Details (Outstation)</p>
-                <div>
-                  <label className="text-[10px] text-slate-500">Courier Name</label>
-                  <Input value={courierName} onChange={(e) => setCourierName(e.target.value)} placeholder="e.g. DTDC, BlueDart, Delhivery" className="text-xs" />
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-500">Tracking Number</label>
-                  <Input value={courierTrackingNo} onChange={(e) => setCourierTrackingNo(e.target.value)} placeholder="Tracking ID" className="text-xs" />
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-500">Courier Cost</label>
-                  <Input type="number" value={courierCost} onChange={(e) => setCourierCost(e.target.value)} placeholder="0" className="text-xs" />
-                </div>
-              </div>
-            )}
-
             <div>
               <label className="text-[10px] text-slate-500">Delivery Date *</label>
               <Input type="date" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} className="text-xs" />
@@ -784,11 +768,48 @@ Thank you!
         )}
 
         {/* Local delivery: SCHEDULED -> OUT_FOR_DELIVERY */}
-        {data.status === "SCHEDULED" && !isOuts && (
-          <button onClick={() => updateStatus("OUT_FOR_DELIVERY")} disabled={actionLoading}
+        {data.status === "SCHEDULED" && !isOuts && !showDispatch && (
+          <button onClick={() => setShowDispatch(true)} disabled={actionLoading}
             className="w-full flex items-center justify-center gap-2 bg-orange-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <Truck className="h-4 w-4" /> Dispatch
           </button>
+        )}
+
+        {showDispatch && data.status === "SCHEDULED" && (
+          <Card className="border-orange-200">
+            <CardContent className="p-3 space-y-2">
+              <p className="text-xs font-semibold text-slate-700">Dispatch Details</p>
+              <div>
+                <label className="text-[10px] text-slate-500">Courier / Delivery Person *</label>
+                <Input value={courierName} onChange={(e) => setCourierName(e.target.value)} placeholder="e.g. Store delivery, DTDC, BlueDart" className="text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500">Tracking / Reference No</label>
+                <Input value={courierTrackingNo} onChange={(e) => setCourierTrackingNo(e.target.value)} placeholder="Vehicle no, tracking ID..." className="text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500">Delivery Cost (₹)</label>
+                <Input type="number" value={courierCost} onChange={(e) => setCourierCost(e.target.value)} placeholder="0" className="text-xs" inputMode="numeric" />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    if (!courierName.trim()) { alert("Please enter courier/delivery person name"); return; }
+                    updateStatus("OUT_FOR_DELIVERY", {
+                      courierName: courierName.trim(),
+                      courierTrackingNo: courierTrackingNo.trim() || undefined,
+                      courierCost: courierCost ? parseFloat(courierCost) : undefined,
+                    });
+                    setShowDispatch(false);
+                  }}
+                  disabled={actionLoading}
+                  className="flex-1 bg-orange-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+                  {actionLoading ? "Dispatching..." : "Confirm Dispatch"}
+                </button>
+                <button onClick={() => setShowDispatch(false)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">Cancel</button>
+              </div>
+            </CardContent>
+          </Card>
         )}
 
         {/* Outstation: SCHEDULED -> PACKED */}

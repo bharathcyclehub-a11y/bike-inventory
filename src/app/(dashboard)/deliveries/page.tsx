@@ -115,6 +115,8 @@ export default function DeliveriesPage() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showOutstation, setShowOutstation] = useState(false);
+  const [editingDateId, setEditingDateId] = useState<string | null>(null);
+  const [editDate, setEditDate] = useState("");
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -201,6 +203,20 @@ export default function DeliveriesPage() {
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Bulk delete failed");
     } finally { setBulkDeleting(false); }
+  };
+
+  const handleSaveDate = async (deliveryId: string) => {
+    if (!editDate) return;
+    try {
+      await fetch(`/api/deliveries/${deliveryId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduledDate: editDate }),
+      });
+      setEditingDateId(null);
+      setEditDate("");
+      fetchData();
+    } catch { /* */ }
   };
 
   // ─── QUICK SEARCH (invoice no / phone → direct Zoho search, no pipeline) ───
@@ -692,12 +708,42 @@ export default function DeliveriesPage() {
                     </div>
                   )}
 
-                  {/* Scheduled info */}
-                  {d.scheduledDate && (
-                    <p className="text-[10px] text-blue-600 mb-1.5">
+                  {/* Scheduled info / inline date editor */}
+                  {d.scheduledDate && editingDateId !== d.id && (
+                    <p className="text-[10px] text-blue-600 mb-1.5 cursor-pointer" onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setEditDate(d.scheduledDate!.slice(0, 10));
+                      setEditingDateId(d.id);
+                    }}>
                       Delivery: {new Date(d.scheduledDate).toLocaleDateString("en-IN")}
                       {d.customerArea && ` | ${d.customerArea}`}
+                      <span className="text-blue-400 ml-1">tap to change</span>
                     </p>
+                  )}
+                  {editingDateId === d.id && (
+                    <div className="flex items-center gap-1.5 mb-1.5" onClick={(e) => e.stopPropagation()}>
+                      <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)}
+                        className="flex-1 text-xs border border-blue-300 rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                      <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleSaveDate(d.id); }}
+                        className="bg-blue-600 text-white px-2 py-1 rounded-md text-[10px] font-medium">Save</button>
+                      <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingDateId(null); }}
+                        className="text-slate-400 text-[10px]">Cancel</button>
+                    </div>
+                  )}
+
+                  {/* Set date for cards without one */}
+                  {!d.scheduledDate && ["VERIFIED", "SCHEDULED"].includes(d.status) && editingDateId !== d.id && (
+                    <button onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      const tomorrow = new Date();
+                      tomorrow.setDate(tomorrow.getDate() + 1);
+                      setEditDate(tomorrow.toISOString().slice(0, 10));
+                      setEditingDateId(d.id);
+                    }} className="text-[10px] text-blue-500 mb-1.5">
+                      + Set delivery date
+                    </button>
                   )}
 
                   {/* Flag reason */}
