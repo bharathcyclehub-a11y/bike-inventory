@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
 }
 
 // POST: Bulk verify/putaway — verify multiple transactions and assign bin locations
+// Supports split bin assignments: { transactionId, splits: [{ binId, quantity }] }
 export async function POST(req: NextRequest) {
   try {
     const user = await requireAuth([...ALLOWED_ROLES]);
@@ -73,7 +74,7 @@ export async function POST(req: NextRequest) {
     let verifiedCount = 0;
 
     for (const item of items) {
-      const { transactionId, binId } = item;
+      const { transactionId } = item;
 
       if (!transactionId) {
         errors.push({ transactionId: "unknown", error: "Missing transactionId" });
@@ -103,7 +104,18 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        // Add stock and update bin inside a transaction to prevent race conditions
+        // Determine splits: either explicit splits array or simple binId + quantity
+        const splits: { binId?: string; quantity: number }[] = item.splits
+          ? item.splits
+          : [{ binId: item.binId, quantity: item.quantity || transaction.quantity }];
+
+        // Validate total quantity matches
+        const totalSplitQty = splits.reduce((sum: number, s: { quantity: number }) => sum + s.quantity, 0);
+        if (totalSplitQty !== transaction.quantity) {
+          errors.push({ transactionId, error: `Split qty (${totalSplitQty}) doesn't match transaction qty (${transaction.quantity})` });
+          continue;
+        }
+
         await prisma.$transaction(async (tx) => {
           const product = await tx.product.findUniqueOrThrow({
             where: { id: transaction.productId },
@@ -111,24 +123,78 @@ export async function POST(req: NextRequest) {
 
           const newStock = product.currentStock + transaction.quantity;
 
-          await tx.product.update({
-            where: { id: product.id },
-            data: {
-              currentStock: newStock,
-              ...(binId && { binId }),
-            },
-          });
+          // If all units go to the same bin (or no splits), simple update
+          if (splits.length === 1) {
+            const binId = splits[0].binId;
+            await tx.product.update({
+              where: { id: product.id },
+              data: {
+                currentStock: newStock,
+                ...(binId && { binId }),
+              },
+            });
 
-          await tx.inventoryTransaction.update({
-            where: { id: transactionId },
-            data: {
-              previousStock: product.currentStock,
-              newStock,
-              notes: transaction.notes!
-                .replace("[UNVERIFIED]", "[VERIFIED]")
-                + ` | Verified by: ${user.name} at ${new Date().toISOString()}`,
-            },
-          });
+            await tx.inventoryTransaction.update({
+              where: { id: transactionId },
+              data: {
+                previousStock: product.currentStock,
+                newStock,
+                notes: transaction.notes!
+                  .replace("[UNVERIFIED]", "[VERIFIED]")
+                  + ` | Verified by: ${user.name} at ${new Date().toISOString()}`,
+              },
+            });
+          } else {
+            // Multiple bins — update product stock, then split original transaction
+            // Product's binId set to the bin with the most units
+            const primaryBin = splits.reduce((a, b) => (b.quantity > a.quantity ? b : a)).binId;
+
+            await tx.product.update({
+              where: { id: product.id },
+              data: {
+                currentStock: newStock,
+                ...(primaryBin && { binId: primaryBin }),
+              },
+            });
+
+            // Update original transaction with first split's quantity
+            const firstSplit = splits[0];
+            await tx.inventoryTransaction.update({
+              where: { id: transactionId },
+              data: {
+                quantity: firstSplit.quantity,
+                previousStock: product.currentStock,
+                newStock,
+                notes: transaction.notes!
+                  .replace("[UNVERIFIED]", "[VERIFIED]")
+                  + (firstSplit.binId ? ` | Bin: ${firstSplit.binId}` : "")
+                  + ` | Split ${splits.length} ways | Verified by: ${user.name} at ${new Date().toISOString()}`,
+              },
+            });
+
+            // Create additional transactions for remaining splits
+            let runningStock = product.currentStock + firstSplit.quantity;
+            for (let i = 1; i < splits.length; i++) {
+              const split = splits[i];
+              const splitNewStock = runningStock + split.quantity;
+              await tx.inventoryTransaction.create({
+                data: {
+                  type: "INWARD",
+                  productId: product.id,
+                  quantity: split.quantity,
+                  previousStock: runningStock,
+                  newStock: splitNewStock,
+                  referenceNo: transaction.referenceNo,
+                  notes: (transaction.notes || "")
+                    .replace("[UNVERIFIED]", "[VERIFIED]")
+                    + (split.binId ? ` | Bin: ${split.binId}` : "")
+                    + ` | Split ${i + 1}/${splits.length} | Verified by: ${user.name} at ${new Date().toISOString()}`,
+                  userId: transaction.userId,
+                },
+              });
+              runningStock = splitNewStock;
+            }
+          }
         });
 
         verifiedCount++;

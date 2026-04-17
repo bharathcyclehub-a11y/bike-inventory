@@ -24,6 +24,15 @@ interface PutawayTransaction {
   user: { name: string };
 }
 
+// A single unit row exploded from a transaction with qty > 1
+interface UnitRow {
+  unitKey: string; // "txnId-0", "txnId-1", etc.
+  transactionId: string;
+  unitIndex: number;
+  totalUnits: number;
+  product: PutawayTransaction["product"];
+}
+
 interface Bin {
   id: string;
   code: string;
@@ -37,6 +46,7 @@ export default function PutawayPage() {
   const ref = searchParams.get("ref") || "";
 
   const [transactions, setTransactions] = useState<PutawayTransaction[]>([]);
+  const [unitRows, setUnitRows] = useState<UnitRow[]>([]);
   const [verifiedCount, setVerifiedCount] = useState(0);
   const [bins, setBins] = useState<Bin[]>([]);
   const [binSelections, setBinSelections] = useState<Record<string, string>>({});
@@ -46,6 +56,23 @@ export default function PutawayPage() {
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<{ verified: number; errors: { transactionId: string; error: string }[] } | null>(null);
+
+  // Explode transactions into individual unit rows
+  const explodeToUnits = (txns: PutawayTransaction[]): UnitRow[] => {
+    const rows: UnitRow[] = [];
+    for (const t of txns) {
+      for (let i = 0; i < t.quantity; i++) {
+        rows.push({
+          unitKey: `${t.id}-${i}`,
+          transactionId: t.id,
+          unitIndex: i,
+          totalUnits: t.quantity,
+          product: t.product,
+        });
+      }
+    }
+    return rows;
+  };
 
   const fetchData = useCallback(async () => {
     if (!ref) return;
@@ -59,14 +86,16 @@ export default function PutawayPage() {
       if (txRes.success) {
         const unverified: PutawayTransaction[] = txRes.data.unverified;
         setTransactions(unverified);
+        const rows = explodeToUnits(unverified);
+        setUnitRows(rows);
         setVerifiedCount(txRes.data.verifiedCount || 0);
-        // Select all by default
-        setSelected(new Set(unverified.map((t) => t.id)));
+        // Select all unit rows by default
+        setSelected(new Set(rows.map((r) => r.unitKey)));
 
         const defaults: Record<string, string> = {};
-        for (const t of unverified) {
-          if (t.product.binId) {
-            defaults[t.id] = t.product.binId;
+        for (const r of rows) {
+          if (r.product.binId) {
+            defaults[r.unitKey] = r.product.binId;
           }
         }
         setBinSelections(defaults);
@@ -86,29 +115,29 @@ export default function PutawayPage() {
     fetchData();
   }, [fetchData]);
 
-  const handleBinChange = (transactionId: string, binId: string) => {
-    setBinSelections((prev) => ({ ...prev, [transactionId]: binId }));
+  const handleBinChange = (unitKey: string, binId: string) => {
+    setBinSelections((prev) => ({ ...prev, [unitKey]: binId }));
   };
 
-  const toggleItem = (id: string) => {
+  const toggleItem = (unitKey: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      next.has(unitKey) ? next.delete(unitKey) : next.add(unitKey);
       return next;
     });
   };
 
-  const selectAll = () => setSelected(new Set(transactions.map((t) => t.id)));
+  const selectAll = () => setSelected(new Set(unitRows.map((r) => r.unitKey)));
   const deselectAll = () => setSelected(new Set());
-  const allSelected = transactions.length > 0 && selected.size === transactions.length;
+  const allSelected = unitRows.length > 0 && selected.size === unitRows.length;
 
-  // Apply a single bin to all selected items
+  // Apply a single bin to all selected units
   const handleBulkBin = (binId: string) => {
     setBinSelections((prev) => {
       const next = { ...prev };
-      for (const id of selected) {
-        if (binId) next[id] = binId;
-        else delete next[id];
+      for (const key of selected) {
+        if (binId) next[key] = binId;
+        else delete next[key];
       }
       return next;
     });
@@ -121,13 +150,33 @@ export default function PutawayPage() {
     setResult(null);
 
     try {
+      // Group selected units by transactionId + binId
+      const txnBinMap = new Map<string, { transactionId: string; bins: Map<string, number> }>();
+      for (const row of unitRows) {
+        if (!selected.has(row.unitKey)) continue;
+        const bin = binSelections[row.unitKey] || "";
+        if (!txnBinMap.has(row.transactionId)) {
+          txnBinMap.set(row.transactionId, { transactionId: row.transactionId, bins: new Map() });
+        }
+        const entry = txnBinMap.get(row.transactionId)!;
+        entry.bins.set(bin, (entry.bins.get(bin) || 0) + 1);
+      }
+
+      // Build payload: each transaction with its unit-to-bin splits
       const payload = {
-        transactions: transactions
-          .filter((t) => selected.has(t.id))
-          .map((t) => ({
-            transactionId: t.id,
-            binId: binSelections[t.id] || undefined,
-          })),
+        transactions: Array.from(txnBinMap.values()).map((entry) => {
+          const splits = Array.from(entry.bins.entries()).map(([binId, qty]) => ({
+            binId: binId || undefined,
+            quantity: qty,
+          }));
+          return {
+            transactionId: entry.transactionId,
+            // If all units go to same bin, use simple format for backward compatibility
+            ...(splits.length === 1
+              ? { binId: splits[0].binId, quantity: splits[0].quantity }
+              : { splits }),
+          };
+        }),
       };
 
       const res = await fetch("/api/inventory/inwards/putaway", {
@@ -139,7 +188,7 @@ export default function PutawayPage() {
       const data = await res.json();
       if (data.success) {
         setResult(data.data);
-        if (data.data.errors.length === 0 && selected.size === transactions.length) {
+        if (data.data.errors.length === 0 && selected.size === unitRows.length) {
           setDone(true);
         } else {
           if (data.data.errors.length > 0) {
@@ -216,7 +265,7 @@ export default function PutawayPage() {
             </CardContent></Card>
           ))}
         </div>
-      ) : transactions.length === 0 ? (
+      ) : unitRows.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16">
           <div className="rounded-full bg-green-100 p-3 mb-3">
             <CheckCircle2 className="h-8 w-8 text-green-600" />
@@ -234,7 +283,8 @@ export default function PutawayPage() {
             <div className="flex items-center gap-2">
               <Package className="h-4 w-4 text-amber-600" />
               <span className="text-xs font-medium text-amber-800">
-                {transactions.length} item{transactions.length !== 1 ? "s" : ""} pending
+                {unitRows.length} unit{unitRows.length !== 1 ? "s" : ""} pending
+                <span className="text-amber-600 font-normal"> ({transactions.length} line items)</span>
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -269,16 +319,16 @@ export default function PutawayPage() {
             )}
           </div>
 
-          {/* Item Cards */}
+          {/* Unit-level Cards */}
           <div className="space-y-2">
-            {transactions.map((t) => {
-              const isSelected = selected.has(t.id);
+            {unitRows.map((row) => {
+              const isSelected = selected.has(row.unitKey);
               return (
-                <Card key={t.id} className={`overflow-hidden transition-colors ${isSelected ? "border-blue-300 bg-blue-50/30" : "opacity-60"}`}>
+                <Card key={row.unitKey} className={`overflow-hidden transition-colors ${isSelected ? "border-blue-300 bg-blue-50/30" : "opacity-60"}`}>
                   <CardContent className="p-3">
                     <div className="flex items-start gap-2.5">
                       {/* Checkbox */}
-                      <button onClick={() => toggleItem(t.id)} className="mt-0.5 shrink-0">
+                      <button onClick={() => toggleItem(row.unitKey)} className="mt-0.5 shrink-0">
                         {isSelected
                           ? <CheckSquare className="h-5 w-5 text-blue-600" />
                           : <Square className="h-5 w-5 text-slate-300" />}
@@ -287,24 +337,26 @@ export default function PutawayPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start justify-between mb-2">
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-semibold text-slate-900 truncate">{t.product.name}</p>
+                            <p className="text-sm font-semibold text-slate-900 truncate">{row.product.name}</p>
                             <p className="text-xs text-slate-500">
-                              {t.product.sku}
-                              {t.product.brand?.name ? ` | ${t.product.brand.name}` : ""}
+                              {row.product.sku}
+                              {row.product.brand?.name ? ` | ${row.product.brand.name}` : ""}
                             </p>
                           </div>
-                          <Badge variant="info" className="ml-2 shrink-0 text-xs font-bold">x{t.quantity}</Badge>
+                          <Badge variant="info" className="ml-2 shrink-0 text-xs font-bold">
+                            {row.totalUnits > 1 ? `${row.unitIndex + 1} of ${row.totalUnits}` : "x1"}
+                          </Badge>
                         </div>
 
                         {/* Bin Selection */}
                         <div className="flex items-center gap-2">
                           <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                           <select
-                            value={binSelections[t.id] || ""}
-                            onChange={(e) => handleBinChange(t.id, e.target.value)}
+                            value={binSelections[row.unitKey] || ""}
+                            onChange={(e) => handleBinChange(row.unitKey, e.target.value)}
                             className="flex-1 text-sm border border-slate-200 rounded-lg px-2.5 py-2 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400 appearance-none"
                           >
-                            <option value="">No bin assigned</option>
+                            <option value="">Select bin...</option>
                             {bins.map((bin) => (
                               <option key={bin.id} value={bin.id}>{bin.code} — {bin.name}</option>
                             ))}
@@ -338,7 +390,7 @@ export default function PutawayPage() {
               {submitting ? (
                 <><Loader2 className="h-4 w-4 animate-spin mr-2" />Verifying...</>
               ) : (
-                <><CheckCircle2 className="h-4 w-4 mr-2" />Confirm {selected.size} of {transactions.length} Items</>
+                <><CheckCircle2 className="h-4 w-4 mr-2" />Confirm {selected.size} of {unitRows.length} Units</>
               )}
             </Button>
           </div>
