@@ -14,7 +14,6 @@ import {
   Building2,
   Receipt,
   Truck,
-  Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Role } from "@/types";
@@ -44,8 +43,9 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "SUPERVISOR":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/accounts", label: "Accounts", icon: Receipt, key: "accounts" },
+        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
         { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/bills", label: "Bills", icon: ArrowDownCircle, key: "bills" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
@@ -60,8 +60,9 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "ACCOUNTS_MANAGER":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
         { href: "/expenses", label: "Expenses", icon: Receipt, key: "expenses" },
-        { href: "/vendor-issues", label: "Issues", icon: Building2, key: "vendor-issues" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/stock-audit", label: "Audit", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
@@ -69,24 +70,17 @@ function getTabsForRole(role: Role): TabConfig[] {
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/inwards", label: "Verify", icon: ArrowDownCircle, key: "inwards" },
-        { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
+        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+        { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "OUTWARDS_CLERK":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards" },
         { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
-        { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
-      ];
-    case "MECHANIC":
-      return [
-        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/service", label: "My Jobs", icon: Wrench, key: "service" },
-        { href: "/stock", label: "Parts", icon: Package, key: "stock" },
-        { href: "/scanner", label: "Scanner", icon: QrCode, key: "scanner" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     default:
