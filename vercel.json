@@ -11,7 +11,7 @@
     },
     {
       "path": "/api/cron/invoice-pull",
-      "schedule": "0 * * * *"
+      "schedule": "0 9 * * *"
     }
   ]
 }
