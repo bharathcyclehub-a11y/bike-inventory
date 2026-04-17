@@ -15,7 +15,6 @@ enum Role {
   ACCOUNTS_MANAGER
   INWARDS_CLERK
   OUTWARDS_CLERK
-  MECHANIC
 }
 
 enum TransactionType {
@@ -157,14 +156,24 @@ model User {
   uploadedStatements  BankStatement[] @relation("StatementUploader")
 
   // Service tickets
-  createdTickets    ServiceTicket[]     @relation("TicketCreatedBy")
-  assignedTickets   ServiceTicket[]     @relation("TicketAssignedTo")
-  ticketNotes       ServiceTicketNote[]
+
 
   // Service jobs
-  assignedJobs      ServiceJob[]        @relation("JobAssignedTo")
-  createdJobs       ServiceJob[]        @relation("JobCreatedBy")
-  serviceJobNotes   ServiceJobNote[]
+
+
+  // Transfer orders
+  createdTransfers  TransferOrder[]     @relation("TransferCreatedBy")
+  reviewedTransfers TransferOrder[]     @relation("TransferReviewedBy")
+
+  // Second-hand cycles
+  createdSecondHand SecondHandCycle[]   @relation("SecondHandCreatedBy")
+
+  // Inbound shipments
+  createdInboundShipments  InboundShipment[] @relation("InboundCreatedBy")
+  deliveredInboundShipments InboundShipment[] @relation("InboundDeliveredBy")
+
+  // Pre-bookings
+  createdPreBookings PreBooking[] @relation("PreBookingCreatedBy")
 }
 
 model Category {
@@ -194,6 +203,9 @@ model Brand {
   updatedAt     DateTime  @updatedAt
 
   products      Product[]
+  leadTime      BrandLeadTime?
+  inboundShipments InboundShipment[]
+  preBookings   PreBooking[]
 }
 
 model Product {
@@ -240,7 +252,8 @@ model Product {
   stockCounts   StockCountItem[]
   serialItems   SerialItem[]
   purchaseOrderItems PurchaseOrderItem[]
-  serviceJobItems ServiceJobItem[]
+  transferOrderItems TransferOrderItem[]
+  inboundLineItems InboundLineItem[]
 
   @@index([status])
   @@index([categoryId])
@@ -315,6 +328,9 @@ model Bin {
   products      Product[]
   serialItems   SerialItem[]
   stockCounts   StockCount[]
+  transfersFrom TransferOrderItem[] @relation("TransferFromBin")
+  transfersTo   TransferOrderItem[] @relation("TransferToBin")
+  secondHandCycles SecondHandCycle[] @relation("SecondHandBin")
 }
 
 model InventoryTransaction {
@@ -353,6 +369,7 @@ model InventoryTransaction {
 
 model StockCount {
   id              String           @id @default(cuid())
+  countNo         String?          @unique // Auto: SC-YYYYMM-NNNN
   title           String           // "Weekly Audit - Week 15"
   assignedToId    String
   assignedTo      User             @relation(fields: [assignedToId], references: [id])
@@ -803,6 +820,9 @@ enum DeliveryStatus {
   DELIVERED
   FLAGGED
   PREBOOKED
+  PACKED
+  SHIPPED
+  IN_TRANSIT
 }
 
 model Delivery {
@@ -840,6 +860,18 @@ model Delivery {
   notes           String?
   deliveryNotes   String?
 
+  // WhatsApp tracking
+  whatsAppScheduledSent   Boolean  @default(false)
+  whatsAppDispatchedSent  Boolean  @default(false)
+  whatsAppDeliveredSent   Boolean  @default(false)
+  freeAccessories         String?
+
+  // Outstation delivery
+  isOutstation            Boolean  @default(false)
+  courierName             String?
+  courierTrackingNo       String?
+  courierCost             Float?
+
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
@@ -849,90 +881,11 @@ model Delivery {
   @@index([scheduledDate])
 }
 
-// ─── Service Tickets (replaces TeleCRM) ───────────────────────
-
-model ServiceTicket {
-  id                String    @id @default(cuid())
-  ticketNo          String    @unique // Auto: BCH-SVC-0001
-
-  // Customer
-  customerName      String
-  customerPhone     String
-  alternatePhone    String?
-  customerAddress   String?
-  pincode           String?
-
-  // Product & Issue
-  productName       String
-  invoiceNo         String?
-  issueBrief        String
-
-  // Department & Assignment
-  department        String    // Bangalore Delivery, OB Delivery, In store service, EM Service, General Issues
-  assignedMechanic  String?   // mujahid, appi, harisha, iqbal, baba, ranju r
-  salesPerson       String?
-
-  // Status
-  status            String    @default("TICKET_ISSUED") // TICKET_ISSUED, ESCALATED, RESOLVED, RESOLUTION_DELAYED
-  emTicketStatus    String?   // OPEN, APPROVAL_PENDING, EVIDENCE_PENDING, DISPATCH_PENDING, IN_TRANSIT_TO_BCH, DELIVERED_TO_BCH, IN_TRANSIT_TO_CUSTOMER, CLOSED
-  ticketPendingFrom String?   // EM, CLIENT, BCH
-
-  // Delay reason (when RESOLUTION_DELAYED)
-  delayReason       String?   // client not responding, rejected for warranty, not ready to support, manager delay, order cancelled
-
-  // Delivery
-  deliveryZone      String?   // 9 Bangalore zones
-  deliveryAddress   String?
-  estimatedDelivery String?   // Today, Tomorrow, After 3 days, After a week
-  reversePickup     Boolean   @default(false)
-
-  // Accessories & Replacement
-  freeAccessories   String?
-  receivedReplacement String?
-
-  // Tracking
-  createdById       String
-  createdBy         User      @relation("TicketCreatedBy", fields: [createdById], references: [id])
-  assignedToId      String?
-  assignedTo        User?     @relation("TicketAssignedTo", fields: [assignedToId], references: [id])
-
-  priority          String    @default("NORMAL") // LOW, NORMAL, HIGH, URGENT
-
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
-  resolvedAt        DateTime?
-  closedAt          DateTime?
-
-  notes             ServiceTicketNote[]
-
-  @@index([status])
-  @@index([department])
-  @@index([emTicketStatus])
-  @@index([createdById])
-  @@index([assignedToId])
-  @@index([createdAt])
-  @@index([priority])
-  @@index([ticketNo])
-}
-
-model ServiceTicketNote {
-  id            String         @id @default(cuid())
-  ticketId      String
-  ticket        ServiceTicket  @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  content       String
-  type          String         @default("NOTE") // NOTE, STATUS_CHANGE, ASSIGNMENT, ESCALATION
-  createdById   String
-  createdBy     User           @relation(fields: [createdById], references: [id])
-  createdAt     DateTime       @default(now())
-
-  @@index([ticketId])
-  @@index([createdAt])
-}
-
 model AlertConfig {
-  id            String   @id @default("singleton")
-  redFlagPhones String?
-  updatedAt     DateTime @updatedAt
+  id              String   @id @default("singleton")
+  redFlagPhones   String?
+  googleReviewLink String?
+  updatedAt       DateTime @updatedAt
 }
 
 // ─── Zoho Pull Preview (approval gate) ───────────────────────
@@ -972,170 +925,199 @@ model ZohoPullLog {
   @@index([createdAt])
 }
 
-// ─── BCH Service (Job Card System) ───────────────────────
+// ─── Second-Hand Cycles (Exchange inventory) ───────────────────────
 
-enum ServiceJobStatus {
-  CREATED
-  DIAGNOSED
-  QUOTED
+model SecondHandCycle {
+  id              String    @id @default(cuid())
+  sku             String    @unique  // Auto: SH-0001
+  name            String               // e.g., "Hero Sprint 26"
+  condition       String               // EXCELLENT, GOOD, FAIR, SCRAP
+  status          String    @default("IN_STOCK") // IN_STOCK, SOLD
+  costPrice       Float               // Exchange price
+  sellingPrice    Float?              // Set by admin after service
+  photoUrl        String              // Base64 data URL or external URL
+
+  // Source (who traded in)
+  customerName    String
+  customerPhone   String?
+  zohoInvoiceNo   String?             // New cycle sale invoice
+  zohoItemId      String?             // Zoho Inventory item_id after push
+
+  // Location
+  binId           String?
+  bin             Bin?      @relation("SecondHandBin", fields: [binId], references: [id])
+
+  // Sale details
+  soldAt          DateTime?
+  soldToName      String?
+  soldToPhone     String?
+  soldInvoiceNo   String?
+
+  notes           String?
+  isArchived      Boolean   @default(false)
+
+  createdById     String
+  createdBy       User      @relation("SecondHandCreatedBy", fields: [createdById], references: [id])
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status])
+  @@index([sku])
+  @@index([createdAt])
+}
+
+// ─── Transfer Orders (Multi-item bin transfers) ───────────────────────
+
+enum TransferOrderStatus {
+  PENDING
   APPROVED
-  IN_PROGRESS
-  COMPLETED
-  INVOICED
-  DELIVERED
-  ON_HOLD
+  REJECTED
   CANCELLED
 }
 
-enum ServiceJobItemType {
-  PART
-  LABOUR
-  ACCESSORY
-}
-
-model ServiceCustomer {
-  id            String         @id @default(cuid())
-  name          String
-  phone         String         @unique
-  whatsapp      String?
-  email         String?
-  address       String?
-  area          String?
-  pincode       String?
-  isActive      Boolean        @default(true)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-
-  bikes         CustomerBike[]
-  jobs          ServiceJob[]
-
-  @@index([name])
-  @@index([phone])
-}
-
-model CustomerBike {
-  id            String           @id @default(cuid())
-  customerId    String
-  customer      ServiceCustomer  @relation(fields: [customerId], references: [id])
-  brand         String
-  model         String
-  size          String?          // 16", 20", 24", 26", 29"
-  color         String?
-  serialNo      String?
-  purchaseDate  DateTime?
-  purchaseInvoiceNo String?
+model TransferOrder {
+  id            String              @id @default(cuid())
+  orderNo       String              @unique // Auto: TRF-YYYYMM-NNNN
+  status        TransferOrderStatus @default(PENDING)
   notes         String?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
 
-  jobs          ServiceJob[]
+  createdById   String
+  createdBy     User                @relation("TransferCreatedBy", fields: [createdById], references: [id])
+  reviewedById  String?
+  reviewedBy    User?               @relation("TransferReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt    DateTime?
+  rejectionNote String?
 
-  @@index([customerId])
-  @@index([serialNo])
-}
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
 
-model ServiceJob {
-  id                String           @id @default(cuid())
-  jobNo             String           @unique // Auto: BCH-JOB-0001
-  customerId        String
-  customer          ServiceCustomer  @relation(fields: [customerId], references: [id])
-  bikeId            String?
-  bike              CustomerBike?    @relation(fields: [bikeId], references: [id])
-
-  // Issue
-  complaint         String           // Customer's complaint description
-  diagnosis         String?          // Mechanic's diagnosis after inspection
-  priority          String           @default("NORMAL") // LOW, NORMAL, HIGH, URGENT
-
-  // Status machine
-  status            ServiceJobStatus @default(CREATED)
-
-  // Assignment
-  assignedToId      String?
-  assignedTo        User?            @relation("JobAssignedTo", fields: [assignedToId], references: [id])
-  createdById       String
-  createdBy         User             @relation("JobCreatedBy", fields: [createdById], references: [id])
-
-  // Pricing
-  estimatedCost     Float            @default(0)
-  actualCost        Float            @default(0)
-  discount          Float            @default(0)
-
-  // Dates
-  estimatedCompletion DateTime?
-  diagnosedAt       DateTime?
-  quotedAt          DateTime?
-  approvedAt        DateTime?
-  startedAt         DateTime?
-  completedAt       DateTime?
-  deliveredAt       DateTime?
-
-  // Warranty link
-  ticketId          String?          // Optional link to ServiceTicket for warranty jobs
-
-  notes             String?
-
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-
-  items             ServiceJobItem[]
-  jobNotes          ServiceJobNote[]
-  invoice           ServiceJobInvoice?
+  items         TransferOrderItem[]
 
   @@index([status])
-  @@index([customerId])
-  @@index([assignedToId])
+  @@index([createdById])
   @@index([createdAt])
-  @@index([priority])
-  @@index([jobNo])
 }
 
-model ServiceJobItem {
-  id            String             @id @default(cuid())
-  jobId         String
-  job           ServiceJob         @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  type          ServiceJobItemType
-  productId     String?            // Links to Product for parts/accessories
-  product       Product?           @relation(fields: [productId], references: [id])
-  description   String             // "Brake Pad" or "Labour: Wheel truing"
-  quantity      Int                @default(1)
-  unitPrice     Float
-  total         Float
-  createdAt     DateTime           @default(now())
+model TransferOrderItem {
+  id              String        @id @default(cuid())
+  transferOrderId String
+  transferOrder   TransferOrder @relation(fields: [transferOrderId], references: [id], onDelete: Cascade)
+  productId       String
+  product         Product       @relation(fields: [productId], references: [id])
+  quantity        Int
+  fromBinId       String
+  fromBin         Bin           @relation("TransferFromBin", fields: [fromBinId], references: [id])
+  toBinId         String
+  toBin           Bin           @relation("TransferToBin", fields: [toBinId], references: [id])
+  createdAt       DateTime      @default(now())
 
-  @@index([jobId])
+  @@index([transferOrderId])
   @@index([productId])
 }
 
-model ServiceJobNote {
-  id            String      @id @default(cuid())
-  jobId         String
-  job           ServiceJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  content       String
-  type          String      @default("NOTE") // NOTE, STATUS_CHANGE, DIAGNOSIS, QUOTE, PHOTO, CUSTOMER_UPDATE
-  createdById   String
-  createdBy     User        @relation(fields: [createdById], references: [id])
-  createdAt     DateTime    @default(now())
+// ─── Inbound Tracking (Brand Deliveries & Pre-booking) ───────────────────────
 
-  @@index([jobId])
+model BrandLeadTime {
+  id        String   @id @default(cuid())
+  brandId   String   @unique
+  brand     Brand    @relation(fields: [brandId], references: [id])
+  leadDays  Int      @default(7)
+  updatedAt DateTime @updatedAt
+}
+
+enum InboundShipmentStatus {
+  IN_TRANSIT
+  DELIVERED
+  PARTIALLY_DELIVERED
+}
+
+model InboundShipment {
+  id                    String                @id @default(cuid())
+  shipmentNo            String                @unique // Auto: IB-YYYYMM-0001
+  brandId               String
+  brand                 Brand                 @relation(fields: [brandId], references: [id])
+  billNo                String                // Brand's invoice number (from image)
+  billImageUrl          String                @db.Text // Base64 photo of paper bill
+  billDate              DateTime
+  expectedDeliveryDate  DateTime
+  status                InboundShipmentStatus @default(IN_TRANSIT)
+  totalAmount           Float
+  totalItems            Int
+  deliveredAt           DateTime?
+  deliveredById         String?
+  deliveredBy           User?                 @relation("InboundDeliveredBy", fields: [deliveredById], references: [id])
+  notes                 String?
+  createdById           String
+  createdBy             User                  @relation("InboundCreatedBy", fields: [createdById], references: [id])
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+
+  lineItems             InboundLineItem[]
+  preBookings           PreBooking[]
+
+  @@index([status])
+  @@index([brandId])
+  @@index([billNo])
+  @@index([expectedDeliveryDate])
   @@index([createdAt])
 }
 
-model ServiceJobInvoice {
-  id            String      @id @default(cuid())
-  jobId         String      @unique
-  job           ServiceJob  @relation(fields: [jobId], references: [id])
-  invoiceNo     String      @unique // Auto: BCH-SVC-INV-0001
-  amount        Float
-  discount      Float       @default(0)
-  netAmount     Float
-  paidAmount    Float       @default(0)
-  paymentMode   PaymentMode?
-  status        String      @default("PENDING") // PENDING, PAID, PARTIALLY_PAID
-  paidAt        DateTime?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
+model InboundLineItem {
+  id                     String            @id @default(cuid())
+  shipmentId             String
+  shipment               InboundShipment   @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  productName            String            // As read from bill image
+  productId              String?           // Matched to existing product
+  product                Product?          @relation(fields: [productId], references: [id])
+  sku                    String?
+  quantity               Int
+  rate                   Float
+  amount                 Float
+  hsn                    String?
+  isDelivered            Boolean           @default(false)
+  deliveredQty           Int?
+  preBookedCustomerName  String?
+  preBookedCustomerPhone String?
+  preBookedInvoiceNo     String?
+  whatsAppSent           Boolean           @default(false)
+  notes                  String?
+
+  preBooking             PreBooking?       @relation("PreBookingLineItem")
+
+  @@index([shipmentId])
+  @@index([productId])
+}
+
+enum PreBookingStatus {
+  WAITING
+  MATCHED
+  FULFILLED
+  CANCELLED
+}
+
+model PreBooking {
+  id                    String            @id @default(cuid())
+  customerName          String
+  customerPhone         String?
+  zohoInvoiceNo         String
+  productName           String            // What cycle they booked
+  brandId               String?
+  brand                 Brand?            @relation(fields: [brandId], references: [id])
+  status                PreBookingStatus  @default(WAITING)
+  matchedShipmentId     String?
+  matchedShipment       InboundShipment?  @relation(fields: [matchedShipmentId], references: [id])
+  matchedLineItemId     String?           @unique
+  matchedLineItem       InboundLineItem?  @relation("PreBookingLineItem", fields: [matchedLineItemId], references: [id])
+  salesPerson           String?
+  expectedDate          DateTime?
+  fulfilledAt           DateTime?
+  createdById           String
+  createdBy             User              @relation("PreBookingCreatedBy", fields: [createdById], references: [id])
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
 
   @@index([status])
+  @@index([brandId])
+  @@index([matchedShipmentId])
   @@index([createdAt])
 }
