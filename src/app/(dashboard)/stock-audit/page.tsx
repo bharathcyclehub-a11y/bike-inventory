@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 
 interface StockCountItem {
   id: string;
+  countNo: string | null;
   title: string;
   status: string;
   dueDate: string;
@@ -109,6 +110,7 @@ export default function StockAuditPage() {
                     <div className="flex items-start justify-between mb-1">
                       <div className="flex-1 min-w-0 mr-2">
                         <div className="flex items-center gap-1.5">
+                          {c.countNo && <span className="text-[10px] font-mono text-slate-400 shrink-0">{c.countNo}</span>}
                           <p className="text-sm font-medium text-slate-900 truncate">{c.title}</p>
                           {overdue && (
                             <Badge variant="danger" className="shrink-0 flex items-center gap-0.5 text-[10px] px-1.5 py-0">

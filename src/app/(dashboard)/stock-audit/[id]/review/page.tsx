@@ -81,7 +81,7 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
   useEffect(() => {
     Promise.all([
       fetch(`/api/stock-counts/${id}`).then((r) => r.json()),
-      fetch(`/api/stock-counts/${id}/items`).then((r) => r.json()),
+      fetch(`/api/stock-counts/${id}/items?filter=all&limit=10000`).then((r) => r.json()),
     ]).then(([summaryRes, itemsRes]) => {
       if (summaryRes.success) setData(summaryRes.data);
       if (itemsRes.success) setItems(itemsRes.data.items || itemsRes.data);
@@ -106,10 +106,10 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
   }
 
   const filtered = tab === "counted"
-    ? items.filter((i) => i.countedQty !== null)
+    ? items.filter((i) => i.countedQty !== null && (i.systemQty > 0 || (i.countedQty ?? 0) > 0))
     : tab === "variance"
     ? items.filter((i) => i.variance !== null && i.variance !== 0)
-    : items;
+    : items.filter((i) => i.systemQty > 0 || (i.countedQty ?? 0) > 0);
 
   const exportData = filtered.map((i) => ({
     sku: i.product.sku,
@@ -201,9 +201,9 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
           {(["counted", "variance", "all"] as const).map((t) => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium ${tab === t ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}>
-              {t === "counted" ? `Counted (${items.filter((i) => i.countedQty !== null).length})`
+              {t === "counted" ? `Counted (${items.filter((i) => i.countedQty !== null && (i.systemQty > 0 || (i.countedQty ?? 0) > 0)).length})`
                 : t === "variance" ? `Variance (${items.filter((i) => i.variance && i.variance !== 0).length})`
-                : `All (${items.length})`}
+                : `All (${items.filter((i) => i.systemQty > 0 || (i.countedQty ?? 0) > 0).length})`}
             </button>
           ))}
         </div>

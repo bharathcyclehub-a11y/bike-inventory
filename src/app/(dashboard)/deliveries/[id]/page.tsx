@@ -5,11 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Phone, MapPin, Clock, CheckCircle2, Truck,
-  Flag, AlertTriangle, Loader2, Package,
+  Flag, AlertTriangle, Loader2, Package, Download,
+  MessageCircle, Check, Globe,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { getAreaFromPincode, isBangalorePincode } from "@/lib/pincode-lookup";
 
 interface DeliveryData {
   id: string;
@@ -35,9 +37,19 @@ interface DeliveryData {
   lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal?: number }> | null;
   notes: string | null;
   deliveryNotes: string | null;
+  whatsAppScheduledSent: boolean;
+  whatsAppDispatchedSent: boolean;
+  whatsAppDeliveredSent: boolean;
+  freeAccessories: string | null;
+  googleReviewLink: string | null;
+  isOutstation: boolean;
+  courierName: string | null;
+  courierTrackingNo: string | null;
+  courierCost: number | null;
 }
 
 const STATUS_STEPS = ["PENDING", "VERIFIED", "SCHEDULED", "OUT_FOR_DELIVERY", "DELIVERED"];
+const OUTSTATION_STEPS = ["VERIFIED", "PACKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"];
 
 function formatINR(n: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
@@ -57,6 +69,15 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const [pincode, setPincode] = useState("");
   const [schedDate, setSchedDate] = useState("");
   const [delNotes, setDelNotes] = useState("");
+  const [isOutstation, setIsOutstation] = useState(false);
+
+  // Courier fields (outstation)
+  const [courierName, setCourierName] = useState("");
+  const [courierTrackingNo, setCourierTrackingNo] = useState("");
+  const [courierCost, setCourierCost] = useState("");
+
+  // Free accessories
+  const [freeAccessories, setFreeAccessories] = useState("");
 
   const fetchData = () => {
     fetch(`/api/deliveries/${id}`)
@@ -68,6 +89,11 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           setArea(res.data.customerArea || "");
           setPincode(res.data.customerPincode || "");
           setDelNotes(res.data.deliveryNotes || "");
+          setFreeAccessories(res.data.freeAccessories || "");
+          setIsOutstation(res.data.isOutstation || false);
+          setCourierName(res.data.courierName || "");
+          setCourierTrackingNo(res.data.courierTrackingNo || "");
+          setCourierCost(res.data.courierCost ? String(res.data.courierCost) : "");
         }
       })
       .catch(() => {})
@@ -75,6 +101,17 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   };
 
   useEffect(() => { fetchData(); }, [id]); // eslint-disable-line
+
+  /** When pincode changes in the form, auto-fill area and detect outstation */
+  const handlePincodeBlur = () => {
+    if (pincode.length !== 6) return;
+    const detectedArea = getAreaFromPincode(pincode);
+    if (detectedArea) {
+      setArea(detectedArea);
+    }
+    const outstation = !isBangalorePincode(pincode);
+    setIsOutstation(outstation);
+  };
 
   const updateStatus = async (status: string, extra?: Record<string, unknown>) => {
     setActionLoading(true);
@@ -93,19 +130,43 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
     if (!schedDate || !address) return;
     setActionLoading(true);
     try {
+      const payload: Record<string, unknown> = {
+        status: "SCHEDULED",
+        customerAddress: address,
+        customerArea: area,
+        customerPincode: pincode,
+        scheduledDate: schedDate,
+        deliveryNotes: delNotes,
+        isOutstation,
+      };
+      if (isOutstation) {
+        payload.courierName = courierName;
+        payload.courierTrackingNo = courierTrackingNo;
+        if (courierCost) payload.courierCost = parseFloat(courierCost);
+      }
+      await fetch(`/api/deliveries/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      setShowSchedule(false);
+      fetchData();
+    } catch { /* */ }
+    finally { setActionLoading(false); }
+  };
+
+  const handleSaveCourier = async () => {
+    setActionLoading(true);
+    try {
       await fetch(`/api/deliveries/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          status: "SCHEDULED",
-          customerAddress: address,
-          customerArea: area,
-          customerPincode: pincode,
-          scheduledDate: schedDate,
-          deliveryNotes: delNotes,
+          courierName,
+          courierTrackingNo,
+          courierCost: courierCost ? parseFloat(courierCost) : undefined,
         }),
       });
-      setShowSchedule(false);
       fetchData();
     } catch { /* */ }
     finally { setActionLoading(false); }
@@ -127,6 +188,93 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
     fetchData();
   };
 
+  const getLineItemsText = () => {
+    if (!data?.lineItems || data.lineItems.length === 0) return "";
+    return data.lineItems.map((item) => `- ${item.name} (Qty: ${item.quantity})`).join("\n");
+  };
+
+  const getProductName = () => {
+    if (!data?.lineItems || data.lineItems.length === 0) return "your order";
+    return data.lineItems.map((item) => item.name).join(", ");
+  };
+
+  const openWhatsApp = (phone: string, message: string) => {
+    const cleanPhone = phone.replace(/\D/g, "").slice(-10);
+    window.open(`https://wa.me/91${cleanPhone}?text=${encodeURIComponent(message)}`, "_blank");
+  };
+
+  const markWhatsAppSent = async (field: "whatsAppScheduledSent" | "whatsAppDispatchedSent" | "whatsAppDeliveredSent") => {
+    try {
+      await fetch(`/api/deliveries/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [field]: true }),
+      });
+      fetchData();
+    } catch { /* */ }
+  };
+
+  const sendScheduledWhatsApp = () => {
+    if (!data?.customerPhone) return;
+    const msg = `Hello ${data.customerName},
+
+Your order from Bharath Cycle Hub has been scheduled for delivery.
+
+Product: ${getProductName()}
+Delivery Date: ${data.scheduledDate ? new Date(data.scheduledDate).toLocaleDateString("en-IN") : "TBD"}
+Address: ${data.customerAddress || "N/A"}
+
+We'll notify you when it's dispatched. Thank you!
+
+- Bharath Cycle Hub`;
+    openWhatsApp(data.customerPhone, msg);
+    markWhatsAppSent("whatsAppScheduledSent");
+  };
+
+  const saveFreeAccessories = async () => {
+    try {
+      await fetch(`/api/deliveries/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ freeAccessories }),
+      });
+      fetchData();
+    } catch { /* */ }
+  };
+
+  const sendDispatchedWhatsApp = () => {
+    if (!data?.customerPhone) return;
+    const msg = `Hello ${data.customerName},
+
+Congratulations! Your ${getProductName()} has been dispatched and is on its way!
+
+Items:
+${getLineItemsText()}
+
+Free Accessories:
+${data.freeAccessories || freeAccessories || "None"}
+
+Thank you for choosing Bharath Cycle Hub!`;
+    openWhatsApp(data.customerPhone, msg);
+    markWhatsAppSent("whatsAppDispatchedSent");
+  };
+
+  const sendDeliveredWhatsApp = () => {
+    if (!data?.customerPhone) return;
+    const reviewLink = data.googleReviewLink || "https://g.page/r/bharathcyclehub/review";
+    const msg = `Hello ${data.customerName},
+
+Thank you for your purchase from Bharath Cycle Hub!
+
+We'd love to hear about your experience. Please leave us a review:
+${reviewLink}
+
+Thank you!
+- Bharath Cycle Hub`;
+    openWhatsApp(data.customerPhone, msg);
+    markWhatsAppSent("whatsAppDeliveredSent");
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>;
   }
@@ -134,7 +282,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
     return <div className="text-center py-12"><p className="text-slate-400">Not found</p><Link href="/deliveries" className="text-blue-600 text-sm">Back</Link></div>;
   }
 
-  const stepIdx = STATUS_STEPS.indexOf(data.status);
+  const isOuts = data.isOutstation;
+  const activeSteps = isOuts ? OUTSTATION_STEPS : STATUS_STEPS;
+  const stepIdx = activeSteps.indexOf(data.status);
 
   return (
     <div>
@@ -145,18 +295,39 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           <h1 className="text-lg font-bold text-slate-900">{data.invoiceNo}</h1>
           <p className="text-xs text-slate-500">{data.customerName} | {formatINR(data.invoiceAmount)}</p>
         </div>
-        <Badge variant={data.status === "FLAGGED" ? "danger" : data.status === "DELIVERED" || data.status === "WALK_OUT" ? "success" : "info"}>
-          {data.status === "OUT_FOR_DELIVERY" ? "Out" : data.status === "WALK_OUT" ? "Walk-out" : data.status.charAt(0) + data.status.slice(1).toLowerCase().replace(/_/g, " ")}
-        </Badge>
+        <div className="flex items-center gap-1.5">
+          {isOuts && (
+            <Badge variant="warning">
+              <Globe className="h-3 w-3 mr-1" />Outstation
+            </Badge>
+          )}
+          <Badge variant={data.status === "FLAGGED" ? "danger" : data.status === "DELIVERED" || data.status === "WALK_OUT" ? "success" : "info"}>
+            {data.status === "OUT_FOR_DELIVERY" ? "Out" : data.status === "WALK_OUT" ? "Walk-out" : data.status === "IN_TRANSIT" ? "In Transit" : data.status.charAt(0) + data.status.slice(1).toLowerCase().replace(/_/g, " ")}
+          </Badge>
+        </div>
       </div>
 
       {/* Progress Steps */}
-      {!["FLAGGED", "WALK_OUT", "PREBOOKED"].includes(data.status) && (
+      {!["FLAGGED", "WALK_OUT", "PREBOOKED", "PENDING"].includes(data.status) && (
+        <div className="flex items-center gap-1 mb-3">
+          {activeSteps.map((step, i) => (
+            <div key={step} className="flex-1">
+              <div className={`h-1.5 rounded-full ${i <= stepIdx ? (isOuts ? "bg-amber-500" : "bg-blue-500") : "bg-slate-200"}`} />
+              <p className={`text-[8px] mt-0.5 text-center ${i <= stepIdx ? (isOuts ? "text-amber-600 font-medium" : "text-blue-600 font-medium") : "text-slate-400"}`}>
+                {step === "OUT_FOR_DELIVERY" ? "Out" : step === "IN_TRANSIT" ? "Transit" : step.charAt(0) + step.slice(1).toLowerCase().replace(/_/g, " ")}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* PENDING progress (no outstation yet) */}
+      {data.status === "PENDING" && (
         <div className="flex items-center gap-1 mb-3">
           {STATUS_STEPS.map((step, i) => (
             <div key={step} className="flex-1">
-              <div className={`h-1.5 rounded-full ${i <= stepIdx ? "bg-blue-500" : "bg-slate-200"}`} />
-              <p className={`text-[8px] mt-0.5 text-center ${i <= stepIdx ? "text-blue-600 font-medium" : "text-slate-400"}`}>
+              <div className={`h-1.5 rounded-full ${i === 0 ? "bg-blue-500" : "bg-slate-200"}`} />
+              <p className={`text-[8px] mt-0.5 text-center ${i === 0 ? "text-blue-600 font-medium" : "text-slate-400"}`}>
                 {step === "OUT_FOR_DELIVERY" ? "Out" : step.charAt(0) + step.slice(1).toLowerCase()}
               </p>
             </div>
@@ -170,9 +341,28 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-slate-900">{data.customerName}</p>
             {data.customerPhone && (
-              <a href={`tel:${data.customerPhone}`} className="flex items-center gap-1 text-xs text-blue-600">
-                <Phone className="h-3.5 w-3.5" /> {data.customerPhone}
-              </a>
+              <div className="flex items-center gap-2">
+                <a href={`tel:${data.customerPhone}`} className="flex items-center gap-1 text-xs text-blue-600">
+                  <Phone className="h-3.5 w-3.5" /> {data.customerPhone}
+                </a>
+                <button
+                  onClick={() => {
+                    const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
+                    const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${data.customerName} - ${data.invoiceNo}\nTEL:+91${phone}\nEND:VCARD`;
+                    const blob = new Blob([vcard], { type: "text/vcard" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `${data.customerName}.vcf`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="p-1 rounded-md bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                  title="Save Contact"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                </button>
+              </div>
             )}
           </div>
           {data.customerAddress && (
@@ -184,6 +374,46 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           {data.customerArea && <p className="text-[10px] text-slate-500">Area: {data.customerArea} {data.customerPincode ? `| ${data.customerPincode}` : ""}</p>}
         </CardContent>
       </Card>
+
+      {/* Courier Info (outstation, after scheduling) */}
+      {isOuts && data.courierName && (
+        <Card className="mb-3 border-amber-200 bg-amber-50">
+          <CardContent className="p-3 space-y-1">
+            <div className="flex items-center gap-2">
+              <Truck className="h-4 w-4 text-amber-600 shrink-0" />
+              <p className="text-xs font-semibold text-amber-900">Courier Details</p>
+            </div>
+            <p className="text-xs text-amber-800">Courier: {data.courierName}</p>
+            {data.courierTrackingNo && <p className="text-xs text-amber-800">Tracking: {data.courierTrackingNo}</p>}
+            {data.courierCost != null && <p className="text-xs text-amber-800">Cost: {formatINR(data.courierCost)}</p>}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Editable courier section for outstation deliveries in SCHEDULED/PACKED/SHIPPED/IN_TRANSIT */}
+      {isOuts && ["SCHEDULED", "PACKED", "SHIPPED", "IN_TRANSIT"].includes(data.status) && (
+        <Card className="mb-3 border-amber-200">
+          <CardContent className="p-3 space-y-2">
+            <p className="text-xs font-semibold text-slate-700">Update Courier Info</p>
+            <div>
+              <label className="text-[10px] text-slate-500">Courier Name</label>
+              <Input value={courierName} onChange={(e) => setCourierName(e.target.value)} placeholder="e.g. DTDC, BlueDart" className="text-xs" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500">Tracking Number</label>
+              <Input value={courierTrackingNo} onChange={(e) => setCourierTrackingNo(e.target.value)} placeholder="Tracking ID" className="text-xs" />
+            </div>
+            <div>
+              <label className="text-[10px] text-slate-500">Courier Cost</label>
+              <Input type="number" value={courierCost} onChange={(e) => setCourierCost(e.target.value)} placeholder="0" className="text-xs" />
+            </div>
+            <button onClick={handleSaveCourier} disabled={actionLoading}
+              className="w-full bg-amber-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+              {actionLoading ? "Saving..." : "Save Courier Info"}
+            </button>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Line Items */}
       {data.lineItems && data.lineItems.length > 0 && (
@@ -254,10 +484,57 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                 <Input value={area} onChange={(e) => setArea(e.target.value)} placeholder="e.g. Koramangala" className="text-xs" />
               </div>
               <div>
-                <label className="text-[10px] text-slate-500">Pincode</label>
-                <Input value={pincode} onChange={(e) => setPincode(e.target.value)} placeholder="560034" className="text-xs" />
+                <label className="text-[10px] text-slate-500">Pincode (6 digits)</label>
+                <Input
+                  value={pincode}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/\D/g, "").slice(0, 6);
+                    setPincode(val);
+                  }}
+                  onBlur={handlePincodeBlur}
+                  placeholder="560034"
+                  className="text-xs"
+                  maxLength={6}
+                  inputMode="numeric"
+                />
               </div>
             </div>
+
+            {/* Outstation auto-detect banner */}
+            {pincode.length === 6 && !isBangalorePincode(pincode) && (
+              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                <Globe className="h-4 w-4 text-amber-600 shrink-0" />
+                <div>
+                  <p className="text-xs font-medium text-amber-900">Outstation Delivery</p>
+                  <p className="text-[10px] text-amber-700">Pincode {pincode} is outside Bangalore. Courier details will be required.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Bangalore area auto-detected */}
+            {pincode.length === 6 && isBangalorePincode(pincode) && getAreaFromPincode(pincode) && (
+              <p className="text-[10px] text-green-600">Auto-detected: {getAreaFromPincode(pincode)}</p>
+            )}
+
+            {/* Courier fields for outstation */}
+            {isOutstation && (
+              <div className="space-y-2 border-t border-amber-200 pt-2">
+                <p className="text-[10px] font-semibold text-amber-700">Courier Details (Outstation)</p>
+                <div>
+                  <label className="text-[10px] text-slate-500">Courier Name</label>
+                  <Input value={courierName} onChange={(e) => setCourierName(e.target.value)} placeholder="e.g. DTDC, BlueDart, Delhivery" className="text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500">Tracking Number</label>
+                  <Input value={courierTrackingNo} onChange={(e) => setCourierTrackingNo(e.target.value)} placeholder="Tracking ID" className="text-xs" />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500">Courier Cost</label>
+                  <Input type="number" value={courierCost} onChange={(e) => setCourierCost(e.target.value)} placeholder="0" className="text-xs" />
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="text-[10px] text-slate-500">Delivery Date *</label>
               <Input type="date" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} className="text-xs" />
@@ -268,8 +545,8 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             </div>
             <div className="flex gap-2">
               <button onClick={handleSchedule} disabled={!schedDate || !address || actionLoading}
-                className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
-                {actionLoading ? "Scheduling..." : "Schedule"}
+                className={`flex-1 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50 ${isOutstation ? "bg-amber-600" : "bg-blue-600"}`}>
+                {actionLoading ? "Scheduling..." : isOutstation ? "Schedule (Outstation)" : "Schedule"}
               </button>
               <button onClick={() => setShowSchedule(false)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">Cancel</button>
             </div>
@@ -325,10 +602,46 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           </div>
         )}
 
-        {data.status === "SCHEDULED" && (
+        {/* Local delivery: SCHEDULED -> OUT_FOR_DELIVERY */}
+        {data.status === "SCHEDULED" && !isOuts && (
           <button onClick={() => updateStatus("OUT_FOR_DELIVERY")} disabled={actionLoading}
             className="w-full flex items-center justify-center gap-2 bg-orange-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <Truck className="h-4 w-4" /> Dispatch
+          </button>
+        )}
+
+        {/* Outstation: SCHEDULED -> PACKED */}
+        {data.status === "SCHEDULED" && isOuts && (
+          <button onClick={() => updateStatus("PACKED")} disabled={actionLoading}
+            className="w-full flex items-center justify-center gap-2 bg-amber-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+            <Package className="h-4 w-4" /> Mark Packed
+          </button>
+        )}
+
+        {/* Outstation: PACKED -> SHIPPED */}
+        {data.status === "PACKED" && (
+          <button onClick={() => updateStatus("SHIPPED")} disabled={actionLoading}
+            className="w-full flex items-center justify-center gap-2 bg-amber-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+            <Truck className="h-4 w-4" /> Mark Shipped
+          </button>
+        )}
+
+        {/* Outstation: SHIPPED -> IN_TRANSIT */}
+        {data.status === "SHIPPED" && (
+          <button onClick={() => updateStatus("IN_TRANSIT")} disabled={actionLoading}
+            className="w-full flex items-center justify-center gap-2 bg-amber-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+            <Truck className="h-4 w-4" /> Mark In Transit
+          </button>
+        )}
+
+        {/* Outstation: IN_TRANSIT -> DELIVERED */}
+        {data.status === "IN_TRANSIT" && (
+          <button onClick={() => {
+            if (!confirm("Mark as delivered? Stock will be deducted.")) return;
+            updateStatus("DELIVERED");
+          }} disabled={actionLoading}
+            className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+            <CheckCircle2 className="h-4 w-4" /> Mark Delivered
           </button>
         )}
 

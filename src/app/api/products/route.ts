@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status") || "ACTIVE";
     const size = searchParams.get("size") || undefined;
     const binId = searchParams.get("binId") || undefined;
+    const minStock = searchParams.get("minStock") ? parseInt(searchParams.get("minStock")!) : undefined;
 
     const where = {
       ...(search && (() => {
@@ -46,6 +47,7 @@ export async function GET(req: NextRequest) {
       ...(type && { type: type as never }),
       ...(status && { status: status as never }),
       ...(size && { size }),
+      ...(minStock !== undefined && { currentStock: { gte: minStock } }),
     };
 
     const [products, total] = await Promise.all([

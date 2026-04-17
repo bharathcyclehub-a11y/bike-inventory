@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
-import { Search, MapPin, Loader2, SlidersHorizontal, ChevronDown, RefreshCw, CheckSquare, Square, X, Cloud, Download } from "lucide-react";
+import { Search, MapPin, Loader2, SlidersHorizontal, ChevronDown, RefreshCw, CheckSquare, Square, X, Cloud, Download, Package, ChevronRight } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -41,10 +41,35 @@ interface ProductItem {
 interface BrandItem { id: string; name: string; _count: { products: number }; }
 interface BinItem { id: string; code: string; name: string; location: string; _count: { products: number }; }
 
-type QuickFilter = "ALL" | "BICYCLES" | "SPARES" | "ACCESSORIES" | "LOW_STOCK" | "INACTIVE";
+interface PerItemBin {
+  binId: string | null;
+  binCode: string | null;
+  binName: string | null;
+  binLocation: string | null;
+  stock: number;
+  sku: string;
+  productId: string;
+  costPrice: number;
+  sellingPrice: number;
+  lastInward: string | null;
+  lastOutward: string | null;
+}
+
+interface PerItemGroup {
+  name: string;
+  brandName: string | null;
+  brandId: string | null;
+  categoryName: string | null;
+  totalStock: number;
+  bins: PerItemBin[];
+}
+
+type StockView = "list" | "per-item";
+type QuickFilter = "ALL" | "IN_STOCK" | "BICYCLES" | "SPARES" | "ACCESSORIES" | "LOW_STOCK" | "INACTIVE";
 
 const QUICK_CHIPS: { key: QuickFilter; label: string }[] = [
   { key: "ALL", label: "All" },
+  { key: "IN_STOCK", label: "In Stock" },
   { key: "BICYCLES", label: "Bicycles" },
   { key: "SPARES", label: "Spares" },
   { key: "ACCESSORIES", label: "Accessories" },
@@ -102,6 +127,33 @@ export default function StockPage() {
   const [lastUpdated, setLastUpdated] = useState<Date>(new Date());
   const [refreshing, setRefreshing] = useState(false);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // View toggle: list vs per-item
+  const [stockView, setStockView] = useState<StockView>("list");
+  const [perItemData, setPerItemData] = useState<PerItemGroup[]>([]);
+  const [perItemLoading, setPerItemLoading] = useState(false);
+  const [perItemSearch, setPerItemSearch] = useState("");
+  const debouncedPerItemSearch = useDebounce(perItemSearch);
+  const [perItemBrandFilter, setPerItemBrandFilter] = useState("");
+  const [expandedItem, setExpandedItem] = useState<string | null>(null);
+
+  const fetchPerItemData = useCallback(() => {
+    setPerItemLoading(true);
+    const params = new URLSearchParams();
+    if (debouncedPerItemSearch) params.set("search", debouncedPerItemSearch);
+    if (perItemBrandFilter) params.set("brandId", perItemBrandFilter);
+    fetch(`/api/stock/per-item?${params}`)
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.success) setPerItemData(res.data);
+      })
+      .catch(() => {})
+      .finally(() => setPerItemLoading(false));
+  }, [debouncedPerItemSearch, perItemBrandFilter]);
+
+  useEffect(() => {
+    if (stockView === "per-item") fetchPerItemData();
+  }, [stockView, fetchPerItemData]);
 
   // Bulk select mode
   const [selectMode, setSelectMode] = useState(false);
@@ -263,6 +315,7 @@ export default function StockPage() {
     else if (quickFilter === "SPARES") { params.set("type", "SPARE_PART"); params.set("status", "ACTIVE"); }
     else if (quickFilter === "ACCESSORIES") { params.set("type", "ACCESSORY"); params.set("status", "ACTIVE"); }
     else if (quickFilter === "INACTIVE") { params.set("status", "INACTIVE"); }
+    else if (quickFilter === "IN_STOCK") { params.set("status", "ACTIVE"); params.set("minStock", "1"); }
     else if (quickFilter === "ALL" || quickFilter === "LOW_STOCK") { params.set("status", "ACTIVE"); }
     if (selectedBrand) params.set("brandId", selectedBrand);
     if (selectedSize) params.set("size", selectedSize);
@@ -446,8 +499,28 @@ export default function StockPage() {
         </div>
       )}
 
-      {/* Quick Views */}
+      {/* View Tabs */}
       <div className="flex gap-2 mb-3">
+        <button
+          onClick={() => setStockView("list")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition-colors ${
+            stockView === "list"
+              ? "bg-slate-900 text-white border-slate-900"
+              : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+          }`}
+        >
+          List View
+        </button>
+        <button
+          onClick={() => setStockView("per-item")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition-colors ${
+            stockView === "per-item"
+              ? "bg-slate-900 text-white border-slate-900"
+              : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100"
+          }`}
+        >
+          <Package className="h-3 w-3" /> Per Item
+        </button>
         <Link href="/stock/by-brand"
           className="flex-1 flex items-center justify-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 py-2 rounded-lg text-xs font-medium">
           By Brand
@@ -458,6 +531,23 @@ export default function StockPage() {
         </Link>
       </div>
 
+      {/* ═══════════ PER-ITEM VIEW ═══════════ */}
+      {stockView === "per-item" && (
+        <PerItemView
+          data={perItemData}
+          loading={perItemLoading}
+          search={perItemSearch}
+          onSearchChange={setPerItemSearch}
+          brandFilter={perItemBrandFilter}
+          onBrandFilterChange={setPerItemBrandFilter}
+          brands={brands}
+          expandedItem={expandedItem}
+          onToggleExpand={(name) => setExpandedItem(expandedItem === name ? null : name)}
+        />
+      )}
+
+      {/* ═══════════ LIST VIEW ═══════════ */}
+      {stockView === "list" && <>
       {/* Search */}
       <div className="relative mb-3">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -740,6 +830,196 @@ export default function StockPage() {
               </div>
             )}
           </div>
+        </div>
+      )}
+      </>}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Per-Item View Component
+   ═══════════════════════════════════════════════════════════════ */
+
+function formatRelativeDate(dateStr: string | null): string {
+  if (!dateStr) return "—";
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 30) return `${diffDays}d ago`;
+  if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo ago`;
+  return `${Math.floor(diffDays / 365)}y ago`;
+}
+
+function PerItemView({
+  data,
+  loading,
+  search,
+  onSearchChange,
+  brandFilter,
+  onBrandFilterChange,
+  brands,
+  expandedItem,
+  onToggleExpand,
+}: {
+  data: PerItemGroup[];
+  loading: boolean;
+  search: string;
+  onSearchChange: (v: string) => void;
+  brandFilter: string;
+  onBrandFilterChange: (v: string) => void;
+  brands: BrandItem[];
+  expandedItem: string | null;
+  onToggleExpand: (name: string) => void;
+}) {
+  return (
+    <div>
+      {/* Search */}
+      <div className="relative mb-3">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        <Input
+          placeholder="Search product name, SKU, or brand..."
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          className="pl-9"
+        />
+      </div>
+
+      {/* Brand filter */}
+      <div className="mb-3">
+        <select
+          value={brandFilter}
+          onChange={(e) => onBrandFilterChange(e.target.value)}
+          className="flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+        >
+          <option value="">All Brands</option>
+          {brands.map((b) => (
+            <option key={b.id} value={b.id}>{b.name} ({b._count.products})</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Count */}
+      <p className="text-xs text-slate-500 mb-2">
+        {data.length} item{data.length !== 1 ? "s" : ""} grouped by name
+      </p>
+
+      {/* Loading skeleton */}
+      {loading ? (
+        <div className="space-y-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="p-3 border border-slate-100 rounded-lg animate-pulse">
+              <div className="flex items-start justify-between">
+                <div className="flex-1 space-y-1.5">
+                  <div className="h-4 bg-slate-200 rounded w-3/4" />
+                  <div className="h-3 bg-slate-200 rounded w-1/2" />
+                </div>
+                <div className="h-6 w-14 bg-slate-200 rounded-full" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : data.length === 0 ? (
+        <div className="text-center py-12">
+          <p className="text-sm text-slate-400">No products found</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {data.map((group) => {
+            const isExpanded = expandedItem === group.name;
+            // Build per-location summary: e.g. "Hub: 1 | Godown: 2"
+            const locationSummary: Record<string, number> = {};
+            for (const bin of group.bins) {
+              const loc = bin.binName || bin.binLocation || "Unassigned";
+              locationSummary[loc] = (locationSummary[loc] || 0) + bin.stock;
+            }
+            const locationLine = Object.entries(locationSummary)
+              .map(([loc, qty]) => `${loc}: ${qty}`)
+              .join(" | ");
+
+            return (
+              <div key={group.name}>
+                <Card
+                  className={`cursor-pointer transition-colors ${isExpanded ? "border-slate-400" : "hover:border-slate-300"}`}
+                  onClick={() => onToggleExpand(group.name)}
+                >
+                  <CardContent className="p-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0 mr-3">
+                        <p className="text-sm font-medium text-slate-900">{group.name}</p>
+                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                          {group.brandName && (
+                            <span className="text-xs font-medium text-blue-600">{group.brandName}</span>
+                          )}
+                          {group.categoryName && (
+                            <span className="text-xs text-slate-400">{group.categoryName}</span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-1">{locationLine}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="text-right">
+                          <p className={`text-xl font-bold ${group.totalStock <= 0 ? "text-red-600" : "text-green-600"}`}>
+                            {group.totalStock}
+                          </p>
+                          <span className="text-[10px] text-slate-400">total</span>
+                        </div>
+                        <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Expanded detail: per-bin breakdown */}
+                {isExpanded && (
+                  <div className="ml-3 mt-1 mb-2 space-y-1.5 border-l-2 border-slate-200 pl-3">
+                    {group.bins.map((bin) => (
+                      <div
+                        key={bin.productId}
+                        className="bg-slate-50 rounded-lg p-2.5 border border-slate-100"
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
+                              <span className="text-xs font-medium text-slate-700">
+                                {bin.binName || bin.binCode || "No Bin"}
+                              </span>
+                              {bin.binLocation && (
+                                <span className="text-[10px] text-slate-400">({bin.binLocation})</span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-0.5 ml-[18px]">
+                              SKU: {bin.sku}
+                            </p>
+                            <div className="flex items-center gap-3 mt-1 ml-[18px]">
+                              <span className="text-[10px] text-slate-500">
+                                In: <span className="font-medium text-green-700">{formatRelativeDate(bin.lastInward)}</span>
+                              </span>
+                              <span className="text-[10px] text-slate-500">
+                                Out: <span className="font-medium text-orange-700">{formatRelativeDate(bin.lastOutward)}</span>
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <p className={`text-lg font-bold ${bin.stock <= 0 ? "text-red-600" : "text-slate-900"}`}>
+                              {bin.stock}
+                            </p>
+                            <Badge variant={bin.stock <= 0 ? "danger" : "success"} className="text-[9px]">
+                              {bin.stock <= 0 ? "Out" : "In Stock"}
+                            </Badge>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

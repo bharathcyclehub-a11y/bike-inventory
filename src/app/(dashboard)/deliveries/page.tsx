@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
   Search, Loader2, Cloud, Download, Truck, AlertTriangle, CheckCircle2,
-  Clock, Package, Flag, Trash2,
+  Clock, Package, Flag, Trash2, Phone,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +36,18 @@ interface Stats {
   deliveredToday: number;
   flagged: number;
   prebooked: number;
+}
+
+interface ZohoSearchResult {
+  invoiceId: string;
+  invoiceNumber: string;
+  customerName: string;
+  phone: string;
+  date: string;
+  total: number;
+  balance: number;
+  status: string;
+  alreadyImported: boolean;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; variant: string; icon: typeof Truck }> = {
@@ -82,16 +94,24 @@ export default function DeliveriesPage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
 
-  // Fetch Invoices state
+  // Quick Search (invoice number / phone)
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [searchStep, setSearchStep] = useState<"idle" | "searching" | "results" | "importing">("idle");
+  const [searchResults, setSearchResults] = useState<ZohoSearchResult[]>([]);
+  const [selectedResults, setSelectedResults] = useState<Set<string>>(new Set());
+  const [searchError, setSearchError] = useState("");
+  const [searchProgress, setSearchProgress] = useState("");
+
+  // Bulk Fetch (last 24h — existing flow)
   const [fetchStep, setFetchStep] = useState<"idle" | "fetching" | "selecting" | "importing">("idle");
   const [invoicePreviews, setInvoicePreviews] = useState<ZohoInvoicePreview[]>([]);
   const [selectedInvoices, setSelectedInvoices] = useState<Set<string>>(new Set());
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
-  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [fetchProgress, setFetchProgress] = useState("");
+
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
-  const [fetchProgress, setFetchProgress] = useState("");
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -179,46 +199,128 @@ export default function DeliveriesPage() {
     } finally { setBulkDeleting(false); }
   };
 
+  // ─── QUICK SEARCH (invoice no / phone → direct Zoho search, no pipeline) ───
+  const handleQuickSearch = async () => {
+    const q = invoiceSearch.trim();
+    if (!q || q.length < 3) {
+      setSearchError("Enter at least 3 characters");
+      return;
+    }
+
+    setSearchStep("searching");
+    setSearchError("");
+    setSearchProgress(`Searching Zoho for "${q}"...`);
+    try {
+      const res = await fetch("/api/deliveries/search-zoho", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: q }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text.startsWith("{") ? JSON.parse(text).error : `Server error (${res.status}). Try again.`);
+      }
+
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Search failed");
+
+      const results: ZohoSearchResult[] = data.data.results || [];
+      setSearchResults(results);
+
+      const newOnes = results.filter((r) => !r.alreadyImported);
+      setSelectedResults(new Set(newOnes.map((r) => r.invoiceId)));
+      setSearchStep(results.length > 0 ? "results" : "idle");
+
+      if (results.length === 0) {
+        setSearchError(`No invoices found for "${q}"`);
+      } else if (newOnes.length === 0) {
+        setSearchError(`Found ${results.length} invoice(s) — all already imported`);
+        setSearchStep("results"); // Still show results
+      }
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : "Search failed");
+      setSearchStep("idle");
+    } finally {
+      setSearchProgress("");
+    }
+  };
+
+  const handleImportSearchResults = async () => {
+    if (selectedResults.size === 0) return;
+    setSearchStep("importing");
+    setSearchError("");
+    setSearchProgress(`Importing ${selectedResults.size} invoice(s)...`);
+    try {
+      const res = await fetch("/api/deliveries/import-zoho", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceIds: Array.from(selectedResults) }),
+      });
+
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text.startsWith("{") ? JSON.parse(text).error : `Server error (${res.status})`);
+      }
+
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Import failed");
+
+      const { imported, errors } = data.data;
+      setSearchStep("idle");
+      setSearchResults([]);
+      setSelectedResults(new Set());
+      setInvoiceSearch("");
+
+      if (errors && errors.length > 0) {
+        setSearchError(`Imported ${imported}. Issues: ${errors.join(", ")}`);
+      }
+      fetchData();
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : "Import failed");
+      setSearchStep("results");
+    } finally {
+      setSearchProgress("");
+    }
+  };
+
+  // ─── BULK FETCH (last 24h, existing pipeline) ───
   const handleFetchInvoices = async () => {
     setFetchStep("fetching");
     setFetchError("");
     setFetchProgress("Connecting to Zoho...");
     try {
-      // Step 1: Init
       const initRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "init" }),
-      }).then(r => r.json());
-      if (!initRes.success) throw new Error(initRes.error || "Init failed");
-      const pullId = initRes.data.pullId;
+      });
+      if (!initRes.ok) throw new Error(`Connection failed (${initRes.status})`);
+      const initData = await initRes.json();
+      if (!initData.success) throw new Error(initData.error || "Init failed");
+      const pullId = initData.data.pullId;
       setFetchPullId(pullId);
 
-      // Step 2: Pull invoices only (last 24h or by search)
-      const searchTerm = invoiceSearch.trim();
       const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      setFetchProgress(searchTerm ? `Searching for "${searchTerm}"...` : "Pulling invoices (last 24h)...");
+      setFetchProgress("Pulling invoices (last 24h)...");
       const invRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          step: "invoices", pullId,
-          ...(searchTerm ? { searchText: searchTerm } : { fromDate: yesterday }),
-        }),
-      }).then(r => r.json());
-      if (!invRes.success) throw new Error(invRes.error || "Invoice fetch failed");
+        body: JSON.stringify({ step: "invoices", pullId, fromDate: yesterday }),
+      });
+      if (!invRes.ok) throw new Error(`Fetch failed (${invRes.status}). Try again.`);
+      const invData = await invRes.json();
+      if (!invData.success) throw new Error(invData.error || "Invoice fetch failed");
 
-      // Step 3: Finalize
-      const invFound = invRes.data.invoicesNew || 0;
+      const invFound = invData.data.invoicesNew || 0;
       setFetchProgress(`Found ${invFound} invoice${invFound !== 1 ? "s" : ""}. Finalizing...`);
       await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           step: "finalize", pullId,
-          invoicesNew: invRes.data.invoicesNew, apiCalls: invRes.data.apiCalls,
-          allErrors: invRes.data.errors || [],
+          invoicesNew: invData.data.invoicesNew, apiCalls: invData.data.apiCalls,
+          allErrors: invData.data.errors || [],
         }),
-      }).then(r => r.json()).catch(() => {});
+      }).catch(() => {});
 
-      // Step 4: Load previews
       setFetchProgress("Loading preview...");
       const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
       if (previewRes.success) {
@@ -229,7 +331,7 @@ export default function DeliveriesPage() {
         setSelectedInvoices(new Set(invoices.map((inv: ZohoInvoicePreview) => inv.id)));
         setFetchStep(invoices.length > 0 ? "selecting" : "idle");
         if (invoices.length === 0) {
-          setFetchError(invFound > 0 ? `${invFound} found but already imported` : `No new invoices found${searchTerm ? ` for "${searchTerm}"` : " (last 24h)"}`);
+          setFetchError(invFound > 0 ? `${invFound} found but already imported` : "No new invoices found (last 24h)");
         }
       }
     } catch (e) {
@@ -263,7 +365,7 @@ export default function DeliveriesPage() {
       setFetchStep("idle");
       setInvoicePreviews([]);
       setSelectedInvoices(new Set());
-      fetchData(); // Refresh deliveries list
+      fetchData();
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Import failed");
       setFetchStep("selecting");
@@ -280,6 +382,8 @@ export default function DeliveriesPage() {
     { key: "PREBOOKED", label: "Prebooked", count: stats?.prebooked },
   ];
 
+  const isPhone = /^\d{10,}$/.test(invoiceSearch.trim());
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
@@ -289,21 +393,36 @@ export default function DeliveriesPage() {
             <button onClick={handleBulkDelete} disabled={bulkDeleting}
               className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-50">
               {bulkDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-              {bulkDeleting ? "Deleting..." : `Del All (${deliveries.length})`}
+              {bulkDeleting ? "..." : `Del (${deliveries.length})`}
             </button>
           )}
           {canFetchInvoices && (
             <>
-              <input
-                type="text" placeholder="Invoice no..." value={invoiceSearch}
-                onChange={(e) => setInvoiceSearch(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleFetchInvoices()}
-                className="w-24 px-2 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400"
-              />
-              <button onClick={handleFetchInvoices} disabled={fetchStep === "fetching" || fetchStep === "importing"}
-                className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Invoice / Phone..."
+                  value={invoiceSearch}
+                  onChange={(e) => setInvoiceSearch(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleQuickSearch()}
+                  className="w-28 px-2 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400 pr-6"
+                />
+                {isPhone && (
+                  <Phone className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-green-500" />
+                )}
+              </div>
+              <button onClick={handleQuickSearch}
+                disabled={searchStep === "searching" || searchStep === "importing"}
+                className="flex items-center gap-1 bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50">
+                {searchStep === "searching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                Search
+              </button>
+              <button onClick={handleFetchInvoices}
+                disabled={fetchStep === "fetching" || fetchStep === "importing"}
+                className="flex items-center gap-1 bg-slate-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+                title="Fetch all invoices from last 24 hours">
                 {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-                {fetchStep === "fetching" ? "Fetching..." : invoiceSearch.trim() ? "Search" : "Fetch"}
+                Fetch
               </button>
             </>
           )}
@@ -344,13 +463,95 @@ export default function DeliveriesPage() {
         ))}
       </div>
 
-      {/* Search */}
+      {/* Local search */}
       <div className="relative mb-2">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
         <Input placeholder="Search invoice, customer..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
       </div>
 
-      {/* Fetch Progress */}
+      {/* ─── Quick Search Progress ─── */}
+      {searchStep === "searching" && searchProgress && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
+          <span className="text-xs text-blue-700 font-medium">{searchProgress}</span>
+        </div>
+      )}
+
+      {/* ─── Quick Search Results ─── */}
+      {searchStep === "results" && searchResults.length > 0 && (
+        <Card className="mb-3 border-blue-200 bg-blue-50/50">
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-blue-800">
+                {searchResults.length} invoice{searchResults.length !== 1 ? "s" : ""} found in Zoho
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => { setSearchStep("idle"); setSearchResults([]); }}
+                  className="text-xs text-slate-500 underline">Close</button>
+                {selectedResults.size > 0 && (
+                  <button onClick={handleImportSearchResults}
+                    className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-md text-xs font-medium">
+                    <Download className="h-3 w-3" /> Import {selectedResults.size}
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="space-y-1.5 max-h-64 overflow-y-auto">
+              {searchResults.map((r) => (
+                <label key={r.invoiceId}
+                  className={`flex items-start gap-2 p-2 rounded-lg transition-colors ${
+                    r.alreadyImported
+                      ? "bg-slate-100 border border-slate-200 opacity-60"
+                      : selectedResults.has(r.invoiceId)
+                        ? "bg-blue-100 border border-blue-300 cursor-pointer"
+                        : "bg-white border border-slate-200 cursor-pointer"
+                  }`}>
+                  {!r.alreadyImported && (
+                    <input type="checkbox" checked={selectedResults.has(r.invoiceId)}
+                      onChange={() => setSelectedResults(prev => {
+                        const next = new Set(prev);
+                        next.has(r.invoiceId) ? next.delete(r.invoiceId) : next.add(r.invoiceId);
+                        return next;
+                      })} className="mt-0.5 rounded" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-slate-900">{r.invoiceNumber}</span>
+                      <span className="text-xs font-semibold text-slate-700">{formatINR(r.total)}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600">
+                      {r.customerName}
+                      {r.phone ? ` | ${r.phone}` : ""}
+                    </p>
+                    <p className="text-[10px] text-slate-400">
+                      {r.date} | {r.status}
+                      {r.alreadyImported && <span className="text-green-600 font-medium ml-1">Already imported</span>}
+                    </p>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ─── Quick Search Importing ─── */}
+      {searchStep === "importing" && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
+          <span className="text-xs text-blue-700 font-medium">{searchProgress || "Importing..."}</span>
+        </div>
+      )}
+
+      {/* Search Error */}
+      {searchError && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-2 text-xs text-amber-700">
+          {searchError}
+          <button onClick={() => setSearchError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
+      {/* ─── Bulk Fetch Progress ─── */}
       {fetchStep === "fetching" && fetchProgress && (
         <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
@@ -366,7 +567,7 @@ export default function DeliveriesPage() {
         </div>
       )}
 
-      {/* Invoice Selection Panel */}
+      {/* Invoice Selection Panel (bulk fetch) */}
       {fetchStep === "selecting" && invoicePreviews.length > 0 && (
         <Card className="mb-3 border-blue-200 bg-blue-50/50">
           <CardContent className="p-3">
@@ -411,7 +612,7 @@ export default function DeliveriesPage() {
         </Card>
       )}
 
-      {/* Importing indicator */}
+      {/* Importing indicator (bulk fetch) */}
       {fetchStep === "importing" && (
         <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
           <Loader2 className="h-4 w-4 animate-spin text-blue-600" />

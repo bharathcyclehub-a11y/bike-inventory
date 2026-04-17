@@ -38,8 +38,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (data.status) {
       const VALID: Record<string, string[]> = {
         PENDING: ["VERIFIED", "FLAGGED"],
-        VERIFIED: ["WALK_OUT", "SCHEDULED"],
-        SCHEDULED: ["OUT_FOR_DELIVERY", "VERIFIED"],
+        VERIFIED: ["WALK_OUT", "SCHEDULED", "PACKED"],
+        SCHEDULED: ["OUT_FOR_DELIVERY", "VERIFIED", "PACKED"],
+        PACKED: ["SHIPPED"],
+        SHIPPED: ["IN_TRANSIT"],
+        IN_TRANSIT: ["DELIVERED"],
         OUT_FOR_DELIVERY: ["DELIVERED"],
         FLAGGED: ["PENDING"],
         PREBOOKED: ["VERIFIED"],
@@ -64,6 +67,18 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.notes !== undefined) updateData.notes = data.notes;
       if (data.scheduledDate) updateData.scheduledDate = new Date(data.scheduledDate);
 
+      // Outstation & courier fields
+      if (data.isOutstation !== undefined) updateData.isOutstation = data.isOutstation;
+      if (data.courierName !== undefined) updateData.courierName = data.courierName;
+      if (data.courierTrackingNo !== undefined) updateData.courierTrackingNo = data.courierTrackingNo;
+      if (data.courierCost !== undefined) updateData.courierCost = data.courierCost;
+      if (data.freeAccessories !== undefined) updateData.freeAccessories = data.freeAccessories;
+
+      // WhatsApp tracking flags
+      if (data.whatsAppScheduledSent !== undefined) updateData.whatsAppScheduledSent = data.whatsAppScheduledSent;
+      if (data.whatsAppDispatchedSent !== undefined) updateData.whatsAppDispatchedSent = data.whatsAppDispatchedSent;
+      if (data.whatsAppDeliveredSent !== undefined) updateData.whatsAppDeliveredSent = data.whatsAppDeliveredSent;
+
       if (data.status) {
         updateData.status = data.status;
 
@@ -72,7 +87,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           updateData.verifiedById = user.id;
         }
 
-        if (data.status === "OUT_FOR_DELIVERY") {
+        if (data.status === "OUT_FOR_DELIVERY" || data.status === "SHIPPED") {
           updateData.dispatchedAt = new Date();
         }
 

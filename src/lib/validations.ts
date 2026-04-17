@@ -278,55 +278,51 @@ export const deliveryCreateSchema = z.object({
   })).optional(),
 });
 
-// ─── Service Tickets ──────────────────────────────
-
-export const serviceTicketSchema = z.object({
-  customerName: z.string().min(1, "Customer name is required").max(200),
-  customerPhone: z.string().min(10, "Phone number is required").max(15),
-  alternatePhone: z.string().max(15).optional(),
-  customerAddress: z.string().max(500).optional(),
-  pincode: z.string().max(10).optional(),
-  productName: z.string().min(1, "Product name is required").max(300),
-  invoiceNo: z.string().max(50).optional(),
-  issueBrief: z.string().min(1, "Issue description is required").max(2000),
-  department: z.enum(["Bangalore Delivery", "OB Delivery", "In store service", "EM Service", "General Issues"]),
-  assignedMechanic: z.string().max(100).optional(),
-  salesPerson: z.string().max(100).optional(),
-  priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).optional(),
-  deliveryZone: z.string().max(100).optional(),
-  deliveryAddress: z.string().max(500).optional(),
-  estimatedDelivery: z.string().max(50).optional(),
-  reversePickup: z.boolean().optional(),
-  freeAccessories: z.string().max(500).optional(),
-  assignedToId: z.string().optional(),
-});
-
-export const serviceTicketUpdateSchema = z.object({
-  status: z.enum(["TICKET_ISSUED", "ESCALATED", "RESOLVED", "RESOLUTION_DELAYED"]).optional(),
-  emTicketStatus: z.enum(["OPEN", "APPROVAL_PENDING", "EVIDENCE_PENDING", "DISPATCH_PENDING", "IN_TRANSIT_TO_BCH", "DELIVERED_TO_BCH", "IN_TRANSIT_TO_CUSTOMER", "CLOSED"]).optional(),
-  ticketPendingFrom: z.enum(["EM", "CLIENT", "BCH"]).optional().nullable(),
-  delayReason: z.string().max(500).optional().nullable(),
-  assignedMechanic: z.string().max(100).optional(),
-  assignedToId: z.string().optional(),
-  salesPerson: z.string().max(100).optional(),
-  priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).optional(),
-  deliveryZone: z.string().max(100).optional(),
-  deliveryAddress: z.string().max(500).optional(),
-  estimatedDelivery: z.string().max(50).optional(),
-  reversePickup: z.boolean().optional(),
-  freeAccessories: z.string().max(500).optional(),
-  receivedReplacement: z.string().max(500).optional(),
-});
-
 export const deliveryUpdateSchema = z.object({
-  status: z.enum(["PENDING", "VERIFIED", "WALK_OUT", "SCHEDULED", "OUT_FOR_DELIVERY", "DELIVERED", "FLAGGED", "PREBOOKED"]).optional(),
+  status: z.enum(["PENDING", "VERIFIED", "WALK_OUT", "SCHEDULED", "OUT_FOR_DELIVERY", "DELIVERED", "FLAGGED", "PREBOOKED", "PACKED", "SHIPPED", "IN_TRANSIT"]).optional(),
   customerAddress: z.string().optional(),
   customerArea: z.string().optional(),
-  customerPincode: z.string().optional(),
+  customerPincode: z.string().regex(/^\d{6}$/, "Must be 6 digits").optional().or(z.literal("")),
   customerPhone: z.string().optional(),
   scheduledDate: z.string().optional(),
   deliveryNotes: z.string().optional(),
   notes: z.string().optional(),
   flagReason: z.string().optional(),
   rejectionReason: z.string().optional(),
+  isOutstation: z.boolean().optional(),
+  courierName: z.string().optional(),
+  courierTrackingNo: z.string().optional(),
+  courierCost: z.number().optional(),
+  freeAccessories: z.string().optional(),
+  whatsAppScheduledSent: z.boolean().optional(),
+  whatsAppDispatchedSent: z.boolean().optional(),
+  whatsAppDeliveredSent: z.boolean().optional(),
+});
+
+// ─── Inbound Tracking ───────────────────────
+
+export const inboundShipmentSchema = z.object({
+  brandId: z.string().min(1, "Brand is required"),
+  billNo: z.string().min(1, "Bill number is required"),
+  billImageUrl: z.string().min(1, "Bill image is required"),
+  billDate: z.string().min(1, "Bill date is required"),
+  notes: z.string().optional(),
+  lineItems: z.array(z.object({
+    productName: z.string().min(1, "Product name is required"),
+    productId: z.string().optional(),
+    sku: z.string().optional(),
+    quantity: z.number().int().min(1),
+    rate: z.number().min(0),
+    amount: z.number().min(0),
+    hsn: z.string().optional(),
+  })).min(1, "At least one line item is required"),
+});
+
+export const preBookingSchema = z.object({
+  customerName: z.string().min(1, "Customer name is required"),
+  customerPhone: z.string().optional(),
+  zohoInvoiceNo: z.string().min(1, "Zoho invoice number is required"),
+  productName: z.string().min(1, "Product name is required"),
+  salesPerson: z.string().optional(),
+  brandId: z.string().optional(),
 });

@@ -11,7 +11,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { id } = await params;
 
-    // Clerks can only view their assigned stock counts
+    // Clerks/Mechanic can only view their assigned stock counts
     if (["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role)) {
       const check = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
       if (!check) return errorResponse("Stock count not found", 404);
@@ -64,7 +64,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const existing = await prisma.stockCount.findUnique({ where: { id } });
     if (!existing) return errorResponse("Stock count not found", 404);
 
-    // Clerks can only update their assigned stock counts
+    // Clerks/Mechanic can only update their assigned stock counts
     if (["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role)) {
       if (existing.assignedToId !== user.id) return errorResponse("You can only update stock counts assigned to you", 403);
     }

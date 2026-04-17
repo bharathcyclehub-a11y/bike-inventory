@@ -86,3 +86,26 @@ export async function PUT(
     );
   }
 }
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    await requireAuth(["ADMIN"]);
+    const { id } = await params;
+
+    const issue = await prisma.vendorIssue.findUnique({ where: { id } });
+    if (!issue) return errorResponse("Issue not found", 404);
+
+    await prisma.vendorIssue.delete({ where: { id } });
+    return successResponse({ deleted: true });
+  } catch (error) {
+    if (error instanceof AuthError)
+      return errorResponse(error.message, error.status);
+    return errorResponse(
+      error instanceof Error ? error.message : "Failed to delete issue",
+      500
+    );
+  }
+}

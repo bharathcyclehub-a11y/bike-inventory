@@ -36,6 +36,7 @@ interface StockCountItemData {
 
 interface StockCountSummary {
   id: string;
+  countNo: string | null;
   title: string;
   status: string;
   dueDate: string;
@@ -88,6 +89,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
   const [staleCount, setStaleCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [quickMode, setQuickMode] = useState(false);
+  const [hideZeroCount, setHideZeroCount] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -353,6 +355,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-bold text-slate-900 truncate">{summary.title}</h1>
           <p className="text-xs text-slate-500">
+            {summary.countNo && <span className="font-mono text-slate-400">{summary.countNo} | </span>}
             {summary.assignedTo.name} | Due: {new Date(summary.dueDate).toLocaleDateString("en-IN")}
             {summary.bin && ` | ${summary.bin.name} (${summary.bin.location})`}
           </p>
@@ -547,6 +550,20 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         )}
       </div>
 
+      {/* Hide zero-count toggle (only on Counted tab) */}
+      {tab === "counted" && !loadingItems && items.length > 0 && (
+        <div className="flex items-center justify-end mb-2">
+          <button
+            onClick={() => setHideZeroCount(!hideZeroCount)}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium transition-colors ${
+              hideZeroCount ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            }`}
+          >
+            {hideZeroCount ? "Showing stock > 0" : "Show stock > 0 only"}
+          </button>
+        </div>
+      )}
+
       {/* Items */}
       {loadingItems ? (
         <div className="flex items-center justify-center py-8">
@@ -554,7 +571,13 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         </div>
       ) : (
         <div className="space-y-2">
-          {items.map((item) => {
+          {items.filter((item) => {
+            if (hideZeroCount && tab === "counted") {
+              const val = counts[item.id] ?? item.countedQty;
+              return val !== null && val !== undefined && val > 0;
+            }
+            return true;
+          }).map((item) => {
             const val = counts[item.id];
             const displayVal = val ?? item.countedQty;
             const variance = displayVal !== null && displayVal !== undefined ? displayVal - item.systemQty : null;

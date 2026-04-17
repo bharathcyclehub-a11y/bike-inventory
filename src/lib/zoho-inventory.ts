@@ -253,6 +253,21 @@ export class ZohoInventoryClient {
     }
     return all;
   }
+
+  async createItem(itemData: {
+    name: string;
+    sku: string;
+    purchase_rate: number;
+    rate?: number;
+    item_type?: string;
+    product_type?: string;
+  }) {
+    return this.apiCall<{ item: { item_id: string; name: string; sku: string } }>(
+      "POST",
+      "/items",
+      itemData
+    );
+  }
 }
 
 // Exchange grant token for refresh token (one-time setup)

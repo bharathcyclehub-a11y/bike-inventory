@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Search, AlertCircle, Plus } from "lucide-react";
+import { useSession } from "next-auth/react";
+import { Search, AlertCircle, Plus, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -51,6 +52,10 @@ const STATUS_VARIANT: Record<string, "default" | "info" | "warning" | "success">
 };
 
 export default function VendorIssuesPage() {
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string })?.role || "";
+  const isAdmin = role === "ADMIN";
+
   const urlParams = useSearchParams();
   const vendorIdParam = urlParams.get("vendorId") || "";
 
@@ -81,6 +86,22 @@ export default function VendorIssuesPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [vendorIdParam, statusFilter, priorityFilter, debouncedSearch]);
+
+  const handleDelete = async (e: React.MouseEvent, issueId: string, issueNo: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm(`Delete issue ${issueNo}? This cannot be undone.`)) return;
+    try {
+      const res = await fetch(`/api/vendor-issues/${issueId}`, { method: "DELETE" }).then(r => r.json());
+      if (res.success) {
+        setIssues((prev) => prev.filter((i) => i.id !== issueId));
+      } else {
+        alert(res.error || "Failed to delete");
+      }
+    } catch {
+      alert("Network error");
+    }
+  };
 
   return (
     <div>
@@ -207,9 +228,19 @@ export default function VendorIssuesPage() {
                       </Badge>
                     </div>
                   </div>
-                  <p className="text-[10px] text-slate-400 mt-1.5">
-                    {new Date(issue.createdAt).toLocaleDateString("en-IN")}
-                  </p>
+                  <div className="flex items-center justify-between mt-1.5">
+                    <p className="text-[10px] text-slate-400">
+                      {new Date(issue.createdAt).toLocaleDateString("en-IN")}
+                    </p>
+                    {isAdmin && (
+                      <button
+                        onClick={(e) => handleDelete(e, issue.id, issue.issueNo)}
+                        className="p-1.5 rounded-full hover:bg-red-50 text-slate-300 hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             </Link>

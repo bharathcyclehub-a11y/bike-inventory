@@ -26,15 +26,16 @@ interface CEOData {
   lowStockCount: number;
   todayInwards: number;
   todayOutwards: number;
-  // Service
-  openTickets: number;
   openVendorIssues: number;
   // Lists
   overdueBillsList: Array<{ id: string; billNo: string; amount: number; paidAmount: number; dueDate: string; vendor: { name: string } }>;
   insights: Array<{ type: string; title: string; severity: string; value: number }>;
+  // Inbound
+  inboundInTransit: number;
+  inboundArrivingThisWeek: number;
   // Health
   people: Array<{ name: string; role: string; pending: number; overdue24h: number; overdue48h: number; overdue72h: number }>;
-  todaySummary: { inwardsVerified: number; inwardsPending: number; deliveriesClosed: number; deliveriesPending: number; expensesRecorded: number; posWithoutTracking: number; openServiceTickets: number };
+  todaySummary: { inwardsVerified: number; inwardsPending: number; deliveriesClosed: number; deliveriesPending: number; expensesRecorded: number; posWithoutTracking: number };
   criticalAlerts: Array<{ type: string; message: string; owner: string; count: number }>;
 }
 
@@ -52,11 +53,11 @@ function AdminDashboard() {
       safeFetch("/api/ai/dashboard-insights"),
       safeFetch(`/api/inventory/inwards?dateFrom=${today}&limit=1`),
       safeFetch(`/api/inventory/outwards?dateFrom=${today}&limit=1`),
-      safeFetch("/api/service-tickets/stats"),
       safeFetch("/api/health/summary"),
       safeFetch("/api/vendor-issues?limit=1"),
+      safeFetch("/api/inbound/stats"),
     ])
-      .then(([accountsRes, insightsRes, inwardsRes, outwardsRes, ticketsRes, healthRes, issuesRes]) => {
+      .then(([accountsRes, insightsRes, inwardsRes, outwardsRes, healthRes, issuesRes, inboundRes]) => {
         const acct = accountsRes.success ? accountsRes.data : null;
         const insightData = insightsRes.success ? insightsRes.data : [];
         const stockValueInsight = insightData.find((i: { type: string }) => i.type === "stock_value");
@@ -71,8 +72,9 @@ function AdminDashboard() {
           lowStockCount: reorderInsight?.value || 0,
           todayInwards: inwardsRes.success ? (inwardsRes.pagination?.total || 0) : 0,
           todayOutwards: outwardsRes.success ? (outwardsRes.pagination?.total || 0) : 0,
-          openTickets: ticketsRes.success ? (ticketsRes.data?.totalOpen || 0) : 0,
           openVendorIssues: issuesRes.success ? (issuesRes.pagination?.total || 0) : 0,
+          inboundInTransit: inboundRes.success ? (inboundRes.data?.inTransit?.items || 0) : 0,
+          inboundArrivingThisWeek: inboundRes.success ? (inboundRes.data?.arrivingThisWeek?.items || 0) : 0,
           overdueBillsList: acct?.overdueBillsList || [],
           insights: insightData.filter((i: { type: string }) => i.type !== "stock_value" && i.type !== "reorder"),
           people: healthRes.success ? (healthRes.data?.people || []) : [],
@@ -159,12 +161,12 @@ function AdminDashboard() {
             </CardContent>
           </Card>
         </Link>
-        <Link href="/service">
-          <Card className={data.openTickets > 0 ? "border-orange-200" : ""}>
+        <Link href="/inbound">
+          <Card className={data.inboundInTransit > 0 ? "border-amber-200" : ""}>
             <CardContent className="p-2.5 text-center">
-              <Flag className="h-4 w-4 text-orange-500 mx-auto mb-0.5" />
-              <p className="text-base font-bold text-slate-900">{data.openTickets}</p>
-              <p className="text-[9px] text-slate-500">Open Tickets</p>
+              <Truck className="h-4 w-4 text-amber-500 mx-auto mb-0.5" />
+              <p className="text-base font-bold text-slate-900">{data.inboundInTransit}</p>
+              <p className="text-[9px] text-slate-500">In Transit</p>
             </CardContent>
           </Card>
         </Link>
@@ -640,7 +642,7 @@ function PurchaseManagerDashboard() {
 }
 
 function AccountsManagerDashboard() {
-  const [stats, setStats] = useState<{ openIssues: number; pendingAudits: number; openTickets: number; expenses30d: number } | null>(null);
+  const [stats, setStats] = useState<{ openIssues: number; pendingAudits: number; expenses30d: number } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -648,15 +650,13 @@ function AccountsManagerDashboard() {
     Promise.all([
       safeFetch("/api/vendor-issues?status=OPEN&limit=1"),
       safeFetch("/api/stock-counts?status=PENDING&limit=1"),
-      safeFetch("/api/service-tickets/stats"),
       safeFetch("/api/accounts/summary"),
     ])
-      .then(([issuesRes, auditsRes, ticketsRes, accountsRes]) => {
+      .then(([issuesRes, auditsRes, accountsRes]) => {
         const acct = accountsRes.success ? accountsRes.data : null;
         setStats({
           openIssues: issuesRes.success ? (issuesRes.pagination?.total || 0) : 0,
           pendingAudits: auditsRes.success ? (auditsRes.pagination?.total || 0) : 0,
-          openTickets: ticketsRes.success ? (ticketsRes.data?.totalOpen || 0) : 0,
           expenses30d: acct?.stats?.totalExpenses30d || 0,
         });
       })
@@ -674,7 +674,6 @@ function AccountsManagerDashboard() {
     <div className="grid grid-cols-2 gap-3">
       <Link href="/vendor-issues"><DashboardCard label="Vendor Issues" value={stats.openIssues} icon={ShieldAlert} color={stats.openIssues > 0 ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"} /></Link>
       <Link href="/stock-audit"><DashboardCard label="Pending Audits" value={stats.pendingAudits} icon={Package} color="bg-blue-100 text-blue-700" /></Link>
-      <Link href="/service"><DashboardCard label="Open Service" value={stats.openTickets} icon={Flag} color={stats.openTickets > 0 ? "bg-orange-100 text-orange-600" : "bg-green-100 text-green-600"} /></Link>
       <Link href="/expenses"><DashboardCard label="Expenses (30d)" value={formatINR(stats.expenses30d)} icon={IndianRupee} color="bg-green-100 text-green-700" /></Link>
     </div>
   );

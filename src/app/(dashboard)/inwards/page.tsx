@@ -105,6 +105,7 @@ export default function InwardsPage() {
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
   const [billSearch, setBillSearch] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -287,6 +288,12 @@ export default function InwardsPage() {
           <p className="text-sm text-slate-500">{filtered.length} entries | {totalQty} units</p>
         </div>
         <div className="flex items-center gap-2">
+          {!showSearch && (
+            <button onClick={() => setShowSearch(true)}
+              className="p-2 rounded-lg hover:bg-slate-100 text-slate-500">
+              <Search className="h-4.5 w-4.5" />
+            </button>
+          )}
           {canFetchBills && (
             <div className="flex items-center gap-1">
               <input
@@ -381,15 +388,23 @@ export default function InwardsPage() {
         </div>
       )}
 
-      <div className="relative mb-3">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-        <Input
-          placeholder="Search product, SKU, or bill no..."
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="pl-9"
-        />
-      </div>
+      {/* Search toggle */}
+      {showSearch && (
+        <div className="relative mb-2">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Input
+            placeholder="Search item name, SKU, or bill no..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-9 pr-9"
+            autoFocus
+          />
+          <button onClick={() => { setShowSearch(false); setSearch(""); }}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600">
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Date Filter */}
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-2 pb-1">

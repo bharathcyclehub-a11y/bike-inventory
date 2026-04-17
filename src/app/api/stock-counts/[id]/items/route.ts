@@ -10,7 +10,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { id } = await params;
 
-    // Clerks can only access their assigned stock counts
+    // Clerks/Mechanic can only access their assigned stock counts
     if (["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role)) {
       const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
       if (!sc) return errorResponse("Stock count not found", 404);
@@ -71,7 +71,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         },
       },
       orderBy: { product: { name: "asc" } },
-      take: 500,
+      ...(searchParams.get("limit") ? { take: parseInt(searchParams.get("limit")!) } : { take: 500 }),
     });
 
     // Calculate stale count — items where systemQty differs from current product stock
@@ -109,7 +109,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     // ADMIN cannot save counts — only approve/reject
     if (user.role === "ADMIN") return errorResponse("Admin can only approve or reject stock counts", 403);
 
-    // Clerks can only edit their assigned stock counts
+    // Clerks/Mechanic can only edit their assigned stock counts
     if (["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role)) {
       const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
       if (!sc) return errorResponse("Stock count not found", 404);
@@ -159,7 +159,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
     const { id } = await params;
 
-    // Clerks can only refresh their assigned stock counts
+    // Clerks/Mechanic can only refresh their assigned stock counts
     if (["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role)) {
       const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
       if (!sc) return errorResponse("Stock count not found", 404);

@@ -49,7 +49,6 @@ export async function GET() {
       deliveriesPending,
       expensesRecorded,
       posWithoutTracking,
-      openServiceTickets,
     ] = await Promise.all([
       // --- Nithin: unverified inwards with age buckets ---
       prisma.$queryRaw<[{ pending: number; overdue24h: number; overdue48h: number; overdue72h: number }]>`
@@ -127,12 +126,6 @@ export async function GET() {
         WHERE status = 'SENT_TO_VENDOR' AND "orderDate" < ${h48}
       `,
 
-      // Open service tickets (not RESOLVED, not CLOSED)
-      prisma.$queryRaw<[{ count: number }]>`
-        SELECT COUNT(*)::int AS count
-        FROM "ServiceTicket"
-        WHERE status NOT IN ('RESOLVED', 'CLOSED')
-      `,
     ]);
 
     const nithin = nithinStats[0];
@@ -183,7 +176,6 @@ export async function GET() {
       deliveriesPending,
       expensesRecorded,
       posWithoutTracking: posWithoutTracking[0]?.count || 0,
-      openServiceTickets: openServiceTickets[0]?.count || 0,
     };
 
     // Build critical alerts (items > 72h needing Syed's attention)
