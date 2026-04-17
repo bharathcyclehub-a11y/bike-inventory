@@ -21,6 +21,36 @@ export async function GET(req: NextRequest) {
     if (status) where.status = status;
     if (area) where.customerArea = area;
     if (outstation === "true") where.isOutstation = true;
+    const dateRange = searchParams.get("dateRange") || undefined;
+    if (dateRange) {
+      const now = new Date();
+      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      let rangeEnd: Date | undefined;
+
+      if (dateRange === "today") {
+        const endOfDay = new Date(startOfDay);
+        endOfDay.setDate(endOfDay.getDate() + 1);
+        where.scheduledDate = { gte: startOfDay, lt: endOfDay };
+      } else if (dateRange === "tomorrow") {
+        const tomorrow = new Date(startOfDay);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const dayAfter = new Date(tomorrow);
+        dayAfter.setDate(dayAfter.getDate() + 1);
+        where.scheduledDate = { gte: tomorrow, lt: dayAfter };
+      } else if (dateRange === "3days") {
+        rangeEnd = new Date(startOfDay);
+        rangeEnd.setDate(rangeEnd.getDate() + 3);
+        where.scheduledDate = { gte: startOfDay, lte: rangeEnd };
+      } else if (dateRange === "week") {
+        rangeEnd = new Date(startOfDay);
+        rangeEnd.setDate(rangeEnd.getDate() + 7);
+        where.scheduledDate = { gte: startOfDay, lte: rangeEnd };
+      } else if (dateRange === "month") {
+        rangeEnd = new Date(startOfDay);
+        rangeEnd.setDate(rangeEnd.getDate() + 30);
+        where.scheduledDate = { gte: startOfDay, lte: rangeEnd };
+      }
+    }
     if (date) {
       const d = new Date(date);
       const next = new Date(d);

@@ -115,6 +115,7 @@ export default function DeliveriesPage() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showOutstation, setShowOutstation] = useState(false);
+  const [dateRange, setDateRange] = useState<string>("all");
   const [editingDateId, setEditingDateId] = useState<string | null>(null);
   const [editDate, setEditDate] = useState("");
 
@@ -124,6 +125,7 @@ export default function DeliveriesPage() {
     if (filter !== "ALL") params.set("status", filter);
     if (debouncedSearch) params.set("search", debouncedSearch);
     if (showOutstation) params.set("outstation", "true");
+    if (dateRange !== "all") params.set("dateRange", dateRange);
     params.set("limit", "100");
 
     Promise.all([
@@ -136,7 +138,7 @@ export default function DeliveriesPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch, showOutstation]);
+  }, [filter, debouncedSearch, showOutstation, dateRange]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -493,6 +495,25 @@ export default function DeliveriesPage() {
         </button>
       </div>
 
+      {/* Date Range Filter */}
+      <div className="flex gap-1.5 overflow-x-auto scrollbar-hide mb-2 pb-1">
+        {[
+          { key: "all", label: "All Dates" },
+          { key: "today", label: "Today" },
+          { key: "tomorrow", label: "Tomorrow" },
+          { key: "3days", label: "3 Days" },
+          { key: "week", label: "This Week" },
+          { key: "month", label: "This Month" },
+        ].map((chip) => (
+          <button key={chip.key} onClick={() => setDateRange(chip.key)}
+            className={`shrink-0 px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors ${
+              dateRange === chip.key ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
+            }`}>
+            {chip.label}
+          </button>
+        ))}
+      </div>
+
       {/* Local search */}
       <div className="relative mb-2">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -722,13 +743,40 @@ export default function DeliveriesPage() {
                     </p>
                   )}
                   {editingDateId === d.id && (
-                    <div className="flex items-center gap-1.5 mb-1.5" onClick={(e) => e.stopPropagation()}>
-                      <input type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)}
-                        className="flex-1 text-xs border border-blue-300 rounded-md px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                      <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleSaveDate(d.id); }}
-                        className="bg-blue-600 text-white px-2 py-1 rounded-md text-[10px] font-medium">Save</button>
-                      <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingDateId(null); }}
-                        className="text-slate-400 text-[10px]">Cancel</button>
+                    <div className="space-y-1.5 mb-1.5" onClick={(e) => e.stopPropagation()}>
+                      <div className="flex flex-wrap gap-1">
+                        {[
+                          { label: "Today", days: 0 },
+                          { label: "Tomorrow", days: 1 },
+                          { label: "3 days", days: 3 },
+                          { label: "1 week", days: 7 },
+                          { label: "1 month", days: 30 },
+                        ].map((opt) => {
+                          const d2 = new Date();
+                          d2.setDate(d2.getDate() + opt.days);
+                          const val = d2.toISOString().slice(0, 10);
+                          return (
+                            <button key={opt.label} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditDate(val); }}
+                              className={`px-2 py-1 rounded-full text-[10px] font-medium transition-colors ${
+                                editDate === val ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
+                              }`}>
+                              {opt.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {editDate && (
+                        <p className="text-[10px] text-blue-600">
+                          {new Date(editDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
+                        </p>
+                      )}
+                      <div className="flex gap-1.5">
+                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleSaveDate(d.id); }}
+                          disabled={!editDate}
+                          className="bg-blue-600 text-white px-2.5 py-1 rounded-md text-[10px] font-medium disabled:opacity-50">Save</button>
+                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingDateId(null); }}
+                          className="text-slate-400 text-[10px]">Cancel</button>
+                      </div>
                     </div>
                   )}
 

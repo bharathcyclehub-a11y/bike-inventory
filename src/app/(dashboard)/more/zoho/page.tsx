@@ -3,9 +3,9 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import {
-  ArrowLeft, Cloud, CloudOff, CheckCircle2, XCircle,
-  Package, Users, Receipt, Loader2, Clock, AlertTriangle,
-  Download, RefreshCw, FileText, ShoppingCart, ChevronDown, ChevronUp,
+  ArrowLeft, Cloud, CheckCircle2, XCircle,
+  Package, Users, Loader2, Clock,
+  RefreshCw, FileText, ShoppingCart, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,15 +26,6 @@ interface SourceStatus {
   organizationName?: string;
   lastSyncAt?: string;
   tokenValid?: boolean;
-}
-
-interface SyncResult {
-  syncType: string;
-  status: string;
-  total: number;
-  synced: number;
-  failed: number;
-  errors: string[];
 }
 
 interface SyncLogEntry {
@@ -61,8 +52,6 @@ export default function ZohoSettingsPage() {
   const [status, setStatus] = useState<ZohoStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
-  const [importing, setImporting] = useState<string | null>(null);
-  const [syncResult, setSyncResult] = useState<SyncResult | null>(null);
   const [logs, setLogs] = useState<SyncLogEntry[]>([]);
   const [error, setError] = useState("");
 
@@ -220,34 +209,6 @@ export default function ZohoSettingsPage() {
     } catch { /* ignore */ }
   }
 
-  async function handleImport(type: string) {
-    setImporting(type);
-    setSyncResult(null);
-    try {
-      const res = await fetch(`/api/zoho/import/${type}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const data = await res.json();
-      if (data.success) {
-        const d = data.data;
-        setSyncResult({
-          syncType: `import-${type}`,
-          status: d.status,
-          total: d.total,
-          synced: d.imported,
-          failed: d.failed,
-          errors: d.errors || [],
-        });
-        fetchLogs();
-      } else {
-        setSyncResult({ syncType: `import-${type}`, status: "failed", total: 0, synced: 0, failed: 0, errors: [data.error] });
-      }
-    } catch {
-      setSyncResult({ syncType: `import-${type}`, status: "failed", total: 0, synced: 0, failed: 0, errors: ["Network error"] });
-    } finally { setImporting(null); }
-  }
-
   async function callStep(step: string, pullId: string, extras?: Record<string, unknown>) {
     const res = await fetch("/api/zoho/trigger-pull", {
       method: "POST",
@@ -351,11 +312,6 @@ export default function ZohoSettingsPage() {
     setPullErrors([]);
   }
 
-  const IMPORT_TYPES = [
-    { key: "contacts", label: "Vendors", icon: Users, desc: "Pull vendors from Zoho" },
-    { key: "items", label: "Products & Brands", icon: Package, desc: "Pull items + brand details from Zoho (updates existing)" },
-    { key: "bills", label: "Purchase Bills", icon: Receipt, desc: "Pull bills from Zoho (creates inward for verification)" },
-  ];
 
   const showPullUI = pulling || pullDone || pullError;
   const progress = currentStepIdx >= 0 ? Math.min(Math.round(((pullDone ? 6 : currentStepIdx) / 6) * 100), 100) : 0;
@@ -753,60 +709,6 @@ export default function ZohoSettingsPage() {
             </CardContent>
           </Card>
 
-          {/* Import from Zoho */}
-          <div className="space-y-2 mb-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Download className="h-4 w-4 text-blue-600" />
-              <h2 className="text-sm font-semibold text-slate-900">Import from Zoho</h2>
-            </div>
-            <p className="text-[10px] text-slate-500 -mt-1 mb-2">Pull data from Zoho Books into this app</p>
-
-            {IMPORT_TYPES.map((it) => {
-              const Icon = it.icon;
-              return (
-                <Card key={it.key}>
-                  <CardContent className="p-3 flex items-center gap-3">
-                    <Icon className="h-5 w-5 text-blue-500 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-900">{it.label}</p>
-                      <p className="text-[10px] text-slate-500">{it.desc}</p>
-                    </div>
-                    <Button size="sm" variant="outline" onClick={() => handleImport(it.key)} disabled={importing !== null}>
-                      {importing === it.key ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Import"}
-                    </Button>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-
-          {/* Sync Result */}
-          {syncResult && (
-            <Card className={`mb-4 ${syncResult.status === "success" ? "border-green-200 bg-green-50" : syncResult.status === "partial" ? "border-yellow-200 bg-yellow-50" : "border-red-200 bg-red-50"}`}>
-              <CardContent className="p-3">
-                <div className="flex items-center gap-2 mb-2">
-                  {syncResult.status === "success" ? <CheckCircle2 className="h-4 w-4 text-green-600" /> :
-                   syncResult.status === "partial" ? <AlertTriangle className="h-4 w-4 text-yellow-600" /> :
-                   <XCircle className="h-4 w-4 text-red-600" />}
-                  <p className="text-sm font-medium capitalize">{syncResult.syncType} — {syncResult.status}</p>
-                </div>
-                <p className="text-xs text-slate-600">
-                  {syncResult.synced}/{syncResult.total} synced
-                  {syncResult.failed > 0 && `, ${syncResult.failed} failed`}
-                </p>
-                {syncResult.errors.length > 0 && (
-                  <div className="mt-2 space-y-1">
-                    {syncResult.errors.slice(0, 3).map((err, i) => (
-                      <p key={i} className="text-[10px] text-red-600">{err}</p>
-                    ))}
-                    {syncResult.errors.length > 3 && (
-                      <p className="text-[10px] text-red-500">+{syncResult.errors.length - 3} more errors</p>
-                    )}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
 
           {/* Sync History */}
           {logs.length > 0 && (

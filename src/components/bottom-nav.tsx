@@ -36,7 +36,7 @@ function getTabsForRole(role: Role): TabConfig[] {
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
-        { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards" },
+        { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];

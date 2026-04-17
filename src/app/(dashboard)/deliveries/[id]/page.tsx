@@ -616,7 +616,32 @@ Thank you!
 
             <div>
               <label className="text-[10px] text-slate-500">Delivery Date *</label>
-              <Input type="date" value={schedDate} onChange={(e) => setSchedDate(e.target.value)} className="text-xs" />
+              <div className="grid grid-cols-3 gap-1.5 mt-1">
+                {[
+                  { label: "Today", days: 0 },
+                  { label: "Tomorrow", days: 1 },
+                  { label: "After 3 days", days: 3 },
+                  { label: "After a week", days: 7 },
+                  { label: "After a month", days: 30 },
+                ].map((opt) => {
+                  const d = new Date();
+                  d.setDate(d.getDate() + opt.days);
+                  const val = d.toISOString().slice(0, 10);
+                  return (
+                    <button key={opt.label} type="button" onClick={() => setSchedDate(val)}
+                      className={`px-2 py-2 rounded-lg text-xs font-medium transition-colors ${
+                        schedDate === val ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                      }`}>
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {schedDate && (
+                <p className="text-[10px] text-blue-600 mt-1">
+                  Selected: {new Date(schedDate + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
+                </p>
+              )}
             </div>
             <div>
               <label className="text-[10px] text-slate-500">Delivery Notes</label>
@@ -640,10 +665,38 @@ Thank you!
           <Card className="mb-3">
             <CardContent className="p-3">
               {editingDate ? (
-                <div className="flex items-center gap-2">
-                  <Input type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} className="text-xs flex-1" />
-                  <button onClick={handleDateChange} disabled={actionLoading} className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50">Save</button>
-                  <button onClick={() => setEditingDate(false)} className="text-slate-500 text-xs">Cancel</button>
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      { label: "Today", days: 0 },
+                      { label: "Tomorrow", days: 1 },
+                      { label: "After 3 days", days: 3 },
+                      { label: "After a week", days: 7 },
+                      { label: "After a month", days: 30 },
+                    ].map((opt) => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + opt.days);
+                      const val = d.toISOString().slice(0, 10);
+                      return (
+                        <button key={opt.label} type="button" onClick={() => setNewDate(val)}
+                          className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors ${
+                            newDate === val ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
+                          }`}>
+                          {opt.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {newDate && (
+                    <p className="text-[10px] text-blue-600">
+                      {new Date(newDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
+                    </p>
+                  )}
+                  <div className="flex gap-2">
+                    <button onClick={handleDateChange} disabled={!newDate || actionLoading}
+                      className="bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50">Save</button>
+                    <button onClick={() => setEditingDate(false)} className="text-slate-500 text-xs">Cancel</button>
+                  </div>
                 </div>
               ) : (
                 <div

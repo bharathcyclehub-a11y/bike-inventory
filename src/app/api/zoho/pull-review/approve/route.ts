@@ -171,7 +171,7 @@ export async function POST(req: NextRequest) {
           const total = Number(d.total || 0);
           const balance = Number(d.balance || 0);
 
-          // Match products for line items, auto-creating any missing ones
+          // Match products for line items, skipping any missing ones
           const matchedProducts: Array<{ li: typeof lineItems[0]; product: { id: string; currentStock: number } }> = [];
 
           for (const li of lineItems) {
@@ -180,27 +180,13 @@ export async function POST(req: NextRequest) {
               select: { id: true, currentStock: true },
             });
             if (!product) {
-              // Auto-create product from bill line item
-              const autoSku = li.sku || `ZOHO-${String(Date.now()).slice(-8)}`;
-              const newProduct = await prisma.product.create({
-                data: {
-                  sku: autoSku,
-                  name: li.name,
-                  categoryId: defaultCategory.id,
-                  brandId: defaultBrand.id,
-                  type: "SPARE_PART",
-                  costPrice: li.rate || 0,
-                  sellingPrice: li.rate || 0,
-                  mrp: li.rate || 0,
-                  gstRate: 18,
-                  currentStock: 0,
-                },
-              });
-              matchedProducts.push({ li, product: { id: newProduct.id, currentStock: 0 } });
-              results.errors.push(`Bill ${d.billNumber}: auto-created "${li.name}" (${autoSku})`);
-            } else {
-              matchedProducts.push({ li, product });
+              // Skip missing product — admin must create it manually via Items import
+              const ref = li.sku || li.name;
+              console.warn(`Product not found: ${ref} — skipping`);
+              results.errors.push(`Bill ${d.billNumber}: product not found "${li.name}"${li.sku ? ` (${li.sku})` : ""} — skipped. Import the item first.`);
+              continue;
             }
+            matchedProducts.push({ li, product });
           }
 
           // Calculate due date: use Zoho's dueDate unless it equals billDate (missing), then use vendor's payment terms
