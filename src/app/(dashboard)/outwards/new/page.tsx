@@ -37,9 +37,9 @@ export default function NewOutwardPage() {
   const router = useRouter();
   const role = (session?.user as { role?: string })?.role || "";
 
-  // Only ADMIN can manually record outwards — staff use Zoho verification flow
+  // ADMIN and OUTWARDS_CLERK can record outwards
   useEffect(() => {
-    if (session && role !== "ADMIN") router.replace("/outwards");
+    if (session && !["ADMIN", "OUTWARDS_CLERK"].includes(role)) router.replace("/outwards");
   }, [session, role, router]);
 
   const [search, setSearch] = useState("");

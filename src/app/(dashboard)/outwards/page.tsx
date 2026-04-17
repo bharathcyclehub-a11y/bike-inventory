@@ -67,7 +67,7 @@ function getCustomer(notes: string | null) {
 export default function OutwardsPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAddOutward = role === "ADMIN";
+  const canAddOutward = ["ADMIN", "OUTWARDS_CLERK"].includes(role);
   const [outwards, setOutwards] = useState<OutwardTransaction[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateFilter, setDateFilter] = useState<DateFilter>("today");
