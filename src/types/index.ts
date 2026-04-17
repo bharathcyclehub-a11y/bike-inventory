@@ -4,8 +4,7 @@ export type Role =
   | "PURCHASE_MANAGER"
   | "ACCOUNTS_MANAGER"
   | "INWARDS_CLERK"
-  | "OUTWARDS_CLERK"
-  | "MECHANIC";
+  | "OUTWARDS_CLERK";
 
 export type TransactionType = "INWARD" | "OUTWARD" | "TRANSFER" | "ADJUSTMENT";
 
