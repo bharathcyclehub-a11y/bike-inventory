@@ -39,16 +39,16 @@ export async function GET(req: NextRequest) {
         where.scheduledDate = { gte: tomorrow, lt: dayAfter };
       } else if (dateRange === "3days") {
         rangeEnd = new Date(startOfDay);
-        rangeEnd.setDate(rangeEnd.getDate() + 3);
-        where.scheduledDate = { gte: startOfDay, lte: rangeEnd };
+        rangeEnd.setDate(rangeEnd.getDate() + 4);
+        where.scheduledDate = { gte: startOfDay, lt: rangeEnd };
       } else if (dateRange === "week") {
         rangeEnd = new Date(startOfDay);
-        rangeEnd.setDate(rangeEnd.getDate() + 7);
-        where.scheduledDate = { gte: startOfDay, lte: rangeEnd };
+        rangeEnd.setDate(rangeEnd.getDate() + 8);
+        where.scheduledDate = { gte: startOfDay, lt: rangeEnd };
       } else if (dateRange === "month") {
         rangeEnd = new Date(startOfDay);
-        rangeEnd.setDate(rangeEnd.getDate() + 30);
-        where.scheduledDate = { gte: startOfDay, lte: rangeEnd };
+        rangeEnd.setDate(rangeEnd.getDate() + 31);
+        where.scheduledDate = { gte: startOfDay, lt: rangeEnd };
       }
     }
     if (date) {
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
       prisma.delivery.findMany({
         where,
         include: { verifiedBy: { select: { name: true } } },
-        orderBy: sortBy === "scheduledDate" ? { scheduledDate: "asc" } : { invoiceAmount: "desc" },
+        orderBy: sortBy === "scheduledDate" ? { scheduledDate: "asc" } : { createdAt: "desc" },
         skip,
         take: limit,
       }),

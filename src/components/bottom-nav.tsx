@@ -96,7 +96,7 @@ export function BottomNav({ role }: BottomNavProps) {
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";
-    // Exact match for /inwards/new and /outwards/new to avoid double-highlight
+    // Exact match for /inwards/new to avoid double-highlight
     if (href === "/inwards/new") return pathname === href;
     return pathname.startsWith(href);
   }

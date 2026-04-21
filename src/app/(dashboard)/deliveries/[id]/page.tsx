@@ -424,7 +424,7 @@ Thank you!
       )}
 
       {/* Courier / Delivery Info */}
-      {data.courierName && (
+      {data.courierName && !["OUT_FOR_DELIVERY", "PACKED", "SHIPPED", "IN_TRANSIT"].includes(data.status) && (
         <Card className="mb-3 border-blue-200 bg-blue-50">
           <CardContent className="p-3 space-y-1">
             <div className="flex items-center gap-2">
@@ -626,7 +626,7 @@ Thank you!
                 ].map((opt) => {
                   const d = new Date();
                   d.setDate(d.getDate() + opt.days);
-                  const val = d.toISOString().slice(0, 10);
+                  const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
                   return (
                     <button key={opt.label} type="button" onClick={() => setSchedDate(val)}
                       className={`px-2 py-2 rounded-lg text-xs font-medium transition-colors ${
@@ -676,7 +676,7 @@ Thank you!
                     ].map((opt) => {
                       const d = new Date();
                       d.setDate(d.getDate() + opt.days);
-                      const val = d.toISOString().slice(0, 10);
+                      const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
                       return (
                         <button key={opt.label} type="button" onClick={() => setNewDate(val)}
                           className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors ${

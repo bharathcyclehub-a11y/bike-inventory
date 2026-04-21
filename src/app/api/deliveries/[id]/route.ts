@@ -50,31 +50,34 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     const body = await req.json();
     const data = deliveryUpdateSchema.parse(body);
 
-    const existing = await prisma.delivery.findUnique({ where: { id } });
-    if (!existing) return errorResponse("Delivery not found", 404);
-
-    // Status transition guards
-    if (data.status) {
-      const VALID: Record<string, string[]> = {
-        PENDING: ["VERIFIED", "FLAGGED"],
-        VERIFIED: ["WALK_OUT", "SCHEDULED", "PACKED"],
-        SCHEDULED: ["OUT_FOR_DELIVERY", "VERIFIED", "PACKED"],
-        PACKED: ["SHIPPED"],
-        SHIPPED: ["IN_TRANSIT"],
-        IN_TRANSIT: ["DELIVERED"],
-        OUT_FOR_DELIVERY: ["DELIVERED"],
-        FLAGGED: ["PENDING"],
-        PREBOOKED: ["VERIFIED"],
-        DELIVERED: [],
-        WALK_OUT: [],
-      };
-      const allowed = VALID[existing.status] || [];
-      if (!allowed.includes(data.status)) {
-        return errorResponse(`Cannot change from ${existing.status} to ${data.status}`, 400);
-      }
-    }
+    const preCheck = await prisma.delivery.findUnique({ where: { id } });
+    if (!preCheck) return errorResponse("Delivery not found", 404);
 
     const result = await prisma.$transaction(async (tx) => {
+      // Re-read inside transaction to prevent race conditions
+      const existing = await tx.delivery.findUnique({ where: { id } });
+      if (!existing) throw new Error("Delivery not found");
+
+      // Status transition guards (inside transaction for atomicity)
+      if (data.status) {
+        const VALID: Record<string, string[]> = {
+          PENDING: ["VERIFIED", "FLAGGED"],
+          VERIFIED: ["WALK_OUT", "SCHEDULED", "PACKED"],
+          SCHEDULED: ["OUT_FOR_DELIVERY", "VERIFIED", "PACKED"],
+          PACKED: ["SHIPPED"],
+          SHIPPED: ["IN_TRANSIT"],
+          IN_TRANSIT: ["DELIVERED"],
+          OUT_FOR_DELIVERY: ["DELIVERED"],
+          FLAGGED: ["PENDING"],
+          PREBOOKED: ["VERIFIED"],
+          DELIVERED: [],
+          WALK_OUT: [],
+        };
+        const allowed = VALID[existing.status] || [];
+        if (!allowed.includes(data.status)) {
+          throw new Error(`Cannot change from ${existing.status} to ${data.status}`);
+        }
+      }
       const updateData: Record<string, unknown> = {};
 
       // Copy simple fields

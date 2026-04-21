@@ -27,6 +27,10 @@ export async function GET(req: NextRequest) {
     try {
       const { ZohoClient } = await import("@/lib/zoho");
       zohoClient = new ZohoClient();
+      const initialized = await zohoClient.init();
+      if (!initialized) {
+        return successResponse({ message: "Zoho not connected", imported: 0 });
+      }
     } catch {
       return successResponse({ message: "Zoho not configured", imported: 0 });
     }

@@ -61,6 +61,9 @@ const STATUS_CONFIG: Record<string, { label: string; variant: string; icon: type
   DELIVERED: { label: "Delivered", variant: "success", icon: CheckCircle2 },
   FLAGGED: { label: "Flagged", variant: "danger", icon: Flag },
   PREBOOKED: { label: "Prebooked", variant: "default", icon: Package },
+  PACKED: { label: "Packed", variant: "info", icon: Package },
+  SHIPPED: { label: "Shipped", variant: "info", icon: Truck },
+  IN_TRANSIT: { label: "In Transit", variant: "info", icon: Truck },
 };
 
 function formatINR(n: number) {
@@ -402,6 +405,10 @@ export default function DeliveriesPage() {
     { key: "DELIVERED", label: "Delivered", count: stats?.deliveredToday },
     { key: "FLAGGED", label: "Flagged", count: stats?.flagged },
     { key: "PREBOOKED", label: "Prebooked", count: stats?.prebooked },
+    { key: "WALK_OUT", label: "Walk-out" },
+    { key: "PACKED", label: "Packed" },
+    { key: "SHIPPED", label: "Shipped" },
+    { key: "IN_TRANSIT", label: "In Transit" },
   ];
 
   const isPhone = /^\d{10,}$/.test(invoiceSearch.trim());
@@ -754,7 +761,7 @@ export default function DeliveriesPage() {
                         ].map((opt) => {
                           const d2 = new Date();
                           d2.setDate(d2.getDate() + opt.days);
-                          const val = d2.toISOString().slice(0, 10);
+                          const val = `${d2.getFullYear()}-${String(d2.getMonth()+1).padStart(2,'0')}-${String(d2.getDate()).padStart(2,'0')}`;
                           return (
                             <button key={opt.label} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditDate(val); }}
                               className={`px-2 py-1 rounded-full text-[10px] font-medium transition-colors ${
@@ -787,7 +794,7 @@ export default function DeliveriesPage() {
                       e.stopPropagation();
                       const tomorrow = new Date();
                       tomorrow.setDate(tomorrow.getDate() + 1);
-                      setEditDate(tomorrow.toISOString().slice(0, 10));
+                      setEditDate(`${tomorrow.getFullYear()}-${String(tomorrow.getMonth()+1).padStart(2,'0')}-${String(tomorrow.getDate()).padStart(2,'0')}`);
                       setEditingDateId(d.id);
                     }} className="text-[10px] text-blue-500 mb-1.5">
                       + Set delivery date
