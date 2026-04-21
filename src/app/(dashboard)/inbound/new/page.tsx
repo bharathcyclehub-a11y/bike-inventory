@@ -40,6 +40,7 @@ export default function NewInboundPage() {
   const [billPdfUrl, setBillPdfUrl] = useState("");
   const [pdfName, setPdfName] = useState("");
   const [uploadingPdf, setUploadingPdf] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const [billNo, setBillNo] = useState("");
   const [billDate, setBillDate] = useState(new Date().toISOString().split("T")[0]);
@@ -98,16 +99,27 @@ export default function NewInboundPage() {
       return;
     }
     setUploadingPdf(true);
+    setUploadProgress(10);
     setError("");
     try {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+      setUploadProgress(20);
       const path = `bills/${Date.now()}-${file.name.replace(/\s+/g, "-")}`;
+      // Simulate progress steps during upload
+      const progressInterval = setInterval(() => {
+        setUploadProgress((prev) => Math.min(prev + 10, 90));
+      }, 500);
       const url = await uploadImage(file, path);
+      clearInterval(progressInterval);
+      setUploadProgress(100);
       setBillPdfUrl(url);
-      setPdfName(file.name);
+      setPdfName(`${file.name} (${sizeMB} MB)`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload PDF. Try again.");
+      const msg = err instanceof Error ? err.message : "Failed to upload PDF";
+      setError(`PDF upload error: ${msg}`);
     } finally {
       setUploadingPdf(false);
+      setUploadProgress(0);
       if (pdfInputRef.current) pdfInputRef.current.value = "";
     }
   };
@@ -284,14 +296,24 @@ export default function NewInboundPage() {
                   className="text-xs text-red-500 hover:underline shrink-0">Remove</button>
               </div>
             ) : (
-              <button type="button" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}
-                className="w-full h-20 border-2 border-dashed border-slate-300 rounded-lg flex items-center justify-center gap-2 bg-slate-50/50 hover:bg-slate-50 transition-colors disabled:opacity-50">
-                {uploadingPdf ? (
-                  <><Loader2 className="h-5 w-5 animate-spin text-slate-400" /><span className="text-xs text-slate-500">Uploading...</span></>
-                ) : (
-                  <><Upload className="h-5 w-5 text-slate-400" /><span className="text-xs font-medium text-slate-500">Upload invoice PDF</span></>
+              <div>
+                <button type="button" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}
+                  className="w-full h-20 border-2 border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center gap-1 bg-slate-50/50 hover:bg-slate-50 transition-colors disabled:opacity-50">
+                  {uploadingPdf ? (
+                    <>
+                      <Loader2 className="h-5 w-5 animate-spin text-indigo-500" />
+                      <span className="text-xs text-indigo-600 font-medium">Uploading... {uploadProgress}%</span>
+                    </>
+                  ) : (
+                    <><Upload className="h-5 w-5 text-slate-400" /><span className="text-xs font-medium text-slate-500">Upload invoice PDF</span></>
+                  )}
+                </button>
+                {uploadingPdf && (
+                  <div className="mt-1.5 w-full bg-slate-200 rounded-full h-1.5">
+                    <div className="bg-indigo-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${uploadProgress}%` }} />
+                  </div>
                 )}
-              </button>
+              </div>
             )}
           </div>
         )}
