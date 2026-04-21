@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
-// PUT: Update shipment status (IN_TRANSIT → DELIVERED / PARTIALLY_DELIVERED)
+// PUT: Update shipment status (IN_TRANSIT ↔ PARTIALLY_DELIVERED → DELIVERED)
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -16,8 +16,8 @@ export async function PUT(
     const body = await req.json();
     const { status } = body;
 
-    if (!["DELIVERED", "PARTIALLY_DELIVERED"].includes(status)) {
-      return errorResponse("Status must be DELIVERED or PARTIALLY_DELIVERED", 400);
+    if (!["DELIVERED", "PARTIALLY_DELIVERED", "IN_TRANSIT"].includes(status)) {
+      return errorResponse("Invalid status", 400);
     }
 
     const existing = await prisma.inboundShipment.findUnique({
@@ -27,6 +27,23 @@ export async function PUT(
 
     if (!existing) return errorResponse("Not found", 404);
     if (existing.status === "DELIVERED") return errorResponse("Already delivered", 400);
+
+    // Revert to IN_TRANSIT (only from PARTIALLY_DELIVERED, admin/supervisor only)
+    if (status === "IN_TRANSIT") {
+      if (existing.status !== "PARTIALLY_DELIVERED") {
+        return errorResponse("Can only revert from Partially Delivered", 400);
+      }
+      const hasDeliveredItems = existing.lineItems.some((li) => li.isDelivered);
+      if (hasDeliveredItems) {
+        return errorResponse("Cannot revert — some items already marked delivered with stock added", 400);
+      }
+      const reverted = await prisma.inboundShipment.update({
+        where: { id },
+        data: { status: "IN_TRANSIT", deliveredAt: null, deliveredById: null },
+        include: { brand: { select: { name: true } }, lineItems: true },
+      });
+      return successResponse(reverted);
+    }
 
     const updated = await prisma.$transaction(async (tx) => {
       // Mark all line items as delivered if full delivery

@@ -46,21 +46,61 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "PURCHASE_MANAGER"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "PURCHASE_MANAGER"]);
     const { id } = await params;
     const body = await req.json();
 
     const existing = await prisma.inboundShipment.findUnique({ where: { id } });
     if (!existing) return errorResponse("Not found", 404);
 
-    // Update individual line item delivery
+    // Update individual line item delivery + add stock
     if (body.lineItemId && body.deliveredQty !== undefined) {
-      await prisma.inboundLineItem.update({
+      const lineItem = await prisma.inboundLineItem.findUnique({
         where: { id: body.lineItemId },
-        data: {
-          isDelivered: body.deliveredQty > 0,
-          deliveredQty: body.deliveredQty,
-        },
+        include: { shipment: { include: { brand: { select: { name: true } } } } },
+      });
+      if (!lineItem) return errorResponse("Line item not found", 404);
+
+      const wasDelivered = lineItem.isDelivered;
+      const nowDelivered = body.deliveredQty > 0;
+      const qty = body.deliveredQty;
+
+      await prisma.$transaction(async (tx) => {
+        await tx.inboundLineItem.update({
+          where: { id: body.lineItemId },
+          data: { isDelivered: nowDelivered, deliveredQty: qty },
+        });
+
+        // Add stock only when newly marking as delivered (not already delivered)
+        if (nowDelivered && !wasDelivered && qty > 0) {
+          const searchName = lineItem.productName.substring(0, 20);
+          const matchedProduct = lineItem.productId
+            ? await tx.product.findUnique({ where: { id: lineItem.productId } })
+            : await tx.product.findFirst({
+                where: { name: { contains: searchName, mode: "insensitive" } },
+              });
+
+          if (matchedProduct) {
+            const previousStock = matchedProduct.currentStock;
+            const newStock = previousStock + qty;
+            await tx.product.update({
+              where: { id: matchedProduct.id },
+              data: { currentStock: newStock },
+            });
+            await tx.inventoryTransaction.create({
+              data: {
+                type: "INWARD",
+                productId: matchedProduct.id,
+                quantity: qty,
+                previousStock,
+                newStock,
+                referenceNo: lineItem.shipment.shipmentNo,
+                notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${qty}`,
+                userId: user.id,
+              },
+            });
+          }
+        }
       });
 
       return successResponse({ updated: true });

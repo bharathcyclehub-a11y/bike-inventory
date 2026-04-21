@@ -3,7 +3,7 @@
 import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Phone, CheckCircle2, Package, Calendar, Truck, Image as ImageIcon, FileText } from "lucide-react";
+import { ArrowLeft, Loader2, Phone, CheckCircle2, Package, Calendar, Truck, Image as ImageIcon, FileText, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +66,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [showImage, setShowImage] = useState(false);
+  const [itemLoading, setItemLoading] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/inbound/${id}`)
@@ -105,6 +106,41 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ lineItemId: li.id, whatsAppSent: true }),
     });
+  };
+
+  const handleMarkItemDelivered = async (li: LineItem) => {
+    setItemLoading(li.id);
+    try {
+      const res = await fetch(`/api/inbound/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lineItemId: li.id, deliveredQty: li.quantity }),
+      }).then((r) => r.json());
+      if (res.success) {
+        const detail = await fetch(`/api/inbound/${id}`).then((r) => r.json());
+        if (detail.success) setShipment(detail.data);
+      }
+    } catch { /* */ }
+    finally { setItemLoading(null); }
+  };
+
+  const handleRevert = async () => {
+    if (!confirm("Revert this shipment back to In Transit?")) return;
+    setActionLoading(true);
+    try {
+      const res = await fetch(`/api/inbound/${id}/status`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "IN_TRANSIT" }),
+      }).then((r) => r.json());
+      if (res.success) {
+        const detail = await fetch(`/api/inbound/${id}`).then((r) => r.json());
+        if (detail.success) setShipment(detail.data);
+      } else {
+        alert(res.error || "Cannot revert");
+      }
+    } catch { /* */ }
+    finally { setActionLoading(false); }
   };
 
   if (loading) {
@@ -212,6 +248,27 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         </div>
       )}
 
+      {/* Partial delivery actions */}
+      {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && (
+        <div className="space-y-2 mb-3">
+          <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-2 text-center">
+            Tap items below to mark them as delivered one by one, or mark all at once.
+          </p>
+          <div className="flex gap-2">
+            <Button onClick={() => handleMarkDelivered("DELIVERED")} disabled={actionLoading}
+              className="flex-1 bg-green-600 hover:bg-green-700" size="lg">
+              <Truck className="h-4 w-4 mr-2" /> {actionLoading ? "..." : "Mark All Delivered"}
+            </Button>
+            {deliveredCount === 0 && (
+              <Button onClick={handleRevert} disabled={actionLoading}
+                variant="outline" className="gap-1.5" size="lg">
+                <RotateCcw className="h-4 w-4" /> Undo
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Line Items */}
       <p className="text-sm font-semibold text-slate-700 mb-2">Line Items</p>
       <div className="space-y-2 mb-4">
@@ -231,6 +288,17 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                 {isAdmin && <span>Rate: {formatINR(li.rate)}</span>}
                 {isAdmin && <span className="font-medium text-slate-700">{formatINR(li.amount)}</span>}
               </div>
+
+              {/* Mark individual item delivered */}
+              {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && (
+                <button
+                  onClick={() => handleMarkItemDelivered(li)}
+                  disabled={itemLoading === li.id}
+                  className="mt-2 w-full py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-medium border border-green-200 hover:bg-green-100 disabled:opacity-50"
+                >
+                  {itemLoading === li.id ? "Marking..." : `Mark Delivered (Qty: ${li.quantity})`}
+                </button>
+              )}
 
               {/* Pre-booked customer */}
               {li.preBookedCustomerName && (
