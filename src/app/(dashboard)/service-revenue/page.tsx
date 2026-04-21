@@ -105,57 +105,86 @@ export default function ServiceRevenuePage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {dailyBreakdown.map((day) => (
+              {dailyBreakdown.map((day) => {
+                // Collect all items and salespersons for the collapsed summary
+                const allItems: string[] = [];
+                const allSales = new Set<string>();
+                for (const inv of day.invoices) {
+                  const items = Array.isArray(inv.lineItems) ? inv.lineItems : [];
+                  for (const li of items) {
+                    if ((li as { name: string }).name) allItems.push((li as { name: string }).name);
+                  }
+                  if (inv.salesPerson) allSales.add(inv.salesPerson);
+                }
+                return (
                 <div key={day.date}>
                   <button onClick={() => setExpandedDate(expandedDate === day.date ? null : day.date)}
-                    className="w-full">
+                    className="w-full text-left">
                     <Card className={expandedDate === day.date ? "border-amber-300 bg-amber-50/30" : ""}>
-                      <CardContent className="p-3 flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{formatDate(day.date)}</p>
-                          <p className="text-[10px] text-slate-500">{day.count} invoice{day.count !== 1 ? "s" : ""}</p>
+                      <CardContent className="p-3">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1 min-w-0 mr-2">
+                            <p className="text-sm font-semibold text-slate-900">{formatDate(day.date)}</p>
+                            <p className="text-[10px] text-slate-500">{day.count} invoice{day.count !== 1 ? "s" : ""}</p>
+                            {allItems.length > 0 && (
+                              <p className="text-[10px] text-slate-600 mt-0.5 truncate">
+                                {allItems.slice(0, 3).join(", ")}{allItems.length > 3 ? ` +${allItems.length - 3}` : ""}
+                              </p>
+                            )}
+                            {allSales.size > 0 && (
+                              <p className="text-[10px] text-purple-500 mt-0.5">
+                                Sales: {Array.from(allSales).join(", ")}
+                              </p>
+                            )}
+                          </div>
+                          <p className="text-sm font-bold text-amber-700">{formatINR(day.total)}</p>
                         </div>
-                        <p className="text-sm font-bold text-amber-700">{formatINR(day.total)}</p>
                       </CardContent>
                     </Card>
                   </button>
 
                   {expandedDate === day.date && (
                     <div className="ml-3 mt-1 space-y-1 mb-2">
-                      {day.invoices.map((inv) => (
-                        <Card key={inv.id} className="border-slate-200">
-                          <CardContent className="p-2.5">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1 min-w-0 mr-2">
-                                <p className="text-xs font-medium text-slate-900">{inv.invoiceNo}</p>
-                                <p className="text-[10px] text-slate-600">{inv.customerName}</p>
-                                {inv.lineItems && inv.lineItems.length > 0 && (
-                                  <p className="text-[10px] text-slate-500 mt-0.5">
-                                    {inv.lineItems.map((li) => li.name).join(", ")}
-                                  </p>
-                                )}
-                                {inv.salesPerson && (
-                                  <p className="text-[10px] text-purple-500">Sales: {inv.salesPerson}</p>
-                                )}
+                      {day.invoices.map((inv) => {
+                        const items = Array.isArray(inv.lineItems) ? inv.lineItems : [];
+                        return (
+                          <Card key={inv.id} className="border-slate-200">
+                            <CardContent className="p-2.5">
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1 min-w-0 mr-2">
+                                  <p className="text-xs font-medium text-slate-900">{inv.invoiceNo}</p>
+                                  <p className="text-[10px] text-slate-600">{inv.customerName}</p>
+                                  {items.length > 0 && (
+                                    <p className="text-xs text-slate-700 font-medium mt-0.5">
+                                      {items.map((li: { name: string; quantity: number }) =>
+                                        `${li.name}${li.quantity > 1 ? ` x${li.quantity}` : ""}`
+                                      ).join(", ")}
+                                    </p>
+                                  )}
+                                  {inv.salesPerson && (
+                                    <p className="text-[10px] text-purple-600 mt-0.5">Sales: {inv.salesPerson}</p>
+                                  )}
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-xs font-semibold text-amber-700">{formatINR(inv.invoiceAmount)}</p>
+                                  {inv.customerPhone && (
+                                    <a href={`https://wa.me/91${inv.customerPhone.replace(/\D/g, "").slice(-10)}`}
+                                      target="_blank" rel="noopener noreferrer"
+                                      className="inline-block mt-1">
+                                      <Phone className="h-3 w-3 text-green-500" />
+                                    </a>
+                                  )}
+                                </div>
                               </div>
-                              <div className="text-right">
-                                <p className="text-xs font-semibold text-amber-700">{formatINR(inv.invoiceAmount)}</p>
-                                {inv.customerPhone && (
-                                  <a href={`https://wa.me/91${inv.customerPhone.replace(/\D/g, "").slice(-10)}`}
-                                    target="_blank" rel="noopener noreferrer"
-                                    className="inline-block mt-1">
-                                    <Phone className="h-3 w-3 text-green-500" />
-                                  </a>
-                                )}
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
+                            </CardContent>
+                          </Card>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </>
