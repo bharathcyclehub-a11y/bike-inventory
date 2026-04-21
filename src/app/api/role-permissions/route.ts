@@ -72,7 +72,7 @@ const DEFAULT_PERMISSIONS: RolePermissions = {
     edit: ["inbound", "stock_audit", "transfers"].includes(f.key),
     delete: false,
     approve: ["inbound"].includes(f.key),
-    fetch: false,
+    fetch: ["stock"].includes(f.key),
   }])),
   OUTWARDS_CLERK: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
     view: ["dashboard", "stock", "inbound", "deliveries", "barcode"].includes(f.key),
