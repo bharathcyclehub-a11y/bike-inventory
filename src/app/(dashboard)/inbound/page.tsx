@@ -377,16 +377,13 @@ export default function InboundPage() {
                       <span className="text-xs font-medium text-slate-900">{bill.data.billNumber}</span>
                       <span className="text-xs font-semibold text-slate-700">{formatINR(bill.data.total)}</span>
                     </div>
-                    <p className="text-[10px] text-slate-600">{bill.data.vendorName}</p>
-                    {bill.data.lineItems.length > 0 && (
-                      <div className="mt-1 space-y-0.5">
-                        {bill.data.lineItems.map((li, idx) => (
-                          <p key={idx} className="text-[10px] text-slate-500">
-                            {li.name} — {li.sku || "no SKU"} x {li.quantity} @ {formatINR(li.rate)}
-                          </p>
-                        ))}
-                      </div>
-                    )}
+                    <p className="text-[10px] text-slate-600">
+                      {bill.data.vendorName}
+                      {bill.data.date && <span className="ml-1.5 text-slate-400">| {new Date(bill.data.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>}
+                      {bill.data.lineItems.length > 0 && (
+                        <span className="ml-1.5 text-slate-400">| {bill.data.lineItems.reduce((s, li) => s + li.quantity, 0)} items</span>
+                      )}
+                    </p>
                   </div>
                 </label>
               ))}
