@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+import { useState, useEffect, use, useCallback } from "react";
 import Link from "next/link";
 import {
   ArrowLeft, CheckCircle2, AlertTriangle, XCircle, Building2,
-  FileText, Loader2, Eye, EyeOff, CreditCard, Receipt,
+  FileText, Loader2, CreditCard, Receipt, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +44,20 @@ interface Statement {
   transactions: BankTxn[];
 }
 
+interface Vendor {
+  id: string;
+  name: string;
+  code: string;
+}
+
+interface PendingBill {
+  id: string;
+  billNo: string;
+  amount: number;
+  paidAmount: number;
+  vendorId: string;
+}
+
 function formatCurrency(n: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
 }
@@ -66,16 +80,35 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
   const [filter, setFilter] = useState<FilterKey>("UNMATCHED");
   const [processing, setProcessing] = useState<string>("");
 
-  const fetchData = () => {
+  // Vendor + bill selection for manual matching
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [pendingBills, setPendingBills] = useState<PendingBill[]>([]);
+  const [expandedTxn, setExpandedTxn] = useState<string | null>(null);
+  const [selectedVendor, setSelectedVendor] = useState<Record<string, string>>({});
+  const [selectedBill, setSelectedBill] = useState<Record<string, string>>({});
+  const [vendorSearch, setVendorSearch] = useState<Record<string, string>>({});
+
+  const fetchData = useCallback(() => {
     setLoading(true);
     fetch(`/api/bank-statements/${id}/review`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setStatement(res.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  };
+  }, [id]);
 
-  useEffect(() => { fetchData(); }, [id]);
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Load vendors and pending bills
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/vendors?limit=500").then((r) => r.json()),
+      fetch("/api/bills?status=PENDING&limit=500").then((r) => r.json()),
+    ]).then(([vRes, bRes]) => {
+      if (vRes.success) setVendors(vRes.data || []);
+      if (bRes.success) setPendingBills(bRes.data || []);
+    }).catch(() => {});
+  }, []);
 
   const handleAction = async (txnId: string, action: string, extra?: Record<string, unknown>) => {
     setProcessing(txnId);
@@ -85,8 +118,22 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ txnId, action, ...extra }),
       }).then(r => r.json());
-      if (res.success) fetchData();
+      if (res.success) {
+        setExpandedTxn(null);
+        setSelectedVendor((prev) => { const n = { ...prev }; delete n[txnId]; return n; });
+        setSelectedBill((prev) => { const n = { ...prev }; delete n[txnId]; return n; });
+        fetchData();
+      }
     } catch {} finally { setProcessing(""); }
+  };
+
+  const handleManualPayment = (txnId: string) => {
+    const vendorId = selectedVendor[txnId];
+    if (!vendorId) return;
+    handleAction(txnId, "confirm_payment", {
+      vendorId,
+      billId: selectedBill[txnId] || undefined,
+    });
   };
 
   const filtered = statement?.transactions.filter(
@@ -100,6 +147,22 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
     FLAGGED: statement?.transactions.filter(t => t.matchStatus === "FLAGGED").length || 0,
     EXPENSE: statement?.transactions.filter(t => t.matchStatus === "EXPENSE").length || 0,
     IGNORED: statement?.transactions.filter(t => t.matchStatus === "IGNORED").length || 0,
+  };
+
+  // Filter vendors by search text for a specific txn
+  const getFilteredVendors = (txnId: string) => {
+    const search = (vendorSearch[txnId] || "").toLowerCase();
+    if (!search) return vendors;
+    return vendors.filter((v) =>
+      v.name.toLowerCase().includes(search) || v.code.toLowerCase().includes(search)
+    );
+  };
+
+  // Get pending bills for selected vendor
+  const getVendorBills = (txnId: string) => {
+    const vendorId = selectedVendor[txnId];
+    if (!vendorId) return [];
+    return pendingBills.filter((b) => b.vendorId === vendorId);
   };
 
   if (loading) {
@@ -176,6 +239,8 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
           const isDebit = txn.type === "DEBIT";
           const isProcessing = processing === txn.id;
           const isProcessed = !!txn.processedAt;
+          const isExpanded = expandedTxn === txn.id;
+          const vendorBills = getVendorBills(txn.id);
 
           return (
             <Card key={txn.id} className={`${
@@ -244,36 +309,108 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
 
                 {/* Action Buttons (only for unmatched/flagged debits) */}
                 {!isProcessed && isDebit && (
-                  <div className="flex gap-1.5 mt-2">
-                    {txn.suggestedVendor && (
+                  <div className="space-y-2 mt-2">
+                    <div className="flex gap-1.5">
+                      {txn.suggestedVendor && (
+                        <button
+                          onClick={() => handleAction(txn.id, "confirm_payment", {
+                            vendorId: txn.suggestedVendor!.id,
+                            billId: txn.suggestedBill?.id,
+                          })}
+                          disabled={isProcessing}
+                          className="flex-1 flex items-center justify-center gap-1 bg-green-600 text-white py-1.5 rounded-md text-[11px] font-medium disabled:opacity-50"
+                        >
+                          {isProcessing ? <Loader2 className="h-3 w-3 animate-spin" /> : <CreditCard className="h-3 w-3" />}
+                          Confirm Payment
+                        </button>
+                      )}
+                      {/* Manual vendor select toggle */}
                       <button
-                        onClick={() => handleAction(txn.id, "confirm_payment", {
-                          vendorId: txn.suggestedVendor!.id,
-                          billId: txn.suggestedBill?.id,
+                        onClick={() => setExpandedTxn(isExpanded ? null : txn.id)}
+                        className="flex items-center gap-1 bg-blue-100 text-blue-700 px-3 py-1.5 rounded-md text-[11px] font-medium"
+                      >
+                        <Building2 className="h-3 w-3" />
+                        {txn.suggestedVendor ? "Other" : "Vendor"}
+                        {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                      </button>
+                      <button
+                        onClick={() => handleAction(txn.id, "confirm_expense", {
+                          category: txn.suggestedCategory || "EXPENSE_OTHER",
                         })}
                         disabled={isProcessing}
-                        className="flex-1 flex items-center justify-center gap-1 bg-green-600 text-white py-1.5 rounded-md text-[11px] font-medium disabled:opacity-50"
+                        className="flex items-center gap-1 bg-purple-600 text-white px-3 py-1.5 rounded-md text-[11px] font-medium disabled:opacity-50"
                       >
-                        {isProcessing ? <Loader2 className="h-3 w-3 animate-spin" /> : <CreditCard className="h-3 w-3" />}
-                        Confirm Payment
+                        <Receipt className="h-3 w-3" /> Expense
                       </button>
+                      <button
+                        onClick={() => handleAction(txn.id, "ignore")}
+                        disabled={isProcessing}
+                        className="flex items-center gap-1 bg-slate-200 text-slate-600 px-3 py-1.5 rounded-md text-[11px] font-medium disabled:opacity-50"
+                      >
+                        <XCircle className="h-3 w-3" /> Skip
+                      </button>
+                    </div>
+
+                    {/* Manual vendor + bill selection panel */}
+                    {isExpanded && (
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg p-2.5 space-y-2">
+                        <p className="text-[10px] font-medium text-slate-600">Select vendor manually</p>
+                        {/* Vendor search + select */}
+                        <input
+                          type="text"
+                          placeholder="Search vendor..."
+                          value={vendorSearch[txn.id] || ""}
+                          onChange={(e) => setVendorSearch((prev) => ({ ...prev, [txn.id]: e.target.value }))}
+                          className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white"
+                        />
+                        <select
+                          value={selectedVendor[txn.id] || ""}
+                          onChange={(e) => {
+                            setSelectedVendor((prev) => ({ ...prev, [txn.id]: e.target.value }));
+                            setSelectedBill((prev) => { const n = { ...prev }; delete n[txn.id]; return n; });
+                          }}
+                          className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
+                        >
+                          <option value="">Select vendor</option>
+                          {getFilteredVendors(txn.id).map((v) => (
+                            <option key={v.id} value={v.id}>{v.name} ({v.code})</option>
+                          ))}
+                        </select>
+
+                        {/* Pending bills for selected vendor */}
+                        {selectedVendor[txn.id] && vendorBills.length > 0 && (
+                          <div>
+                            <p className="text-[10px] text-slate-500 mb-1">Link to bill (optional)</p>
+                            <select
+                              value={selectedBill[txn.id] || ""}
+                              onChange={(e) => setSelectedBill((prev) => ({ ...prev, [txn.id]: e.target.value }))}
+                              className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
+                            >
+                              <option value="">No bill (advance payment)</option>
+                              {vendorBills.map((b) => (
+                                <option key={b.id} value={b.id}>
+                                  {b.billNo} — Balance: {formatCurrency(b.amount - b.paidAmount)}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
+
+                        {selectedVendor[txn.id] && vendorBills.length === 0 && (
+                          <p className="text-[10px] text-slate-400">No pending bills for this vendor</p>
+                        )}
+
+                        {/* Record payment button */}
+                        <button
+                          onClick={() => handleManualPayment(txn.id)}
+                          disabled={!selectedVendor[txn.id] || isProcessing}
+                          className="w-full flex items-center justify-center gap-1.5 bg-green-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50"
+                        >
+                          {isProcessing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CreditCard className="h-3.5 w-3.5" />}
+                          Record as Vendor Payment ({formatCurrency(txn.amount)})
+                        </button>
+                      </div>
                     )}
-                    <button
-                      onClick={() => handleAction(txn.id, "confirm_expense", {
-                        category: txn.suggestedCategory || "EXPENSE_OTHER",
-                      })}
-                      disabled={isProcessing}
-                      className="flex items-center gap-1 bg-purple-600 text-white px-3 py-1.5 rounded-md text-[11px] font-medium disabled:opacity-50"
-                    >
-                      <Receipt className="h-3 w-3" /> Expense
-                    </button>
-                    <button
-                      onClick={() => handleAction(txn.id, "ignore")}
-                      disabled={isProcessing}
-                      className="flex items-center gap-1 bg-slate-200 text-slate-600 px-3 py-1.5 rounded-md text-[11px] font-medium disabled:opacity-50"
-                    >
-                      <XCircle className="h-3 w-3" /> Skip
-                    </button>
                   </div>
                 )}
 
