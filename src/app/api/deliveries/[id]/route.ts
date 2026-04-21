@@ -102,6 +102,17 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.whatsAppDispatchedSent !== undefined) updateData.whatsAppDispatchedSent = data.whatsAppDispatchedSent;
       if (data.whatsAppDeliveredSent !== undefined) updateData.whatsAppDeliveredSent = data.whatsAppDeliveredSent;
 
+      // Invoice type tagging (Sales vs Service)
+      if (data.invoiceType !== undefined) {
+        updateData.invoiceType = data.invoiceType;
+        // Service invoices exit the delivery pipeline — mark as DELIVERED (revenue only)
+        if (data.invoiceType === "SERVICE" && existing.status === "PENDING") {
+          updateData.status = "DELIVERED";
+          updateData.deliveredAt = new Date();
+          updateData.notes = (existing.notes || "") + " [SERVICE - no delivery needed]";
+        }
+      }
+
       if (data.status) {
         updateData.status = data.status;
 

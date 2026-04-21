@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
   Search, Loader2, Cloud, Download, Truck, AlertTriangle, CheckCircle2,
-  Clock, Package, Flag, Trash2, Phone,
+  Clock, Package, Flag, Trash2, Phone, Wrench, ShoppingBag,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,7 @@ interface DeliveryItem {
   verifiedBy: { name: string } | null;
   salesPerson: string | null;
   isOutstation: boolean;
+  invoiceType: string | null;
 }
 
 interface Stats {
@@ -172,11 +173,36 @@ export default function DeliveriesPage() {
   };
 
   const handleWalkOut = async (id: string) => {
-    if (!confirm("Mark as walk-out? Stock will be deducted.")) return;
+    const d = deliveries.find(x => x.id === id);
+    const items = d?.lineItems || [];
+    const stockLines = items.map(i => `  ${i.name} x${i.quantity}`).join("\n");
+    const msg = items.length > 0
+      ? `Mark as walk-out?\n\nStock will be deducted:\n${stockLines}`
+      : "Mark as walk-out? Stock will be deducted.";
+    if (!confirm(msg)) return;
     await fetch(`/api/deliveries/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "WALK_OUT" }),
+    });
+    fetchData();
+  };
+
+  const handleTagType = async (id: string, invoiceType: "SALES" | "SERVICE") => {
+    if (invoiceType === "SERVICE" && !confirm("Mark as service invoice? It will exit the delivery pipeline.")) return;
+    await fetch(`/api/deliveries/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invoiceType }),
+    });
+    fetchData();
+  };
+
+  const handleUndoType = async (id: string) => {
+    await fetch(`/api/deliveries/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ invoiceType: null }),
     });
     fetchData();
   };
@@ -715,6 +741,15 @@ export default function DeliveriesPage() {
                       <Badge variant={cfg.variant as "warning" | "info" | "success" | "danger" | "default"}>
                         {cfg.label}
                       </Badge>
+                      {d.invoiceType === "SALES" && d.status === "PENDING" && (
+                        <button onClick={(e) => { e.preventDefault(); handleUndoType(d.id); }}
+                          className="inline-flex items-center gap-0.5 text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">
+                          Sales <span className="text-blue-400">x</span>
+                        </button>
+                      )}
+                      {d.invoiceType === "SALES" && d.status !== "PENDING" && (
+                        <Badge variant={"info"} className="text-[9px]">Sales</Badge>
+                      )}
                       {d.isOutstation && (
                         <Badge variant={"warning"} className="text-[9px]">Outstation</Badge>
                       )}
@@ -810,7 +845,21 @@ export default function DeliveriesPage() {
 
                   {/* Action buttons */}
                   <div className="flex gap-2 mt-1">
-                    {d.status === "PENDING" && (
+                    {d.status === "PENDING" && !d.invoiceType && (
+                      <>
+                        <button onClick={() => handleTagType(d.id, "SALES")}
+                          className="flex-1 flex items-center justify-center gap-1 bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">
+                          <ShoppingBag className="h-3 w-3" /> Sales
+                        </button>
+                        <button onClick={() => handleTagType(d.id, "SERVICE")}
+                          className="flex-1 flex items-center justify-center gap-1 bg-amber-500 text-white py-1.5 rounded-md text-xs font-medium">
+                          <Wrench className="h-3 w-3" /> Service
+                        </button>
+                        <button onClick={() => handleFlag(d.id)}
+                          className="bg-red-100 text-red-700 px-3 py-1.5 rounded-md text-xs font-medium">Flag</button>
+                      </>
+                    )}
+                    {d.status === "PENDING" && d.invoiceType === "SALES" && (
                       <>
                         <button onClick={() => handleVerify(d.id)}
                           className="flex-1 bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Verify</button>

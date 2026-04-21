@@ -855,6 +855,7 @@ model Delivery {
   flagResolvedAt  DateTime?
   flagResolvedBy  String?
 
+  invoiceType     String?           // "SALES" | "SERVICE" — null = not yet tagged
   salesPerson     String?
   lineItems       Json?
   notes           String?
