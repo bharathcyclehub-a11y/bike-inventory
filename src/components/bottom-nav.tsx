@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   ArrowDownCircle,
-  ArrowUpCircle,
+
   Package,
   MoreHorizontal,
   ArrowRightLeft,
@@ -78,7 +78,6 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "OUTWARDS_CLERK":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/outwards", label: "Outwards", icon: ArrowUpCircle, key: "outwards" },
         { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
@@ -98,7 +97,7 @@ export function BottomNav({ role }: BottomNavProps) {
   function isActive(href: string) {
     if (href === "/") return pathname === "/";
     // Exact match for /inwards/new and /outwards/new to avoid double-highlight
-    if (href === "/inwards/new" || href === "/outwards/new") return pathname === href;
+    if (href === "/inwards/new") return pathname === href;
     return pathname.startsWith(href);
   }
 
