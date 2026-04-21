@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
@@ -32,15 +32,15 @@ export async function POST(req: NextRequest) {
   try {
     await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) {
-      return errorResponse("Gemini API key not configured. Add GEMINI_API_KEY to environment variables.", 500);
+      return errorResponse("Claude API key not configured. Add ANTHROPIC_API_KEY to environment variables.", 500);
     }
 
     const body = await req.json();
     const { imageData, mimeType, brandId } = body as {
-      imageData: string; // base64 data
-      mimeType: string;  // image/jpeg, image/png, or application/pdf
+      imageData: string;
+      mimeType: string;
       brandId?: string;
     };
 
@@ -51,20 +51,34 @@ export async function POST(req: NextRequest) {
     // Strip data URL prefix if present
     const base64Data = imageData.includes(",") ? imageData.split(",")[1] : imageData;
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Claude vision supports image types; for PDFs, use document type
+    const isPdf = mimeType === "application/pdf";
+    const mediaType = isPdf ? "application/pdf" as const : (mimeType || "image/jpeg") as "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
-    const result = await model.generateContent([
-      PARSE_PROMPT,
-      {
-        inlineData: {
-          data: base64Data,
-          mimeType: mimeType || "image/jpeg",
+    const anthropic = new Anthropic({ apiKey });
+
+    const contentBlock = isPdf
+      ? { type: "document" as const, source: { type: "base64" as const, media_type: "application/pdf" as const, data: base64Data } }
+      : { type: "image" as const, source: { type: "base64" as const, media_type: mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp", data: base64Data } };
+
+    const result = await anthropic.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      messages: [
+        {
+          role: "user",
+          content: [
+            contentBlock,
+            { type: "text", text: PARSE_PROMPT },
+          ],
         },
-      },
-    ]);
+      ],
+    });
 
-    const responseText = result.response.text();
+    const responseText = result.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("");
 
     // Extract JSON from response (handle markdown code blocks)
     let jsonStr = responseText;
@@ -109,20 +123,17 @@ export async function POST(req: NextRequest) {
     });
 
     const matchedItems = parsed.lineItems.map((li) => {
-      // Try exact/partial match
       const nameLower = li.productName.toLowerCase();
       let bestMatch: { id: string; name: string; sku: string } | null = null;
       let bestScore = 0;
 
       for (const p of allProducts) {
         const pLower = p.name.toLowerCase();
-        // Exact match
         if (pLower === nameLower) {
           bestMatch = p;
           bestScore = 100;
           break;
         }
-        // Contains match
         if (pLower.includes(nameLower) || nameLower.includes(pLower)) {
           const score = Math.min(nameLower.length, pLower.length) / Math.max(nameLower.length, pLower.length) * 80;
           if (score > bestScore) {
@@ -130,7 +141,6 @@ export async function POST(req: NextRequest) {
             bestScore = score;
           }
         }
-        // Word overlap
         const liWords = nameLower.split(/\s+/).filter((w) => w.length > 2);
         const pWords = pLower.split(/\s+/).filter((w) => w.length > 2);
         const overlap = liWords.filter((w) => pWords.some((pw) => pw.includes(w) || w.includes(pw))).length;
