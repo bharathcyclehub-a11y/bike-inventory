@@ -87,6 +87,7 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
   const [selectedVendor, setSelectedVendor] = useState<Record<string, string>>({});
   const [selectedBill, setSelectedBill] = useState<Record<string, string>>({});
   const [vendorSearch, setVendorSearch] = useState<Record<string, string>>({});
+  const [expenseTxn, setExpenseTxn] = useState<string | null>(null); // txnId showing expense category picker
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -326,7 +327,7 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
                       )}
                       {/* Manual vendor select toggle */}
                       <button
-                        onClick={() => setExpandedTxn(isExpanded ? null : txn.id)}
+                        onClick={() => { setExpandedTxn(isExpanded ? null : txn.id); setExpenseTxn(null); }}
                         className="flex items-center gap-1 bg-blue-100 text-blue-700 px-3 py-1.5 rounded-md text-[11px] font-medium"
                       >
                         <Building2 className="h-3 w-3" />
@@ -334,13 +335,13 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
                         {isExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                       </button>
                       <button
-                        onClick={() => handleAction(txn.id, "confirm_expense", {
-                          category: txn.suggestedCategory || "EXPENSE_OTHER",
-                        })}
-                        disabled={isProcessing}
-                        className="flex items-center gap-1 bg-purple-600 text-white px-3 py-1.5 rounded-md text-[11px] font-medium disabled:opacity-50"
+                        onClick={() => { setExpenseTxn(expenseTxn === txn.id ? null : txn.id); setExpandedTxn(null); }}
+                        className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-[11px] font-medium ${
+                          expenseTxn === txn.id ? "bg-purple-700 text-white" : "bg-purple-600 text-white"
+                        }`}
                       >
                         <Receipt className="h-3 w-3" /> Expense
+                        {expenseTxn === txn.id ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
                       </button>
                       <button
                         onClick={() => handleAction(txn.id, "ignore")}
@@ -350,6 +351,35 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
                         <XCircle className="h-3 w-3" /> Skip
                       </button>
                     </div>
+
+                    {/* Expense category picker */}
+                    {expenseTxn === txn.id && (
+                      <div className="bg-purple-50 border border-purple-200 rounded-lg p-2.5 space-y-2">
+                        <p className="text-[10px] font-medium text-purple-700">What type of expense is this?</p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {[
+                            { key: "EXPENSE_SALARY", label: "Salary / Advance" },
+                            { key: "EXPENSE_RENT", label: "Rent / Maintenance" },
+                            { key: "EXPENSE_UTILITY", label: "Utility Bills" },
+                            { key: "EXPENSE_DELIVERY", label: "Delivery / Transport" },
+                            { key: "EXPENSE_TRANSPORT", label: "Transport" },
+                            { key: "EXPENSE_OTHER", label: "Other / Misc" },
+                          ].map((cat) => (
+                            <button
+                              key={cat.key}
+                              onClick={() => {
+                                setExpenseTxn(null);
+                                handleAction(txn.id, "confirm_expense", { category: cat.key });
+                              }}
+                              disabled={isProcessing}
+                              className="py-2 px-2 rounded-lg text-xs font-medium bg-white border border-purple-200 text-purple-700 hover:bg-purple-100 disabled:opacity-50 transition-colors"
+                            >
+                              {cat.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Manual vendor + bill selection panel */}
                     {isExpanded && (
