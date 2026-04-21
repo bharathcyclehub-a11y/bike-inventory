@@ -112,6 +112,32 @@ export async function PUT(
       return result;
     });
 
+    // Push purchase bill to Zoho Books on full delivery (best effort)
+    if (status === "DELIVERED") {
+      try {
+        const { ZohoClient } = await import("@/lib/zoho");
+        const zoho = new ZohoClient();
+        const billDate = existing.billDate.toISOString().split("T")[0];
+        const dueDate = new Date(existing.billDate);
+        dueDate.setDate(dueDate.getDate() + 30);
+
+        await zoho.createBill({
+          vendorName: existing.brand.name,
+          billNo: existing.billNo,
+          billDate,
+          dueDate: dueDate.toISOString().split("T")[0],
+          amount: existing.totalAmount,
+          lineItems: existing.lineItems.map((li) => ({
+            name: li.productName,
+            quantity: li.deliveredQty ?? li.quantity,
+            rate: li.rate,
+          })),
+        });
+      } catch (zohoErr) {
+        console.warn("Zoho bill push failed (non-critical):", zohoErr);
+      }
+    }
+
     return successResponse(updated);
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);

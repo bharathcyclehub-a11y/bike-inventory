@@ -207,7 +207,7 @@ export default function InboundPage() {
                         <span>{s.totalItems} items</span>
                       </div>
                       <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <span>{formatINR(s.totalAmount)}</span>
+                        <span>Billed: {formatDate(s.billDate)}</span>
                       </div>
                       {s.status === "IN_TRANSIT" && (
                         <div className="flex items-center gap-1 text-xs ml-auto">
@@ -215,13 +215,13 @@ export default function InboundPage() {
                           <span className={`font-medium ${
                             daysUntil(s.expectedDeliveryDate).includes("overdue") ? "text-red-600" : "text-amber-600"
                           }`}>
-                            {daysUntil(s.expectedDeliveryDate)}
+                            ETA: {formatDate(s.expectedDeliveryDate)} ({daysUntil(s.expectedDeliveryDate)})
                           </span>
                         </div>
                       )}
                       {s.status === "DELIVERED" && s.deliveredAt && (
                         <span className="text-xs text-green-600 ml-auto">
-                          {formatDate(s.deliveredAt)}
+                          Delivered: {formatDate(s.deliveredAt)}
                         </span>
                       )}
                     </div>
