@@ -53,11 +53,14 @@ export async function PUT(
     const existing = await prisma.inboundShipment.findUnique({ where: { id } });
     if (!existing) return errorResponse("Not found", 404);
 
-    // Update individual line item delivery + add stock
+    // Update individual line item delivery + add stock + auto-create delivery for pre-booked
     if (body.lineItemId && body.deliveredQty !== undefined) {
       const lineItem = await prisma.inboundLineItem.findUnique({
         where: { id: body.lineItemId },
-        include: { shipment: { include: { brand: { select: { name: true } } } } },
+        include: {
+          shipment: { include: { brand: { select: { name: true } } } },
+          preBooking: true,
+        },
       });
       if (!lineItem) return errorResponse("Line item not found", 404);
 
@@ -98,6 +101,36 @@ export async function PUT(
                 notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${qty}`,
                 userId: user.id,
               },
+            });
+          }
+
+          // Auto-create delivery for pre-booked items so outwards clerk can see it
+          if (lineItem.preBookedCustomerName) {
+            const existingDelivery = await tx.delivery.findFirst({
+              where: { invoiceNo: lineItem.preBookedInvoiceNo || `PB-${lineItem.id}` },
+            });
+            if (!existingDelivery) {
+              await tx.delivery.create({
+                data: {
+                  invoiceNo: lineItem.preBookedInvoiceNo || `PB-${lineItem.id}`,
+                  invoiceDate: new Date(),
+                  invoiceAmount: 0,
+                  customerName: lineItem.preBookedCustomerName,
+                  customerPhone: lineItem.preBookedCustomerPhone || null,
+                  status: "PENDING",
+                  prebookNotes: `Pre-booked item arrived: ${lineItem.productName} x${qty} | ${lineItem.shipment.brand.name} | ${lineItem.shipment.shipmentNo}`,
+                  lineItems: [{ name: lineItem.productName, quantity: qty }],
+                  verifiedById: user.id,
+                },
+              });
+            }
+          }
+
+          // Fulfill the pre-booking if matched
+          if (lineItem.preBooking) {
+            await tx.preBooking.update({
+              where: { id: lineItem.preBooking.id },
+              data: { status: "FULFILLED", fulfilledAt: new Date() },
             });
           }
         }

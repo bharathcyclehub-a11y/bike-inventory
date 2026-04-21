@@ -105,6 +105,30 @@ export async function PUT(
         }
       }
 
+      // Auto-create delivery records for pre-booked items (for outwards clerk)
+      if (status === "DELIVERED") {
+        const preBookedItems = existing.lineItems.filter((li) => li.preBookedCustomerName);
+        for (const li of preBookedItems) {
+          const invoiceRef = li.preBookedInvoiceNo || `PB-${li.id}`;
+          const existingDelivery = await tx.delivery.findFirst({ where: { invoiceNo: invoiceRef } });
+          if (!existingDelivery) {
+            await tx.delivery.create({
+              data: {
+                invoiceNo: invoiceRef,
+                invoiceDate: new Date(),
+                invoiceAmount: 0,
+                customerName: li.preBookedCustomerName!,
+                customerPhone: li.preBookedCustomerPhone || null,
+                status: "PENDING",
+                prebookNotes: `Pre-booked item arrived: ${li.productName} x${li.deliveredQty ?? li.quantity} | ${existing.brand.name} | ${existing.shipmentNo}`,
+                lineItems: [{ name: li.productName, quantity: li.deliveredQty ?? li.quantity }],
+                verifiedById: user.id,
+              },
+            });
+          }
+        }
+      }
+
       const result = await tx.inboundShipment.update({
         where: { id },
         data: {

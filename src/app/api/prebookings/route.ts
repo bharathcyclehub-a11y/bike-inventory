@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
           brand: { select: { name: true } },
           createdBy: { select: { name: true } },
           matchedShipment: {
-            select: { shipmentNo: true, expectedDeliveryDate: true, status: true },
+            select: { id: true, shipmentNo: true, expectedDeliveryDate: true, status: true },
           },
         },
         orderBy: { createdAt: "desc" },

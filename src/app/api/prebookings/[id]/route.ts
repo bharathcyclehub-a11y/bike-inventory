@@ -49,6 +49,43 @@ export async function PUT(
     const existing = await prisma.preBooking.findUnique({ where: { id } });
     if (!existing) return errorResponse("Not found", 404);
 
+    // Manual match: link pre-booking to a specific inbound line item
+    if (body.matchLineItemId) {
+      if (existing.status !== "WAITING") {
+        return errorResponse("Only WAITING pre-bookings can be matched", 400);
+      }
+
+      const lineItem = await prisma.inboundLineItem.findUnique({
+        where: { id: body.matchLineItemId },
+        include: { shipment: { select: { id: true, expectedDeliveryDate: true } }, preBooking: true },
+      });
+
+      if (!lineItem) return errorResponse("Line item not found", 404);
+      if (lineItem.preBooking) return errorResponse("Line item already matched to another pre-booking", 400);
+
+      const matched = await prisma.$transaction([
+        prisma.preBooking.update({
+          where: { id },
+          data: {
+            status: "MATCHED",
+            matchedShipmentId: lineItem.shipment.id,
+            matchedLineItemId: lineItem.id,
+            expectedDate: lineItem.shipment.expectedDeliveryDate,
+          },
+        }),
+        prisma.inboundLineItem.update({
+          where: { id: lineItem.id },
+          data: {
+            preBookedCustomerName: existing.customerName,
+            preBookedCustomerPhone: existing.customerPhone,
+            preBookedInvoiceNo: existing.zohoInvoiceNo,
+          },
+        }),
+      ]);
+
+      return successResponse(matched[0]);
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updateData: any = {};
 
@@ -59,6 +96,13 @@ export async function PUT(
         updateData.matchedShipmentId = null;
         updateData.matchedLineItemId = null;
         updateData.expectedDate = null;
+        // Clear line item's pre-booking info
+        if (existing.matchedLineItemId) {
+          await prisma.inboundLineItem.update({
+            where: { id: existing.matchedLineItemId },
+            data: { preBookedCustomerName: null, preBookedCustomerPhone: null, preBookedInvoiceNo: null },
+          });
+        }
       }
     }
 

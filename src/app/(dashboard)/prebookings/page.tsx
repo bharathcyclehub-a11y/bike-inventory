@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
-import { Loader2, UserCheck, Phone, Plus, Search } from "lucide-react";
+import Link from "next/link";
+import { Loader2, UserCheck, Phone, Plus, Search, Zap, Link2, X, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,7 +22,19 @@ interface PreBooking {
   createdAt: string;
   brand: { name: string } | null;
   createdBy: { name: string };
-  matchedShipment: { shipmentNo: string; expectedDeliveryDate: string; status: string } | null;
+  matchedShipment: { id: string; shipmentNo: string; expectedDeliveryDate: string; status: string } | null;
+}
+
+interface AvailableItem {
+  id: string;
+  productName: string;
+  quantity: number;
+  shipment: {
+    id: string;
+    shipmentNo: string;
+    expectedDeliveryDate: string;
+    brand: { name: string };
+  };
 }
 
 type StatusFilter = "ALL" | "WAITING" | "MATCHED" | "FULFILLED" | "CANCELLED";
@@ -37,6 +50,7 @@ export default function PreBookingsPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
   const canCreate = ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"].includes(role);
+  const canMatch = ["ADMIN", "SUPERVISOR"].includes(role);
 
   const [preBookings, setPreBookings] = useState<PreBooking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,6 +68,17 @@ export default function PreBookingsPage() {
 
   // Zoho search
   const [searching, setSearching] = useState(false);
+
+  // Auto match
+  const [autoMatching, setAutoMatching] = useState(false);
+  const [matchResult, setMatchResult] = useState<string | null>(null);
+
+  // Manual match
+  const [manualMatchPb, setManualMatchPb] = useState<PreBooking | null>(null);
+  const [availableItems, setAvailableItems] = useState<AvailableItem[]>([]);
+  const [loadingItems, setLoadingItems] = useState(false);
+  const [matchingItem, setMatchingItem] = useState<string | null>(null);
+  const [itemSearch, setItemSearch] = useState("");
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -85,7 +110,6 @@ export default function PreBookingsPage() {
         setCustomerName(inv.customerName || "");
         setCustomerPhone(inv.phone || "");
         if (inv.salesPerson || inv.salesperson_name) setSalesPerson(inv.salesPerson || inv.salesperson_name || "");
-        // Try to get product name from line items
         if (inv.lineItems?.length > 0) {
           setProductName(inv.lineItems[0].name || "");
         }
@@ -137,6 +161,67 @@ export default function PreBookingsPage() {
     }
   };
 
+  const handleAutoMatch = async () => {
+    setAutoMatching(true);
+    setMatchResult(null);
+    try {
+      const res = await fetch("/api/prebookings/match", { method: "POST" }).then((r) => r.json());
+      if (res.success) {
+        setMatchResult(`Matched ${res.data.matched} of ${res.data.total} waiting pre-bookings`);
+        fetchData();
+      } else {
+        setMatchResult(res.error || "Auto-match failed");
+      }
+    } catch {
+      setMatchResult("Network error");
+    } finally {
+      setAutoMatching(false);
+    }
+  };
+
+  const openManualMatch = async (pb: PreBooking) => {
+    setManualMatchPb(pb);
+    setLoadingItems(true);
+    setItemSearch("");
+    try {
+      const res = await fetch("/api/prebookings/available-items").then((r) => r.json());
+      if (res.success) setAvailableItems(res.data || []);
+    } catch { /* */ }
+    finally { setLoadingItems(false); }
+  };
+
+  const handleManualMatch = async (lineItemId: string) => {
+    if (!manualMatchPb) return;
+    setMatchingItem(lineItemId);
+    try {
+      const res = await fetch(`/api/prebookings/${manualMatchPb.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ matchLineItemId: lineItemId }),
+      }).then((r) => r.json());
+      if (res.success) {
+        setManualMatchPb(null);
+        fetchData();
+      } else {
+        alert(res.error || "Match failed");
+      }
+    } catch {
+      alert("Network error");
+    } finally {
+      setMatchingItem(null);
+    }
+  };
+
+  const filteredItems = itemSearch
+    ? availableItems.filter((it) =>
+        it.productName.toLowerCase().includes(itemSearch.toLowerCase()) ||
+        it.shipment.brand.name.toLowerCase().includes(itemSearch.toLowerCase()) ||
+        it.shipment.shipmentNo.toLowerCase().includes(itemSearch.toLowerCase())
+      )
+    : availableItems;
+
+  const waitingCount = preBookings.filter((pb) => pb.status === "WAITING").length;
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
@@ -144,12 +229,27 @@ export default function PreBookingsPage() {
           <h1 className="text-lg font-bold text-slate-900">Pre-Bookings</h1>
           <p className="text-xs text-slate-500">Customer cycle reservations</p>
         </div>
-        {canCreate && !showForm && (
-          <Button size="sm" onClick={() => setShowForm(true)} className="bg-purple-600 hover:bg-purple-700">
-            <Plus className="h-4 w-4 mr-1" /> New
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {canMatch && filter === "WAITING" && waitingCount > 0 && (
+            <Button size="sm" variant="outline" onClick={handleAutoMatch} disabled={autoMatching}
+              className="text-amber-700 border-amber-200 hover:bg-amber-50">
+              {autoMatching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4 mr-1" />}
+              Auto Match
+            </Button>
+          )}
+          {canCreate && !showForm && (
+            <Button size="sm" onClick={() => setShowForm(true)} className="bg-purple-600 hover:bg-purple-700">
+              <Plus className="h-4 w-4 mr-1" /> New
+            </Button>
+          )}
+        </div>
       </div>
+
+      {matchResult && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mb-3">
+          <p className="text-xs text-blue-700">{matchResult}</p>
+        </div>
+      )}
 
       {/* Create Form */}
       {showForm && (
@@ -247,13 +347,24 @@ export default function PreBookingsPage() {
                     {pb.salesPerson && <span className="text-[10px] text-slate-400">| Sales: {pb.salesPerson}</span>}
                   </div>
 
+                  {/* Matched — show shipment tracking */}
                   {pb.matchedShipment && (
-                    <div className="mt-2 bg-blue-50 rounded-lg p-2">
+                    <Link href={`/inbound/${pb.matchedShipment.id}`}
+                      className="mt-2 bg-blue-50 rounded-lg p-2 flex items-center justify-between">
                       <p className="text-xs text-blue-700">
                         Matched: {pb.matchedShipment.shipmentNo} |{" "}
-                        Expected: {new Date(pb.matchedShipment.expectedDeliveryDate).toLocaleDateString("en-IN")}
+                        ETA: {new Date(pb.matchedShipment.expectedDeliveryDate).toLocaleDateString("en-IN")}
                       </p>
-                    </div>
+                      <Truck className="h-3.5 w-3.5 text-blue-500" />
+                    </Link>
+                  )}
+
+                  {/* Waiting — show manual match button */}
+                  {pb.status === "WAITING" && canMatch && (
+                    <button onClick={() => openManualMatch(pb)}
+                      className="mt-2 w-full py-1.5 rounded-lg bg-amber-50 text-amber-700 text-xs font-medium border border-amber-200 hover:bg-amber-100 flex items-center justify-center gap-1.5">
+                      <Link2 className="h-3.5 w-3.5" /> Match to Inbound Item
+                    </button>
                   )}
 
                   <div className="flex items-center justify-between mt-2">
@@ -272,6 +383,61 @@ export default function PreBookingsPage() {
               </Card>
             );
           })}
+        </div>
+      )}
+
+      {/* Manual Match Modal */}
+      {manualMatchPb && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end justify-center">
+          <div className="bg-white w-full max-w-lg rounded-t-2xl max-h-[80vh] flex flex-col">
+            <div className="p-4 border-b flex items-center justify-between">
+              <div>
+                <p className="text-sm font-bold text-slate-900">Match: {manualMatchPb.customerName}</p>
+                <p className="text-xs text-slate-500">{manualMatchPb.productName}</p>
+              </div>
+              <button onClick={() => setManualMatchPb(null)} className="p-1.5 hover:bg-slate-100 rounded-full">
+                <X className="h-5 w-5 text-slate-400" />
+              </button>
+            </div>
+
+            <div className="p-3 border-b">
+              <Input value={itemSearch} onChange={(e) => setItemSearch(e.target.value)}
+                placeholder="Search by product, brand, or shipment..." className="text-sm" />
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {loadingItems ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+                </div>
+              ) : filteredItems.length === 0 ? (
+                <div className="text-center py-8">
+                  <p className="text-sm text-slate-400">No available in-transit items found</p>
+                  <p className="text-[10px] text-slate-400 mt-1">Items already matched or delivered won&apos;t appear here</p>
+                </div>
+              ) : (
+                filteredItems.map((item) => (
+                  <button key={item.id} onClick={() => handleManualMatch(item.id)}
+                    disabled={matchingItem === item.id}
+                    className="w-full text-left p-3 rounded-lg border border-slate-200 hover:border-blue-300 hover:bg-blue-50/50 transition-colors disabled:opacity-50">
+                    <p className="text-sm font-medium text-slate-900">{item.productName}</p>
+                    <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-500">
+                      <span>{item.shipment.brand.name}</span>
+                      <span>|</span>
+                      <span>{item.shipment.shipmentNo}</span>
+                      <span>|</span>
+                      <span>Qty: {item.quantity}</span>
+                      <span>|</span>
+                      <span>ETA: {new Date(item.shipment.expectedDeliveryDate).toLocaleDateString("en-IN")}</span>
+                    </div>
+                    {matchingItem === item.id && (
+                      <p className="text-xs text-blue-600 mt-1">Matching...</p>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
