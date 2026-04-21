@@ -17,6 +17,7 @@ import {
   Plus,
   FileSpreadsheet,
   BookOpen,
+  Calculator,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -96,6 +97,7 @@ export default function AccountsPage() {
     { label: "Bills", href: "/bills", icon: FileText, count: s?.pendingBills },
     { label: "Purchase Orders", href: "/purchase-orders", icon: ShoppingCart, count: s?.pendingPOs },
     { label: "Expenses", href: "/expenses", icon: Receipt },
+    { label: "Daily Settlement", href: "/accounts/settlement", icon: Calculator },
   ];
 
   return (

@@ -174,6 +174,9 @@ model User {
 
   // Pre-bookings
   createdPreBookings PreBooking[] @relation("PreBookingCreatedBy")
+
+  // POS settlements
+  verifiedSettlements DailySettlement[] @relation("SettlementCashVerifier")
 }
 
 model Category {
@@ -661,6 +664,8 @@ model BankTransaction {
   processedAt         DateTime?
   createdAt           DateTime        @default(now())
 
+  settlementMatches   SettlementMatch[]
+
   @@index([statementId])
   @@index([matchStatus])
   @@index([date])
@@ -1104,6 +1109,101 @@ model InboundLineItem {
 
   @@index([shipmentId])
   @@index([productId])
+}
+
+// ─── POS Daily Settlement ───────────────────────
+
+enum SettlementStatus {
+  PENDING
+  CASH_VERIFIED
+  PARTIALLY_MATCHED
+  FULLY_MATCHED
+  DISCREPANCY
+}
+
+model PosSession {
+  id                String    @id @default(cuid())
+  zakyaSessionId    String    @unique
+  sessionDate       DateTime
+  openedAt          DateTime
+  closedAt          DateTime?
+  registerName      String?
+  cashierName       String?
+
+  // Payment mode totals from POS
+  cashSales         Float     @default(0)
+  cardSales         Float     @default(0)
+  upiSales          Float     @default(0)
+  financeSales      Float     @default(0)  // Bajaj EMI etc.
+  totalSales        Float     @default(0)
+
+  // Cash management
+  cashInHand        Float     @default(0)  // Opening + cash sales - cash out
+  cashDeposited     Float     @default(0)  // Amount deposited to bank
+
+  invoiceCount      Int       @default(0)
+  rawData           Json?     // Full Zakya session response
+
+  settlementId      String?
+  settlement        DailySettlement? @relation(fields: [settlementId], references: [id])
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([sessionDate])
+  @@index([settlementId])
+}
+
+model DailySettlement {
+  id                String            @id @default(cuid())
+  date              DateTime          @unique  // One settlement per day
+  status            SettlementStatus  @default(PENDING)
+
+  // Totals from POS sessions
+  totalCash         Float             @default(0)
+  totalCard         Float             @default(0)
+  totalUpi          Float             @default(0)
+  totalFinance      Float             @default(0)
+  grandTotal        Float             @default(0)
+
+  // Cash verification
+  cashCounted       Float?            // Physical cash count by staff
+  cashVariance      Float?            // cashCounted - totalCash
+  cashVerifiedAt    DateTime?
+  cashVerifiedById  String?
+  cashVerifiedBy    User?             @relation("SettlementCashVerifier", fields: [cashVerifiedById], references: [id])
+
+  // Bank matching
+  matchedAmount     Float             @default(0)
+  unmatchedAmount   Float             @default(0)
+  notes             String?
+
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  sessions          PosSession[]
+  matches           SettlementMatch[]
+
+  @@index([status])
+  @@index([date])
+}
+
+model SettlementMatch {
+  id                String          @id @default(cuid())
+  settlementId      String
+  settlement        DailySettlement @relation(fields: [settlementId], references: [id])
+  paymentMode       String          // CARD, UPI, FINANCE, CASH_DEPOSIT
+  expectedAmount    Float           // From POS
+  bankTxnId         String?
+  bankTxn           BankTransaction? @relation(fields: [bankTxnId], references: [id])
+  matchedAmount     Float           @default(0)
+  variance          Float           @default(0)
+  isMatched         Boolean         @default(false)
+  notes             String?
+  createdAt         DateTime        @default(now())
+
+  @@index([settlementId])
+  @@index([bankTxnId])
 }
 
 enum PreBookingStatus {

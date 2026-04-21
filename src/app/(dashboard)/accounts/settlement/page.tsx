@@ -1,0 +1,214 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
+import Link from "next/link";
+import { ArrowLeft, Download, Plus, CheckCircle, AlertTriangle, Clock, ChevronRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+
+interface Settlement {
+  id: string;
+  date: string;
+  status: string;
+  totalCash: number;
+  totalCard: number;
+  totalUpi: number;
+  totalFinance: number;
+  grandTotal: number;
+  matchedAmount: number;
+  unmatchedAmount: number;
+  cashCounted: number | null;
+  cashVariance: number | null;
+  sessions: Array<{ id: string; totalSales: number; invoiceCount: number }>;
+  cashVerifiedBy: { name: string } | null;
+  _count: { matches: number };
+}
+
+function formatCurrency(amount: number) {
+  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
+}
+
+const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
+  PENDING: { bg: "bg-slate-100", text: "text-slate-700", label: "Pending" },
+  CASH_VERIFIED: { bg: "bg-amber-100", text: "text-amber-700", label: "Cash Verified" },
+  PARTIALLY_MATCHED: { bg: "bg-blue-100", text: "text-blue-700", label: "Partially Matched" },
+  FULLY_MATCHED: { bg: "bg-green-100", text: "text-green-700", label: "Fully Matched" },
+  DISCREPANCY: { bg: "bg-red-100", text: "text-red-700", label: "Discrepancy" },
+};
+
+export default function SettlementListPage() {
+  const { data: session, status: sessionStatus } = useSession();
+  const role = (session?.user as { role?: string })?.role || "";
+  const canAccess = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [fetching, setFetching] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [fetchDays, setFetchDays] = useState(7);
+
+  const loadSettlements = () => {
+    setLoading(true);
+    fetch("/api/pos/settlement")
+      .then((r) => r.json())
+      .then((res) => { if (res.success) setSettlements(res.data); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { loadSettlements(); }, []);
+
+  const fetchSessions = async () => {
+    setFetching(true);
+    const dateTo = new Date().toISOString().split("T")[0];
+    const dateFrom = new Date(Date.now() - fetchDays * 86400000).toISOString().split("T")[0];
+    try {
+      const res = await fetch("/api/pos/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dateFrom, dateTo }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`Fetched ${data.data.fetched} invoices. Created ${data.data.created} sessions, ${data.data.skipped} already existed.`);
+      } else {
+        alert(data.error || "Failed to fetch sessions");
+      }
+    } catch {
+      alert("Network error");
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const createSettlement = async () => {
+    const dateStr = prompt("Enter date (YYYY-MM-DD):", new Date().toISOString().split("T")[0]);
+    if (!dateStr) return;
+    setCreating(true);
+    try {
+      const res = await fetch("/api/pos/settlement", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: dateStr }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        loadSettlements();
+      } else {
+        alert(data.error || "Failed to create settlement");
+      }
+    } catch {
+      alert("Network error");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  if (sessionStatus === "loading") {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!canAccess) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-sm font-medium text-red-600">Access Denied</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3">
+        <Link href="/accounts">
+          <ArrowLeft className="h-5 w-5 text-slate-500" />
+        </Link>
+        <h1 className="text-lg font-bold text-slate-900 flex-1">Daily Settlement</h1>
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 mb-4">
+        <div className="flex items-center gap-1 flex-1">
+          <select
+            value={fetchDays}
+            onChange={(e) => setFetchDays(Number(e.target.value))}
+            className="text-xs border rounded-lg px-2 py-2 bg-white"
+          >
+            <option value={3}>3 days</option>
+            <option value={7}>7 days</option>
+            <option value={14}>14 days</option>
+            <option value={30}>30 days</option>
+          </select>
+          <Button size="sm" variant="outline" onClick={fetchSessions} disabled={fetching}>
+            <Download className="h-3.5 w-3.5 mr-1" />
+            {fetching ? "Fetching..." : "Fetch POS"}
+          </Button>
+        </div>
+        <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={createSettlement} disabled={creating}>
+          <Plus className="h-3.5 w-3.5 mr-1" />
+          {creating ? "Creating..." : "New Settlement"}
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : settlements.length === 0 ? (
+        <div className="text-center py-12">
+          <Clock className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+          <p className="text-sm text-slate-400">No settlements yet</p>
+          <p className="text-xs text-slate-400 mt-1">Fetch POS sessions first, then create a settlement</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {settlements.map((s) => {
+            const st = STATUS_STYLES[s.status] || STATUS_STYLES.PENDING;
+            const invoiceCount = s.sessions.reduce((sum, p) => sum + p.invoiceCount, 0);
+            return (
+              <Link key={s.id} href={`/accounts/settlement/${s.id}`}>
+                <Card className="mb-2 hover:border-slate-300 transition-colors">
+                  <CardContent className="p-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0 mr-3">
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-sm font-bold text-slate-900">
+                            {new Date(s.date).toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" })}
+                          </p>
+                          <Badge className={`${st.bg} ${st.text} text-[10px]`}>{st.label}</Badge>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          {invoiceCount} invoices | {s.sessions.length} session{s.sessions.length !== 1 ? "s" : ""}
+                          {s._count.matches > 0 && ` | ${s._count.matches} matched`}
+                        </p>
+                        {s.cashVariance !== null && s.cashVariance !== 0 && (
+                          <p className={`text-[10px] mt-0.5 ${s.cashVariance > 0 ? "text-green-600" : "text-red-600"}`}>
+                            Cash variance: {s.cashVariance > 0 ? "+" : ""}{formatCurrency(s.cashVariance)}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-right">
+                          <p className="text-sm font-bold text-slate-900">{formatCurrency(s.grandTotal)}</p>
+                          {s.matchedAmount > 0 && (
+                            <p className="text-[10px] text-green-600">{formatCurrency(s.matchedAmount)} matched</p>
+                          )}
+                        </div>
+                        <ChevronRight className="h-4 w-4 text-slate-400" />
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
