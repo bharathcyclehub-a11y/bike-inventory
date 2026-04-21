@@ -142,8 +142,31 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             updateData.deliveredAt = new Date();
           }
 
-          // Parse line items and deduct stock
+          // Parse line items and check stock availability first
           const items = (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
+          const outOfStockItems: string[] = [];
+
+          for (const item of items) {
+            if (!item.sku) continue;
+            const product = await tx.product.findFirst({
+              where: { sku: item.sku },
+              select: { id: true, name: true, currentStock: true },
+            });
+            if (!product) continue;
+            if (product.currentStock < item.quantity) {
+              outOfStockItems.push(
+                `${product.name || item.name} (need ${item.quantity}, have ${product.currentStock})`
+              );
+            }
+          }
+
+          if (outOfStockItems.length > 0) {
+            throw new Error(
+              `Insufficient stock for: ${outOfStockItems.join(", ")}. Please update stock before processing this ${data.status === "WALK_OUT" ? "walk-out" : "delivery"}.`
+            );
+          }
+
+          // Deduct stock
           for (const item of items) {
             if (!item.sku) continue;
             const product = await tx.product.findFirst({
@@ -152,7 +175,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             });
             if (!product) continue;
 
-            const newStock = Math.max(0, product.currentStock - item.quantity);
+            const newStock = product.currentStock - item.quantity;
             await tx.product.update({
               where: { id: product.id },
               data: { currentStock: newStock },
