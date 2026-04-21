@@ -213,17 +213,29 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
             <Save className="h-4 w-4 mr-2" />{saving ? "Saving..." : "Save Changes"}
           </Button>
 
-          {/* Delete (deactivate) user */}
+          {/* Delete / Remove user */}
           {currentUser?.userId !== id && (
             <Button variant="outline" size="lg" disabled={deleting}
               className="w-full border-red-300 text-red-600 hover:bg-red-50"
               onClick={async () => {
-                if (!confirm(`Remove ${user.name} from the team? They will be deactivated.`)) return;
+                if (!confirm(`Remove ${user.name} from the team?`)) return;
                 setDeleting(true);
+                setError("");
                 try {
                   const res = await fetch(`/api/users/${id}`, { method: "DELETE" }).then(r => r.json());
-                  if (res.success) router.push("/team");
-                  else setError(res.error || "Failed to remove");
+                  if (res.success) {
+                    const d = res.data;
+                    if (d.deleted) {
+                      setSuccess(d.message);
+                      setTimeout(() => router.push("/team"), 1500);
+                    } else if (d.deactivated) {
+                      setSuccess(d.message);
+                      setIsActive(false);
+                      setUser((prev) => prev ? { ...prev, isActive: false } : prev);
+                    }
+                  } else {
+                    setError(res.error || "Failed to remove");
+                  }
                 } catch { setError("Network error"); }
                 finally { setDeleting(false); }
               }}>

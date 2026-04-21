@@ -101,16 +101,53 @@ export async function DELETE(
       return errorResponse("Cannot delete your own account", 400);
     }
 
-    const user = await prisma.user.findUnique({ where: { id } });
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true, name: true, isActive: true,
+        _count: {
+          select: {
+            transactions: true,
+            stockCounts: true,
+          },
+        },
+      },
+    });
     if (!user) return errorResponse("User not found", 404);
 
-    // Soft-delete: deactivate instead of hard delete to preserve transaction history
-    await prisma.user.update({
-      where: { id },
-      data: { isActive: false },
-    });
+    const hasHistory = user._count.transactions > 0 || user._count.stockCounts > 0;
 
-    return successResponse({ deleted: true, name: user.name });
+    if (hasHistory) {
+      // User has transaction history — can only soft-delete
+      await prisma.user.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      return successResponse({
+        deleted: false,
+        deactivated: true,
+        name: user.name,
+        message: `${user.name} has ${user._count.transactions} transaction(s) and ${user._count.stockCounts} stock count(s) linked. Deactivated instead of deleted to preserve records.`,
+      });
+    }
+
+    // No history — safe to hard delete
+    try {
+      await prisma.user.delete({ where: { id } });
+      return successResponse({ deleted: true, deactivated: false, name: user.name, message: `${user.name} permanently deleted.` });
+    } catch {
+      // FK constraint still hit (other relations) — fallback to soft-delete
+      await prisma.user.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      return successResponse({
+        deleted: false,
+        deactivated: true,
+        name: user.name,
+        message: `${user.name} has linked records. Deactivated instead of deleted to preserve data integrity.`,
+      });
+    }
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to delete user", 400);
