@@ -47,6 +47,7 @@ interface Settlement {
     financeSales: number;
     invoiceCount: number;
     registerName: string | null;
+    cashierName: string | null;
   }>;
   matches: SettlementMatch[];
 }
@@ -432,19 +433,30 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
       <div className="mb-4">
         <h2 className="text-sm font-semibold text-slate-900 mb-2">POS Sessions ({settlement.sessions.length})</h2>
         <div className="space-y-1.5">
-          {settlement.sessions.map((s) => (
-            <Card key={s.id}>
-              <CardContent className="p-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-slate-900">{s.registerName || "POS"}</p>
-                    <p className="text-xs text-slate-500">{s.invoiceCount} invoices</p>
+          {settlement.sessions.map((s) => {
+            const hasBreakdown = s.cashSales > 0 || s.cardSales > 0 || s.upiSales > 0 || s.financeSales > 0;
+            return (
+              <Card key={s.id}>
+                <CardContent className="p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div>
+                      <p className="text-sm font-medium text-slate-900">{s.registerName || "POS"}</p>
+                      <p className="text-xs text-slate-500">{s.invoiceCount} invoices{s.cashierName ? ` | ${s.cashierName}` : ""}</p>
+                    </div>
+                    <p className="text-sm font-bold text-slate-900">{formatCurrency(s.totalSales)}</p>
                   </div>
-                  <p className="text-sm font-bold text-slate-900">{formatCurrency(s.totalSales)}</p>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                  {hasBreakdown && (
+                    <div className="flex gap-3 text-[10px] text-slate-500 mt-1 pt-1 border-t border-slate-100">
+                      {s.cashSales > 0 && <span>Cash: {formatCurrency(s.cashSales)}</span>}
+                      {s.cardSales > 0 && <span>Card: {formatCurrency(s.cardSales)}</span>}
+                      {s.upiSales > 0 && <span>UPI: {formatCurrency(s.upiSales)}</span>}
+                      {s.financeSales > 0 && <span>Finance: {formatCurrency(s.financeSales)}</span>}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       </div>
     </div>

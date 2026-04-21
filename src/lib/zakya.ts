@@ -230,6 +230,55 @@ export class ZakyaClient {
     return all;
   }
 
+  // ---- POS Register Sessions ----
+
+  async listRegisterSessions(dateFrom?: string, dateTo?: string) {
+    let params = "?session_status=closed&per_page=200";
+    if (dateFrom) params += `&from_date=${dateFrom}`;
+    if (dateTo) params += `&to_date=${dateTo}`;
+    return this.apiCall<{
+      register_sessions?: Array<{
+        session_id: string;
+        session_number: string;
+        register_name: string;
+        opened_time: string;
+        closed_time: string;
+        total_sales: number;
+        invoice_count: number;
+        cash_sales?: number;
+        card_sales?: number;
+        expected_cash?: number;
+        counted_cash?: number;
+        opening_balance?: number;
+        closing_balance?: number;
+        payment_modes?: Array<{ payment_mode: string; amount: number }>;
+      }>;
+      registersessions?: Array<{
+        session_id: string;
+        session_number: string;
+        register_name: string;
+        opened_time: string;
+        closed_time: string;
+        total_sales: number;
+        invoice_count: number;
+        cash_sales?: number;
+        card_sales?: number;
+        expected_cash?: number;
+        counted_cash?: number;
+        opening_balance?: number;
+        closing_balance?: number;
+        payment_modes?: Array<{ payment_mode: string; amount: number }>;
+      }>;
+    }>("GET", `/registersessions${params}`);
+  }
+
+  async getRegisterSession(sessionId: string) {
+    return this.apiCall<{
+      register_session?: Record<string, unknown>;
+      registersession?: Record<string, unknown>;
+    }>("GET", `/registersessions/${sessionId}`);
+  }
+
   async getInvoice(invoiceId: string) {
     return this.apiCall<{
       invoice: {

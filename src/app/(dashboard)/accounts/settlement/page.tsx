@@ -72,7 +72,9 @@ export default function SettlementListPage() {
       });
       const data = await res.json();
       if (data.success) {
-        alert(`Fetched ${data.data.fetched} invoices. Created ${data.data.created} sessions, ${data.data.skipped} already existed.`);
+        const src = data.data.source === "sessions" ? "sessions" : "invoices";
+        alert(`Fetched ${data.data.fetched} ${src}. Created ${data.data.created} sessions, ${data.data.skipped} already existed.`);
+        loadSettlements();
       } else {
         alert(data.error || "Failed to fetch sessions");
       }

@@ -48,59 +48,105 @@ export async function POST(req: NextRequest) {
     const ok = await zakya.init();
     if (!ok) return errorResponse("Zakya POS not connected. Configure in Settings → Zakya.", 400);
 
-    // Fetch sales from Zakya for the date range
-    const invoices = await zakya.listAllInvoices(dateFrom, dateTo);
-
-    // Group invoices by date to create session-like summaries
-    const sessionsByDate = new Map<string, {
-      date: string;
-      cash: number;
-      card: number;
-      upi: number;
-      finance: number;
-      total: number;
-      count: number;
-    }>();
-
-    for (const inv of invoices) {
-      const date = inv.date; // YYYY-MM-DD
-      if (!sessionsByDate.has(date)) {
-        sessionsByDate.set(date, { date, cash: 0, card: 0, upi: 0, finance: 0, total: 0, count: 0 });
-      }
-      const s = sessionsByDate.get(date)!;
-      s.total += inv.total;
-      s.count += 1;
-      // Zakya doesn't break down by payment mode in invoice list — put all in total for now
-      // The user can match against bank transactions manually
-    }
-
+    // Try register sessions API first (has payment mode breakdown)
     let created = 0;
     let skipped = 0;
+    let fetched = 0;
+    let usedSessionsApi = false;
 
-    for (const [date, s] of sessionsByDate) {
-      const zakyaSessionId = `ZAKYA-${date}`;
-      const existing = await prisma.posSession.findUnique({ where: { zakyaSessionId } });
-      if (existing) {
-        skipped++;
-        continue;
+    try {
+      const sessionsData = await zakya.listRegisterSessions(dateFrom, dateTo);
+      const sessions = sessionsData.register_sessions || sessionsData.registersessions || [];
+
+      if (sessions.length > 0) {
+        usedSessionsApi = true;
+        fetched = sessions.length;
+
+        for (const s of sessions) {
+          const existing = await prisma.posSession.findUnique({ where: { zakyaSessionId: s.session_id } });
+          if (existing) { skipped++; continue; }
+
+          // Parse payment modes from session data
+          let cashSales = s.cash_sales || 0;
+          let cardSales = s.card_sales || 0;
+          let upiSales = 0;
+          let financeSales = 0;
+
+          if (s.payment_modes) {
+            for (const pm of s.payment_modes) {
+              const mode = pm.payment_mode.toUpperCase();
+              if (mode.includes("CASH")) cashSales = pm.amount;
+              else if (mode.includes("UPI") || mode.includes("PHONEPE") || mode.includes("GPAY")) upiSales += pm.amount;
+              else if (mode.includes("BAJAJ") || mode.includes("FINANCE") || mode.includes("EMI")) financeSales += pm.amount;
+              else if (mode.includes("CARD") || mode.includes("ICICI") || mode.includes("HDFC") || mode.includes("BANK")) cardSales += pm.amount;
+              else if (mode.includes("CREDIT")) { /* Credit sale — skip from payment modes */ }
+              else cardSales += pm.amount; // default to card
+            }
+          }
+
+          const sessionDate = s.opened_time ? new Date(s.opened_time) : new Date(dateFrom);
+          await prisma.posSession.create({
+            data: {
+              zakyaSessionId: s.session_id,
+              sessionDate,
+              openedAt: s.opened_time ? new Date(s.opened_time) : sessionDate,
+              closedAt: s.closed_time ? new Date(s.closed_time) : null,
+              registerName: s.register_name || "POS",
+              cashierName: s.session_number,
+              cashSales,
+              cardSales,
+              upiSales,
+              financeSales,
+              totalSales: s.total_sales,
+              cashInHand: s.expected_cash || cashSales,
+              cashDeposited: 0,
+              invoiceCount: s.invoice_count || 0,
+              rawData: JSON.parse(JSON.stringify(s)),
+            },
+          });
+          created++;
+        }
       }
-
-      await prisma.posSession.create({
-        data: {
-          zakyaSessionId,
-          sessionDate: new Date(date),
-          openedAt: new Date(date + "T09:00:00"),
-          closedAt: new Date(date + "T21:00:00"),
-          registerName: "Zakya POS",
-          totalSales: s.total,
-          invoiceCount: s.count,
-          rawData: { invoiceCount: s.count, total: s.total },
-        },
-      });
-      created++;
+    } catch (sessionErr) {
+      console.warn("Register sessions API failed, falling back to invoices:", sessionErr);
     }
 
-    return successResponse({ fetched: invoices.length, created, skipped });
+    // Fallback: aggregate from invoices if sessions API not available
+    if (!usedSessionsApi) {
+      const invoices = await zakya.listAllInvoices(dateFrom, dateTo);
+      fetched = invoices.length;
+
+      const sessionsByDate = new Map<string, { date: string; total: number; count: number }>();
+      for (const inv of invoices) {
+        const date = inv.date;
+        if (!sessionsByDate.has(date)) sessionsByDate.set(date, { date, total: 0, count: 0 });
+        const s = sessionsByDate.get(date)!;
+        s.total += inv.total;
+        s.count += 1;
+      }
+
+      for (const [date, s] of sessionsByDate) {
+        const zakyaSessionId = `ZAKYA-${date}`;
+        const existing = await prisma.posSession.findUnique({ where: { zakyaSessionId } });
+        if (existing) { skipped++; continue; }
+
+        await prisma.posSession.create({
+          data: {
+            zakyaSessionId,
+            sessionDate: new Date(date),
+            openedAt: new Date(date + "T09:00:00"),
+            closedAt: new Date(date + "T21:00:00"),
+            registerName: "Zakya POS",
+            totalSales: s.total,
+            invoiceCount: s.count,
+            rawData: { invoiceCount: s.count, total: s.total, source: "invoice-fallback" },
+          },
+        });
+        created++;
+      }
+    }
+
+    return successResponse({ fetched, created, skipped, source: usedSessionsApi ? "sessions" : "invoices" });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch POS sessions", 500);
