@@ -42,16 +42,77 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { id } = await params;
 
     const body = await req.json();
-    const { txnId, action, vendorId, billId, category } = body as {
-      txnId: string;
+    const { txnId, txnIds, action, vendorId, billId, category } = body as {
+      txnId?: string;
+      txnIds?: string[];
       action: "confirm_payment" | "confirm_expense" | "ignore" | "flag";
       vendorId?: string;
       billId?: string;
       category?: string;
     };
 
+    // Support bulk actions via txnIds array
+    const ids = txnIds || (txnId ? [txnId] : []);
+    if (ids.length === 0) return errorResponse("No transaction IDs provided", 400);
+
+    // For bulk actions, process all at once
+    if (ids.length > 1 && (action === "confirm_expense" || action === "ignore" || action === "confirm_payment")) {
+      const txns = await prisma.bankTransaction.findMany({
+        where: { id: { in: ids }, statementId: id, processedAt: null },
+      });
+      if (txns.length === 0) return errorResponse("No unprocessed transactions found", 404);
+
+      let processed = 0;
+      for (const t of txns) {
+        if (action === "ignore") {
+          await prisma.bankTransaction.update({
+            where: { id: t.id },
+            data: { matchStatus: "IGNORED", processedAt: new Date() },
+          });
+          processed++;
+        } else if (action === "confirm_expense") {
+          const categoryMap: Record<string, string> = {
+            EXPENSE_SALARY: "SALARY_ADVANCE", EXPENSE_RENT: "SHOP_MAINTENANCE",
+            EXPENSE_UTILITY: "UTILITIES", EXPENSE_DELIVERY: "DELIVERY",
+            EXPENSE_TRANSPORT: "TRANSPORT", EXPENSE_OTHER: "MISCELLANEOUS",
+          };
+          await prisma.expense.create({
+            data: {
+              date: t.date, amount: t.amount,
+              category: (categoryMap[category || ""] || "MISCELLANEOUS") as "SALARY_ADVANCE" | "SHOP_MAINTENANCE" | "UTILITIES" | "DELIVERY" | "TRANSPORT" | "MISCELLANEOUS",
+              description: t.description, paidBy: "Bank Transfer", paymentMode: "NEFT",
+              referenceNo: t.reference, notes: "Auto-recorded from bank statement",
+              recordedById: userId,
+            },
+          });
+          await prisma.bankTransaction.update({
+            where: { id: t.id },
+            data: { matchStatus: "EXPENSE", processedAt: new Date() },
+          });
+          processed++;
+        } else if (action === "confirm_payment" && vendorId) {
+          const payment = await prisma.vendorPayment.create({
+            data: {
+              vendorId, billId: null, amount: t.amount,
+              paymentMode: t.reference?.startsWith("UPI") ? "UPI" : t.reference?.startsWith("NEFT") || t.reference?.startsWith("RTGS") ? "NEFT" : "CHEQUE",
+              paymentDate: t.date, referenceNo: t.reference || t.description.slice(0, 50),
+              notes: "Auto-recorded from bank statement", recordedById: userId,
+            },
+          });
+          await prisma.bankTransaction.update({
+            where: { id: t.id },
+            data: { matchStatus: "MATCHED", confirmedVendorId: vendorId, confirmedPaymentId: payment.id, processedAt: new Date() },
+          });
+          processed++;
+        }
+      }
+      return successResponse({ action, processed });
+    }
+
+    // Single transaction flow
+    const singleId = ids[0];
     const txn = await prisma.bankTransaction.findFirst({
-      where: { id: txnId, statementId: id },
+      where: { id: singleId, statementId: id },
     });
     if (!txn) return errorResponse("Transaction not found", 404);
 
