@@ -730,6 +730,13 @@ export default function DeliveriesPage() {
                         <p className="text-sm font-semibold text-slate-900">{d.invoiceNo}</p>
                       </Link>
                       <p className="text-xs text-slate-600">{d.customerName}</p>
+                      {items.length > 0 && (
+                        <p className="text-[10px] text-slate-700 font-medium mt-0.5">
+                          {items.map((item, i) => (
+                            <span key={i}>{item.name}{item.quantity > 1 ? ` x${item.quantity}` : ""}{i < items.length - 1 ? ", " : ""}</span>
+                          ))}
+                        </p>
+                      )}
                       {d.salesPerson && (
                         <p className="text-[10px] text-purple-600">Sales: {d.salesPerson}</p>
                       )}
@@ -760,16 +767,6 @@ export default function DeliveriesPage() {
                       )}
                     </div>
                   </div>
-
-                  {/* Line items preview */}
-                  {items.length > 0 && (
-                    <div className="text-[10px] text-slate-500 mb-1.5">
-                      {items.slice(0, 2).map((item, i) => (
-                        <span key={i}>{item.name} x{item.quantity}{i < Math.min(items.length, 2) - 1 ? " | " : ""}</span>
-                      ))}
-                      {items.length > 2 && <span className="text-slate-400"> +{items.length - 2} more</span>}
-                    </div>
-                  )}
 
                   {/* Scheduled info / inline date editor */}
                   {d.scheduledDate && editingDateId !== d.id && (
