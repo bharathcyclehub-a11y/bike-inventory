@@ -3,13 +3,16 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { ArrowLeft, Camera, CheckCircle2, Loader2, Search } from "lucide-react";
+import { ArrowLeft, Camera, CheckCircle2, Loader2, Search, X, Plus, ImageIcon } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import { uploadImage } from "@/lib/supabase";
 
 type Condition = "EXCELLENT" | "GOOD" | "FAIR" | "SCRAP";
+
+const MAX_PHOTOS = 5;
 
 const CONDITIONS: { value: Condition; label: string; color: string }[] = [
   { value: "EXCELLENT", label: "Excellent", color: "bg-green-100 border-green-400 text-green-700" },
@@ -17,6 +20,42 @@ const CONDITIONS: { value: Condition; label: string; color: string }[] = [
   { value: "FAIR", label: "Fair", color: "bg-amber-100 border-amber-400 text-amber-700" },
   { value: "SCRAP", label: "Scrap", color: "bg-red-100 border-red-400 text-red-700" },
 ];
+
+/** Compress an image file to a blob (800px max, JPEG 0.7 quality) */
+function compressImage(file: File): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Failed to load image"));
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const maxSize = 800;
+        let w = img.width;
+        let h = img.height;
+        if (w > maxSize || h > maxSize) {
+          if (w > h) { h = (h / w) * maxSize; w = maxSize; }
+          else { w = (w / h) * maxSize; h = maxSize; }
+        }
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(img, 0, 0, w, h);
+        canvas.toBlob(
+          (blob) => {
+            if (blob) resolve(blob);
+            else reject(new Error("Compression failed"));
+          },
+          "image/jpeg",
+          0.7
+        );
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function NewSecondHandPage() {
   const router = useRouter();
@@ -31,7 +70,8 @@ export default function NewSecondHandPage() {
   const [cycleName, setCycleName] = useState("");
   const [condition, setCondition] = useState<Condition | "">("");
   const [costPrice, setCostPrice] = useState("");
-  const [photoUrl, setPhotoUrl] = useState("");
+  const [photos, setPhotos] = useState<File[]>([]);
+  const [previews, setPreviews] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
 
   // UI state
@@ -67,42 +107,66 @@ export default function NewSecondHandPage() {
     }
   };
 
-  // Handle photo capture
+  // Handle adding photos (camera or gallery)
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    // Compress and convert to base64
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const maxSize = 800;
-        let w = img.width;
-        let h = img.height;
-        if (w > maxSize || h > maxSize) {
-          if (w > h) { h = (h / w) * maxSize; w = maxSize; }
-          else { w = (w / h) * maxSize; h = maxSize; }
-        }
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext("2d")!;
-        ctx.drawImage(img, 0, 0, w, h);
-        setPhotoUrl(canvas.toDataURL("image/jpeg", 0.7));
+    const remaining = MAX_PHOTOS - photos.length;
+    const newFiles = Array.from(files).slice(0, remaining);
+
+    // Generate previews for new files
+    newFiles.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setPreviews((prev) => [...prev, reader.result as string]);
       };
-      img.src = reader.result as string;
-    };
-    reader.readAsDataURL(file);
+      reader.readAsDataURL(file);
+    });
+
+    setPhotos((prev) => [...prev, ...newFiles]);
+
+    // Reset input so the same file can be selected again
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const isValid = cycleName && condition && costPrice && parseFloat(costPrice) > 0 && photoUrl && customerName;
+  const removePhoto = (index: number) => {
+    setPhotos((prev) => prev.filter((_, i) => i !== index));
+    setPreviews((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const isValid = cycleName && condition && costPrice && parseFloat(costPrice) > 0 && photos.length >= 1 && customerName;
 
   const handleSubmit = async () => {
     if (!isValid) return;
     setSubmitting(true);
     setError("");
     try {
+      // First, create the cycle to get the SKU
+      // We need the SKU for the image path, so create without photos first,
+      // then upload images, then update with URLs.
+      // OR: generate a temporary ID for the path.
+      // Simpler: use a timestamp-based path, then update after creation.
+
+      // Generate a temporary unique prefix for upload paths
+      const tempPrefix = `sh-${Date.now()}`;
+
+      // Compress and upload all photos to Supabase
+      const uploadedUrls: string[] = [];
+      for (let i = 0; i < photos.length; i++) {
+        const compressed = await compressImage(photos[i]);
+        const file = new File([compressed], `${i}.jpg`, { type: "image/jpeg" });
+        const path = `second-hand/${tempPrefix}/${i}.jpg`;
+        const url = await uploadImage(file, path);
+        uploadedUrls.push(url);
+      }
+
+      if (uploadedUrls.length === 0) {
+        setError("Failed to upload images");
+        setSubmitting(false);
+        return;
+      }
+
       const res = await fetch("/api/second-hand", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -110,7 +174,8 @@ export default function NewSecondHandPage() {
           name: cycleName,
           condition,
           costPrice: parseFloat(costPrice),
-          photoUrl,
+          photoUrl: uploadedUrls[0],
+          photoUrls: uploadedUrls,
           customerName,
           customerPhone: customerPhone || undefined,
           zohoInvoiceNo: zohoInvoiceNo || undefined,
@@ -152,7 +217,8 @@ export default function NewSecondHandPage() {
             setCycleName("");
             setCondition("");
             setCostPrice("");
-            setPhotoUrl("");
+            setPhotos([]);
+            setPreviews([]);
             setCustomerName("");
             setCustomerPhone("");
             setZohoInvoiceNo("");
@@ -239,28 +305,57 @@ export default function NewSecondHandPage() {
           <p className="text-[10px] text-slate-400 mt-0.5">Amount given to customer for old cycle</p>
         </div>
 
-        {/* Photo (mandatory) */}
+        {/* Photos (up to 5, first required) */}
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">Photo *</label>
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            Photos * <span className="text-slate-400 font-normal">({photos.length}/{MAX_PHOTOS})</span>
+          </label>
           <input ref={fileInputRef} type="file" accept="image/*" capture="environment"
             onChange={handlePhotoCapture} className="hidden" />
 
-          {photoUrl ? (
-            <div className="relative">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={photoUrl} alt="Cycle photo" className="w-full h-48 object-cover rounded-lg border border-slate-200" />
-              <button type="button" onClick={() => fileInputRef.current?.click()}
-                className="absolute bottom-2 right-2 bg-white/90 backdrop-blur px-3 py-1.5 rounded-lg text-xs font-medium text-slate-700 shadow">
-                Retake
+          <div className="grid grid-cols-3 gap-2">
+            {/* Existing photo previews */}
+            {previews.map((preview, index) => (
+              <div key={index} className="relative aspect-square rounded-lg overflow-hidden border border-slate-200 bg-slate-100">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={preview} alt={`Photo ${index + 1}`} className="w-full h-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => removePhoto(index)}
+                  className="absolute top-1 right-1 bg-black/60 text-white rounded-full p-0.5"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+                {index === 0 && (
+                  <span className="absolute bottom-1 left-1 bg-orange-600 text-white text-[9px] px-1.5 py-0.5 rounded font-medium">
+                    Main
+                  </span>
+                )}
+              </div>
+            ))}
+
+            {/* Add photo slot */}
+            {photos.length < MAX_PHOTOS && (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="aspect-square border-2 border-dashed border-orange-300 rounded-lg flex flex-col items-center justify-center gap-1 bg-orange-50/50 hover:bg-orange-50 transition-colors"
+              >
+                {photos.length === 0 ? (
+                  <>
+                    <Camera className="h-6 w-6 text-orange-400" />
+                    <span className="text-[10px] font-medium text-orange-600">Take Photo</span>
+                  </>
+                ) : (
+                  <>
+                    <Plus className="h-5 w-5 text-orange-400" />
+                    <span className="text-[10px] font-medium text-orange-600">Add More</span>
+                  </>
+                )}
               </button>
-            </div>
-          ) : (
-            <button type="button" onClick={() => fileInputRef.current?.click()}
-              className="w-full h-32 border-2 border-dashed border-orange-300 rounded-lg flex flex-col items-center justify-center gap-2 bg-orange-50/50 hover:bg-orange-50 transition-colors">
-              <Camera className="h-8 w-8 text-orange-400" />
-              <span className="text-xs font-medium text-orange-600">Tap to take photo</span>
-            </button>
-          )}
+            )}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">First photo is required. Up to {MAX_PHOTOS} photos.</p>
         </div>
 
         {/* Notes */}
@@ -275,7 +370,7 @@ export default function NewSecondHandPage() {
 
         <Button type="button" size="lg" disabled={!isValid || submitting} onClick={handleSubmit}
           className="w-full bg-orange-600 hover:bg-orange-700">
-          {submitting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Adding...</> : "Add Second-Hand Cycle"}
+          {submitting ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Uploading & Saving...</> : "Add Second-Hand Cycle"}
         </Button>
       </div>
     </div>

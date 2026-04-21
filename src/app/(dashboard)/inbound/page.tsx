@@ -33,7 +33,7 @@ interface Stats {
   deliveredThisMonth: number;
 }
 
-type StatusFilter = "ALL" | "IN_TRANSIT" | "arriving_this_week" | "DELIVERED";
+type StatusFilter = "ALL" | "IN_TRANSIT" | "PARTIALLY_DELIVERED" | "arriving_this_week" | "DELIVERED";
 
 function formatINR(n: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
@@ -157,6 +157,7 @@ export default function InboundPage() {
         {([
           { key: "ALL", label: "All" },
           { key: "IN_TRANSIT", label: "In Transit" },
+          { key: "PARTIALLY_DELIVERED", label: "Partial" },
           { key: "arriving_this_week", label: "This Week" },
           { key: "DELIVERED", label: "Delivered" },
         ] as { key: StatusFilter; label: string }[]).map((f) => (

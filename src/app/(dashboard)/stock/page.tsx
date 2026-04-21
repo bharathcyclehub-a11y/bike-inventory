@@ -227,10 +227,12 @@ export default function StockPage() {
       setFetchPullId(pullId);
 
       setFetchProgress("Pulling items from Zoho (this may take a moment)...");
-      const itemRes = await fetch("/api/zoho/trigger-pull", {
+      const itemRaw = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "items", pullId, fullImport: true }),
-      }).then(r => r.json());
+        body: JSON.stringify({ step: "items", pullId }),
+      });
+      if (!itemRaw.ok) throw new Error(`Zoho fetch failed (${itemRaw.status}). Try again.`);
+      const itemRes = await itemRaw.json();
       if (!itemRes.success) throw new Error(itemRes.error || "Items fetch failed");
 
       const found = itemRes.data.itemsNew || 0;

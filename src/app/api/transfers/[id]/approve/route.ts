@@ -11,7 +11,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth(["ADMIN"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
     const { id } = await params;
     const body = await req.json();
     const { action } = body; // "approve" or "reject"

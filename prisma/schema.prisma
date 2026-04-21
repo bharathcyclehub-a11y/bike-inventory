@@ -936,7 +936,8 @@ model SecondHandCycle {
   status          String    @default("IN_STOCK") // IN_STOCK, SOLD
   costPrice       Float               // Exchange price
   sellingPrice    Float?              // Set by admin after service
-  photoUrl        String              // Base64 data URL or external URL
+  photoUrl        String              // Primary image URL (thumbnail)
+  photoUrls       String[]            // All image URLs including primary
 
   // Source (who traded in)
   customerName    String

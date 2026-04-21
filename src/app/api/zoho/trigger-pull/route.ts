@@ -69,10 +69,10 @@ export async function POST(req: NextRequest) {
 
     if (!existingPullId) return errorResponse("pullId required", 400);
 
-    // Default last sync — 30 days ago
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const defaultLastSync = thirtyDaysAgo.toISOString().slice(0, 10);
+    // Default last sync — 7 days ago
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const defaultLastSync = sevenDaysAgo.toISOString().slice(0, 10);
     const todayStr = new Date().toISOString().slice(0, 10);
 
     // ─── ITEMS: via Zoho Inventory (fallback Books) ───
@@ -91,8 +91,9 @@ export async function POST(req: NextRequest) {
           source = "inventory";
           const invConfig = await prisma.zohoInventoryConfig.findUnique({ where: { id: "singleton" } });
           const lastSync = invConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
-          const items = await inventory.listAllItems("active", fullImport ? undefined : lastSync);
-          apiCalls += Math.ceil(items.length / 200) || 1;
+          const allItems = await inventory.listAllItems("active", fullImport ? undefined : lastSync);
+          apiCalls += Math.ceil(allItems.length / 200) || 1;
+          const items = allItems.filter(item => Number(item.stock_on_hand || 0) > 0);
 
           for (const item of items) {
             const zohoBrand = String(item.brand || item.manufacturer || "").trim();
@@ -142,8 +143,9 @@ export async function POST(req: NextRequest) {
             source = "books";
             const booksConfig = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
             const lastSync = booksConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
-            const items = await zoho.listAllItems("active", fullImport ? undefined : lastSync);
-            apiCalls += Math.ceil(items.length / 200) || 1;
+            const allItems = await zoho.listAllItems("active", fullImport ? undefined : lastSync);
+            apiCalls += Math.ceil(allItems.length / 200) || 1;
+            const items = allItems.filter(item => Number(item.stock_on_hand || 0) > 0);
 
             for (const item of items) {
               const zohoItem = item as Record<string, unknown>;

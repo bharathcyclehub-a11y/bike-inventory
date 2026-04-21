@@ -29,9 +29,9 @@ export default function NewInwardPage() {
   const router = useRouter();
   const role = (session?.user as { role?: string })?.role || "";
 
-  // Only ADMIN can manually record inwards — staff use Zoho verification flow
+  // ADMIN, SUPERVISOR, and INWARDS_CLERK can manually record inwards
   useEffect(() => {
-    if (session && role !== "ADMIN") router.replace("/inwards");
+    if (session && !["ADMIN", "SUPERVISOR", "INWARDS_CLERK"].includes(role)) router.replace("/inwards");
   }, [session, role, router]);
 
   const [search, setSearch] = useState("");

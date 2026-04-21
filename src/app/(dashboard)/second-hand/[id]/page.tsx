@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
-import { ArrowLeft, Bike, Loader2, Phone, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Bike, Loader2, Phone, CheckCircle2, X, ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,7 @@ interface SecondHandDetail {
   costPrice: number;
   sellingPrice: number | null;
   photoUrl: string;
+  photoUrls: string[];
   customerName: string;
   customerPhone: string | null;
   zohoInvoiceNo: string | null;
@@ -53,6 +54,9 @@ export default function SecondHandDetailPage({ params }: { params: Promise<{ id:
 
   const [cycle, setCycle] = useState<SecondHandDetail | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Image gallery state
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   // Edit states
   const [sellingPrice, setSellingPrice] = useState("");
@@ -137,6 +141,14 @@ export default function SecondHandDetailPage({ params }: { params: Promise<{ id:
     );
   }
 
+  // Build the image list: prefer photoUrls, fall back to single photoUrl
+  const images: string[] =
+    cycle.photoUrls && cycle.photoUrls.length > 0
+      ? cycle.photoUrls
+      : cycle.photoUrl
+        ? [cycle.photoUrl]
+        : [];
+
   const margin = cycle.sellingPrice ? cycle.sellingPrice - cycle.costPrice : null;
 
   return (
@@ -154,17 +166,100 @@ export default function SecondHandDetailPage({ params }: { params: Promise<{ id:
         </div>
       </div>
 
-      {/* Photo */}
-      <div className="rounded-xl overflow-hidden mb-4 bg-slate-100">
-        {cycle.photoUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={cycle.photoUrl} alt={cycle.name} className="w-full h-64 object-cover" />
-        ) : (
+      {/* Image Gallery */}
+      {images.length > 0 ? (
+        <div className="mb-4">
+          {/* Main image (first) */}
+          <div
+            className="rounded-xl overflow-hidden bg-slate-100 cursor-pointer"
+            onClick={() => setLightboxIndex(0)}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={images[0]} alt={cycle.name} className="w-full h-64 object-cover" />
+          </div>
+
+          {/* Thumbnail strip (horizontal scroll) */}
+          {images.length > 1 && (
+            <div className="flex gap-2 mt-2 overflow-x-auto pb-1 scrollbar-hide">
+              {images.map((url, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => setLightboxIndex(i)}
+                  className="shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 border-slate-200 hover:border-orange-400 transition-colors"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-xl overflow-hidden mb-4 bg-slate-100">
           <div className="w-full h-48 flex items-center justify-center">
             <Bike className="h-12 w-12 text-slate-300" />
           </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* Lightbox Modal */}
+      {lightboxIndex !== null && images.length > 0 && (
+        <div
+          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
+          onClick={() => setLightboxIndex(null)}
+        >
+          {/* Close button */}
+          <button
+            className="absolute top-4 right-4 text-white/80 hover:text-white z-10"
+            onClick={() => setLightboxIndex(null)}
+          >
+            <X className="h-7 w-7" />
+          </button>
+
+          {/* Previous */}
+          {images.length > 1 && (
+            <button
+              className="absolute left-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white z-10 p-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightboxIndex((lightboxIndex - 1 + images.length) % images.length);
+              }}
+            >
+              <ChevronLeft className="h-8 w-8" />
+            </button>
+          )}
+
+          {/* Image */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={images[lightboxIndex]}
+            alt={`Photo ${lightboxIndex + 1}`}
+            className="max-h-[85vh] max-w-[95vw] object-contain"
+            onClick={(e) => e.stopPropagation()}
+          />
+
+          {/* Next */}
+          {images.length > 1 && (
+            <button
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-white/70 hover:text-white z-10 p-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                setLightboxIndex((lightboxIndex + 1) % images.length);
+              }}
+            >
+              <ChevronRight className="h-8 w-8" />
+            </button>
+          )}
+
+          {/* Counter */}
+          {images.length > 1 && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/80 text-sm">
+              {lightboxIndex + 1} / {images.length}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Details */}
       <Card className="mb-3">

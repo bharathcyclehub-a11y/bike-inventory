@@ -22,50 +22,95 @@ export async function PUT(
 
     const existing = await prisma.inboundShipment.findUnique({
       where: { id },
-      include: { lineItems: true },
+      include: { lineItems: true, brand: { select: { name: true } } },
     });
 
     if (!existing) return errorResponse("Not found", 404);
     if (existing.status === "DELIVERED") return errorResponse("Already delivered", 400);
 
-    // Mark all line items as delivered if full delivery
-    if (status === "DELIVERED") {
-      await prisma.inboundLineItem.updateMany({
-        where: { shipmentId: id },
-        data: { isDelivered: true },
-      });
+    const updated = await prisma.$transaction(async (tx) => {
+      // Mark all line items as delivered if full delivery
+      if (status === "DELIVERED") {
+        await tx.inboundLineItem.updateMany({
+          where: { shipmentId: id },
+          data: { isDelivered: true },
+        });
 
-      // Set deliveredQty = quantity for items not yet marked
-      for (const li of existing.lineItems) {
-        if (!li.isDelivered) {
-          await prisma.inboundLineItem.update({
-            where: { id: li.id },
-            data: { deliveredQty: li.quantity },
+        // Set deliveredQty = quantity for items not yet marked
+        for (const li of existing.lineItems) {
+          if (!li.isDelivered) {
+            await tx.inboundLineItem.update({
+              where: { id: li.id },
+              data: { deliveredQty: li.quantity },
+            });
+          }
+        }
+      }
+
+      // Add stock for delivered line items
+      const deliveredItems = status === "DELIVERED"
+        ? existing.lineItems
+        : existing.lineItems.filter((li) => li.isDelivered);
+
+      for (const li of deliveredItems) {
+        const qty = li.deliveredQty ?? li.quantity;
+        if (qty <= 0) continue;
+
+        // Find product by name (fuzzy match using first 20 chars)
+        const searchName = li.productName.substring(0, 20);
+        const matchedProduct = li.productId
+          ? await tx.product.findUnique({ where: { id: li.productId } })
+          : await tx.product.findFirst({
+              where: { name: { contains: searchName, mode: "insensitive" } },
+            });
+
+        if (matchedProduct) {
+          const previousStock = matchedProduct.currentStock;
+          const newStock = previousStock + qty;
+
+          await tx.product.update({
+            where: { id: matchedProduct.id },
+            data: { currentStock: newStock },
+          });
+
+          await tx.inventoryTransaction.create({
+            data: {
+              type: "INWARD",
+              productId: matchedProduct.id,
+              quantity: qty,
+              previousStock,
+              newStock,
+              referenceNo: existing.shipmentNo,
+              notes: `[INBOUND] Brand: ${existing.brand.name} | Bill: ${existing.billNo} | ${li.productName} x${qty}`,
+              userId: user.id,
+            },
           });
         }
       }
-    }
 
-    const updated = await prisma.inboundShipment.update({
-      where: { id },
-      data: {
-        status,
-        deliveredAt: new Date(),
-        deliveredById: user.id,
-      },
-      include: {
-        brand: { select: { name: true } },
-        lineItems: true,
-      },
-    });
-
-    // Fulfill matched pre-bookings
-    if (status === "DELIVERED") {
-      await prisma.preBooking.updateMany({
-        where: { matchedShipmentId: id, status: "MATCHED" },
-        data: { status: "FULFILLED", fulfilledAt: new Date() },
+      const result = await tx.inboundShipment.update({
+        where: { id },
+        data: {
+          status,
+          deliveredAt: new Date(),
+          deliveredById: user.id,
+        },
+        include: {
+          brand: { select: { name: true } },
+          lineItems: true,
+        },
       });
-    }
+
+      // Fulfill matched pre-bookings
+      if (status === "DELIVERED") {
+        await tx.preBooking.updateMany({
+          where: { matchedShipmentId: id, status: "MATCHED" },
+          data: { status: "FULFILLED", fulfilledAt: new Date() },
+        });
+      }
+
+      return result;
+    });
 
     return successResponse(updated);
   } catch (error) {

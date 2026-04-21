@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { ArrowLeft, Camera, Loader2, CheckCircle2, Trash2, Sparkles, Edit3 } from "lucide-react";
+import { ArrowLeft, Camera, Loader2, CheckCircle2, Trash2, Edit3 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,7 +25,7 @@ interface LineItem {
   hsn?: string;
 }
 
-type Step = "brand" | "photo" | "extracting" | "verify" | "submitting" | "done";
+type Step = "brand" | "photo" | "verify" | "submitting" | "done";
 
 export default function NewInboundPage() {
   const router = useRouter();
@@ -73,46 +73,11 @@ export default function NewInboundPage() {
         const ctx = canvas.getContext("2d")!;
         ctx.drawImage(img, 0, 0, w, h);
         setBillImageUrl(canvas.toDataURL("image/jpeg", 0.8));
-        setStep("photo");
+        setStep("verify");
       };
       img.src = reader.result as string;
     };
     reader.readAsDataURL(file);
-  };
-
-  // AI Extract
-  const handleExtract = async () => {
-    setStep("extracting");
-    setError("");
-    try {
-      const res = await fetch("/api/inbound/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: billImageUrl }),
-      }).then((r) => r.json());
-
-      if (res.success && res.data) {
-        const d = res.data;
-        if (d.billNo) setBillNo(d.billNo);
-        if (d.billDate) setBillDate(d.billDate);
-        if (d.lineItems?.length > 0) {
-          setLineItems(d.lineItems.map((li: LineItem) => ({
-            productName: li.productName || (li as unknown as Record<string, unknown>).name || "",
-            quantity: li.quantity || 1,
-            rate: li.rate || 0,
-            amount: li.amount || 0,
-            hsn: li.hsn || "",
-          })));
-        }
-        setStep("verify");
-      } else {
-        setError(res.error || "AI could not read the bill. Enter details manually.");
-        setStep("verify");
-      }
-    } catch {
-      setError("Failed to extract. Enter details manually.");
-      setStep("verify");
-    }
   };
 
   // Manual add row
@@ -222,7 +187,7 @@ export default function NewInboundPage() {
         <Link href="/inbound" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <div>
           <h1 className="text-lg font-bold text-slate-900">Upload Brand Bill</h1>
-          <p className="text-xs text-slate-500">AI reads the bill → you verify → track delivery</p>
+          <p className="text-xs text-slate-500">Upload bill photo → enter details → track delivery</p>
         </div>
       </div>
 
@@ -264,21 +229,6 @@ export default function NewInboundPage() {
                 <span className="text-xs font-medium text-indigo-600">Tap to take photo of bill</span>
               </button>
             )}
-          </div>
-        )}
-
-        {/* AI Extract button */}
-        {billImageUrl && step === "photo" && (
-          <Button onClick={handleExtract} className="w-full bg-indigo-600 hover:bg-indigo-700" size="lg">
-            <Sparkles className="h-4 w-4 mr-2" /> Read Bill with AI
-          </Button>
-        )}
-
-        {/* Extracting */}
-        {step === "extracting" && (
-          <div className="flex items-center justify-center py-8 gap-3">
-            <Loader2 className="h-5 w-5 animate-spin text-indigo-500" />
-            <span className="text-sm text-slate-600">AI is reading the bill...</span>
           </div>
         )}
 
