@@ -53,22 +53,36 @@ export async function POST(req: NextRequest) {
     }
 
     if (!text || text.trim().length < 20) {
-      return errorResponse("File appears empty or unreadable. Ensure it's a valid CSV/XLS bank statement.", 400);
+      return errorResponse(`File appears empty or unreadable (${text?.length || 0} chars). Ensure it's a valid CSV/XLS bank statement. File: ${file.name} (${Math.round(file.size / 1024)}KB)`, 400);
     }
+
+    // Log first few lines for debugging
+    const firstLines = text.split("\n").slice(0, 5).join(" | ");
+    console.log(`[BankStatement] File: ${file.name}, Size: ${file.size}, Bank: ${bank}, First lines: ${firstLines.slice(0, 200)}`);
 
     // Get Claude API key from settings
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return errorResponse("Claude API key not configured. Add ANTHROPIC_API_KEY to .env", 400);
 
-    // Parse the CSV/XLS content using Claude
-    const parsePrompt = `You are a bank statement parser. Parse the following ${bank} bank statement CSV/text data and extract transactions.
+    // Parse the CSV/XLS content using Claude — bank-specific hints
+    const bankHints = bank === "ICICI"
+      ? `ICICI bank statements typically have columns: S No., Value Date, Transaction Date, Cheque Number, Transaction Remarks, Withdrawal Amount (Dr), Deposit Amount (Cr), Balance. The date format is usually DD/MM/YYYY or DD-MM-YYYY. Some ICICI statements have headers spread across multiple rows or have a summary section at top — skip those and find the actual transaction rows.`
+      : bank === "HDFC"
+      ? `HDFC bank statements typically have columns: Date, Narration, Chq./Ref.No., Value Dt, Withdrawal Amt., Deposit Amt., Closing Balance. The date format is usually DD/MM/YY or DD/MM/YYYY.`
+      : `Parse the bank statement based on common column patterns.`;
+
+    const parsePrompt = `You are an expert bank statement parser. Parse the following ${bank} bank statement data and extract ALL transactions.
+
+${bankHints}
+
+IMPORTANT: The data may have header rows, summary sections, or irregular formatting. Skip non-transaction rows (headers, totals, blank rows, account info). Focus ONLY on actual transaction rows with dates and amounts.
 
 Return a JSON array of transactions with this exact structure:
 [
   {
     "date": "YYYY-MM-DD",
-    "description": "transaction description",
-    "reference": "cheque/utr/ref number if available",
+    "description": "transaction description/narration",
+    "reference": "cheque/utr/ref number if available, else empty string",
     "amount": 1234.56,
     "type": "CREDIT" or "DEBIT",
     "balance": 5678.90
@@ -76,15 +90,17 @@ Return a JSON array of transactions with this exact structure:
 ]
 
 Rules:
-- Extract ALL transactions from the data
-- Date must be YYYY-MM-DD format
-- Amount must be a positive number
-- Type is CREDIT for deposits/incoming, DEBIT for withdrawals/outgoing
-- Balance is the closing balance after that transaction (if available, else null)
-- Reference is the cheque number, UTR, or transaction reference
-- Return ONLY the JSON array, no other text
+- Extract ALL transaction rows — do not skip any
+- Convert dates to YYYY-MM-DD format (input might be DD/MM/YYYY, DD-MM-YYYY, DD/MM/YY etc.)
+- Amount MUST be a positive number (never negative)
+- If there are separate Withdrawal/Deposit columns, use Withdrawal for DEBIT and Deposit for CREDIT
+- If there's a single amount column, determine type from context or separate Dr/Cr indicator
+- Balance is the closing balance after that transaction (null if not available)
+- Reference: extract cheque number, UTR, NEFT ref, or transaction ID
+- Return ONLY the JSON array, no markdown, no explanation
+- If you cannot find any transactions, return an empty array []
 
-Bank statement data:
+Bank statement data (${bank}):
 ${text.slice(0, 50000)}`;
 
     // Helper: call Claude with retry for overloaded errors
@@ -117,8 +133,14 @@ ${text.slice(0, 50000)}`;
       return { ok: false, error: "AI service unavailable. Please try again later." };
     };
 
+    // Diagnostic info for error reporting
+    const filePreview = text.split("\n").slice(0, 10).join("\n");
+    const fileStats = { name: file.name, size: `${Math.round(file.size / 1024)}KB`, lines: text.split("\n").length, chars: text.length };
+
     const claudeResult = await callClaude(parsePrompt);
-    if (!claudeResult.ok) return errorResponse(claudeResult.error, 503);
+    if (!claudeResult.ok) {
+      return Response.json({ success: false, error: claudeResult.error, diagnostics: { step: "ai_call", fileStats, filePreview } }, { status: 503 });
+    }
 
     const claudeData = claudeResult.data as { content?: Array<{ text?: string }> };
     const responseText = claudeData.content?.[0]?.text || "";
@@ -135,11 +157,25 @@ ${text.slice(0, 50000)}`;
         transactions = JSON.parse(jsonMatch[0]);
       }
     } catch {
-      return errorResponse("Failed to parse Claude response as JSON", 500);
+      return Response.json({
+        success: false,
+        error: "AI returned invalid JSON. Try re-uploading or use a different file format.",
+        diagnostics: { step: "json_parse", fileStats, filePreview, aiResponse: responseText.slice(0, 500) },
+      }, { status: 500 });
     }
 
     if (transactions.length === 0) {
-      return errorResponse("No transactions found in the uploaded file", 400);
+      return Response.json({
+        success: false,
+        error: "No transactions found in the uploaded file.",
+        diagnostics: {
+          step: "no_transactions",
+          fileStats,
+          filePreview,
+          aiResponse: responseText.slice(0, 500),
+          hint: responseText.includes("[]") ? "AI returned empty array — file format may not be a standard bank statement" : "AI could not identify transaction rows in the data",
+        },
+      }, { status: 400 });
     }
 
     // Calculate totals
