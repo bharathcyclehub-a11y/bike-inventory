@@ -111,13 +111,16 @@ export default function DeliveriesPage() {
   const [searchError, setSearchError] = useState("");
   const [searchProgress, setSearchProgress] = useState("");
 
-  // Bulk Fetch (last 24h — existing flow)
-  const [fetchStep, setFetchStep] = useState<"idle" | "fetching" | "selecting" | "importing">("idle");
+  // Bulk Fetch (date-range based flow)
+  const [fetchStep, setFetchStep] = useState<"idle" | "pickDate" | "fetching" | "selecting" | "importing">("idle");
   const [invoicePreviews, setInvoicePreviews] = useState<ZohoInvoicePreview[]>([]);
   const [selectedInvoices, setSelectedInvoices] = useState<Set<string>>(new Set());
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
   const [fetchProgress, setFetchProgress] = useState("");
+  const [fetchDays, setFetchDays] = useState<number>(7);
+  const [fetchCustomFrom, setFetchCustomFrom] = useState("");
+  const [fetchCustomTo, setFetchCustomTo] = useState("");
 
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -342,7 +345,7 @@ export default function DeliveriesPage() {
     }
   };
 
-  // ─── BULK FETCH (last 24h, existing pipeline) ───
+  // ─── BULK FETCH (date-range based, pipeline) ───
   const handleFetchInvoices = async () => {
     setFetchStep("fetching");
     setFetchError("");
@@ -358,11 +361,19 @@ export default function DeliveriesPage() {
       const pullId = initData.data.pullId;
       setFetchPullId(pullId);
 
-      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-      setFetchProgress("Pulling invoices (last 24h)...");
+      let fromDate: string;
+      if (fetchDays === -1 && fetchCustomFrom) {
+        fromDate = fetchCustomFrom;
+      } else {
+        const fromDateObj = new Date();
+        fromDateObj.setDate(fromDateObj.getDate() - fetchDays);
+        fromDate = fromDateObj.toISOString().slice(0, 10);
+      }
+      const label = fetchDays === -1 ? "custom range" : `last ${fetchDays} days`;
+      setFetchProgress(`Pulling invoices (${label})...`);
       const invRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "invoices", pullId, fromDate: yesterday }),
+        body: JSON.stringify({ step: "invoices", pullId, fromDate }),
       });
       if (!invRes.ok) throw new Error(`Fetch failed (${invRes.status}). Try again.`);
       const invData = await invRes.json();
@@ -519,10 +530,10 @@ export default function DeliveriesPage() {
                 {searchStep === "searching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
                 Search
               </button>
-              <button onClick={handleFetchInvoices}
-                disabled={fetchStep === "fetching" || fetchStep === "importing"}
+              <button onClick={() => setFetchStep("pickDate")}
+                disabled={fetchStep === "fetching" || fetchStep === "importing" || fetchStep === "pickDate"}
                 className="flex items-center gap-1 bg-slate-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
-                title="Fetch all invoices from last 24 hours">
+                title="Fetch invoices from Zoho">
                 {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
                 Fetch
               </button>
@@ -530,6 +541,63 @@ export default function DeliveriesPage() {
           )}
         </div>
       </div>
+
+      {/* Fetch Date Picker */}
+      {fetchStep === "pickDate" && (
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
+          <p className="text-xs font-medium text-slate-700 mb-2">Fetch invoices created in Zoho within:</p>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {[
+              { label: "3 days", value: 3 },
+              { label: "7 days", value: 7 },
+              { label: "14 days", value: 14 },
+              { label: "30 days", value: 30 },
+              { label: "Custom", value: -1 },
+            ].map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setFetchDays(opt.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  fetchDays === opt.value
+                    ? "bg-slate-900 text-white border-slate-900"
+                    : "bg-white text-slate-600 border-slate-300 hover:border-slate-400"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {fetchDays === -1 && (
+            <div className="flex gap-2 mb-3">
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">From</label>
+                <input type="date" value={fetchCustomFrom} onChange={(e) => setFetchCustomFrom(e.target.value)}
+                  className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">To (optional)</label>
+                <input type="date" value={fetchCustomTo} onChange={(e) => setFetchCustomTo(e.target.value)}
+                  className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
+              </div>
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={handleFetchInvoices}
+              disabled={fetchDays === -1 && !fetchCustomFrom}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
+            >
+              <Cloud className="h-3.5 w-3.5" /> Fetch
+            </button>
+            <button
+              onClick={() => setFetchStep("idle")}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-500 border border-slate-300"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Stats Row */}
       {stats && (

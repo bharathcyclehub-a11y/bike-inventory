@@ -111,6 +111,8 @@ export default function StockPage() {
   const [fetchPullId, setFetchPullId] = useState("");
   const [fetchProgress, setFetchProgress] = useState("");
   const [fetchDays, setFetchDays] = useState<number>(7);
+  const [fetchCustomFrom, setFetchCustomFrom] = useState("");
+  const [fetchCustomTo, setFetchCustomTo] = useState("");
 
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -221,10 +223,15 @@ export default function StockPage() {
     setFetchError("");
     setFetchProgress("Connecting to Zoho...");
     try {
-      // Calculate fromDate based on selected days
-      const fromDateObj = new Date();
-      fromDateObj.setDate(fromDateObj.getDate() - fetchDays);
-      const fromDate = fromDateObj.toISOString().slice(0, 10);
+      // Calculate fromDate based on selected days or custom date
+      let fromDate: string;
+      if (fetchDays === -1 && fetchCustomFrom) {
+        fromDate = fetchCustomFrom;
+      } else {
+        const fromDateObj = new Date();
+        fromDateObj.setDate(fromDateObj.getDate() - fetchDays);
+        fromDate = fromDateObj.toISOString().slice(0, 10);
+      }
 
       const initRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -234,7 +241,8 @@ export default function StockPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
-      setFetchProgress(`Pulling items from last ${fetchDays} days...`);
+      const label = fetchDays === -1 ? "custom range" : `last ${fetchDays} days`;
+      setFetchProgress(`Pulling items from ${label}...`);
       const itemRaw = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "items", pullId, fromDate }),
@@ -453,6 +461,7 @@ export default function StockPage() {
               { label: "7 days", value: 7 },
               { label: "14 days", value: 14 },
               { label: "30 days", value: 30 },
+              { label: "Custom", value: -1 },
             ].map((opt) => (
               <button
                 key={opt.value}
@@ -467,10 +476,25 @@ export default function StockPage() {
               </button>
             ))}
           </div>
+          {fetchDays === -1 && (
+            <div className="flex gap-2 mb-3">
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">From</label>
+                <input type="date" value={fetchCustomFrom} onChange={(e) => setFetchCustomFrom(e.target.value)}
+                  className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">To (optional)</label>
+                <input type="date" value={fetchCustomTo} onChange={(e) => setFetchCustomTo(e.target.value)}
+                  className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
+              </div>
+            </div>
+          )}
           <div className="flex gap-2">
             <button
               onClick={handleFetchItems}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white"
+              disabled={fetchDays === -1 && !fetchCustomFrom}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
             >
               <Cloud className="h-3.5 w-3.5" /> Fetch
             </button>
