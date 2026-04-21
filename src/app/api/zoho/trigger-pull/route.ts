@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
         if (inventoryReady) {
           source = "inventory";
           const invConfig = await prisma.zohoInventoryConfig.findUnique({ where: { id: "singleton" } });
-          const lastSync = invConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
+          const lastSync = fromDate || invConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
           const allItems = await inventory.listAllItems("active", fullImport ? undefined : lastSync);
           apiCalls += Math.ceil(allItems.length / 200) || 1;
           const items = allItems.filter(item => Number(item.stock_on_hand || 0) > 0);
@@ -142,7 +142,7 @@ export async function POST(req: NextRequest) {
           if (booksReady) {
             source = "books";
             const booksConfig = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
-            const lastSync = booksConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
+            const lastSync = fromDate || booksConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
             const allItems = await zoho.listAllItems("active", fullImport ? undefined : lastSync);
             apiCalls += Math.ceil(allItems.length / 200) || 1;
             const items = allItems.filter(item => Number(item.stock_on_hand || 0) > 0);

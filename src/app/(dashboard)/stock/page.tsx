@@ -102,12 +102,13 @@ export default function StockPage() {
   const canFetchItems = ["ADMIN", "SUPERVISOR"].includes(userRole);
 
   // Fetch Items from Zoho
-  const [fetchStep, setFetchStep] = useState<"idle" | "fetching" | "selecting" | "importing">("idle");
+  const [fetchStep, setFetchStep] = useState<"idle" | "pickDate" | "fetching" | "selecting" | "importing">("idle");
   const [itemPreviews, setItemPreviews] = useState<Array<{ id: string; zohoId: string; data: { name: string; sku: string; costPrice: number; sellingPrice: number } }>>([]);
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
   const [fetchProgress, setFetchProgress] = useState("");
+  const [fetchDays, setFetchDays] = useState<number>(7);
 
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -218,6 +219,11 @@ export default function StockPage() {
     setFetchError("");
     setFetchProgress("Connecting to Zoho...");
     try {
+      // Calculate fromDate based on selected days
+      const fromDateObj = new Date();
+      fromDateObj.setDate(fromDateObj.getDate() - fetchDays);
+      const fromDate = fromDateObj.toISOString().slice(0, 10);
+
       const initRes = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ step: "init" }),
@@ -226,10 +232,10 @@ export default function StockPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
-      setFetchProgress("Pulling items from Zoho (this may take a moment)...");
+      setFetchProgress(`Pulling items from last ${fetchDays} days...`);
       const itemRaw = await fetch("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "items", pullId }),
+        body: JSON.stringify({ step: "items", pullId, fromDate }),
       });
       if (!itemRaw.ok) throw new Error(`Zoho fetch failed (${itemRaw.status}). Try again.`);
       const itemRes = await itemRaw.json();
@@ -394,9 +400,9 @@ export default function StockPage() {
           {selectMode ? `${selectedIds.size} selected` : "Stock"}
         </h1>
         <div className="flex items-center gap-2">
-          {canFetchItems && !selectMode && (
+          {canFetchItems && !selectMode && fetchStep !== "pickDate" && (
             <button
-              onClick={handleFetchItems}
+              onClick={() => setFetchStep("pickDate")}
               disabled={fetchStep === "fetching" || fetchStep === "importing"}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
             >
@@ -432,6 +438,47 @@ export default function StockPage() {
         <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-2.5 mb-2">
           <span className="text-xs text-green-700 font-medium">{bulkMessage}</span>
           <button onClick={() => setBulkMessage("")} className="text-green-500"><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
+
+      {/* Fetch Date Picker */}
+      {fetchStep === "pickDate" && (
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
+          <p className="text-xs font-medium text-slate-700 mb-2">Fetch items created in Zoho within:</p>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {[
+              { label: "3 days", value: 3 },
+              { label: "7 days", value: 7 },
+              { label: "14 days", value: 14 },
+              { label: "30 days", value: 30 },
+            ].map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setFetchDays(opt.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  fetchDays === opt.value
+                    ? "bg-slate-900 text-white border-slate-900"
+                    : "bg-white text-slate-600 border-slate-300 hover:border-slate-400"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={handleFetchItems}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white"
+            >
+              <Cloud className="h-3.5 w-3.5" /> Fetch
+            </button>
+            <button
+              onClick={() => setFetchStep("idle")}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-500 border border-slate-300"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
