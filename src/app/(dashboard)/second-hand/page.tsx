@@ -220,6 +220,7 @@ export default function SecondHandPage() {
                             </span>
                           )}
                         </div>
+                        <p className="text-[10px] text-slate-400 mt-0.5">{new Date(c.createdAt).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}</p>
                       </div>
                     </div>
                   </CardContent>

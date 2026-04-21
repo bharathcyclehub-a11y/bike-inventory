@@ -35,7 +35,7 @@ export async function GET() {
 // POST/PUT: Upsert brand lead time
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN"]);
+    await requireAuth(["ADMIN", "SUPERVISOR"]);
     const body = await req.json();
     const { brandId, leadDays } = body;
 
