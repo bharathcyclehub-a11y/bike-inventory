@@ -66,11 +66,12 @@ interface PerItemGroup {
 }
 
 type StockView = "list" | "per-item";
-type QuickFilter = "ALL" | "IN_STOCK" | "BICYCLES" | "SPARES" | "ACCESSORIES" | "LOW_STOCK" | "INACTIVE";
+type QuickFilter = "ALL" | "IN_STOCK" | "NO_STOCK" | "BICYCLES" | "SPARES" | "ACCESSORIES" | "LOW_STOCK" | "INACTIVE";
 
 const QUICK_CHIPS: { key: QuickFilter; label: string }[] = [
   { key: "ALL", label: "All" },
   { key: "IN_STOCK", label: "In Stock" },
+  { key: "NO_STOCK", label: "No Stock" },
   { key: "BICYCLES", label: "Bicycles" },
   { key: "SPARES", label: "Spares" },
   { key: "ACCESSORIES", label: "Accessories" },
@@ -334,6 +335,7 @@ export default function StockPage() {
     else if (quickFilter === "ACCESSORIES") { params.set("type", "ACCESSORY"); params.set("status", "ACTIVE"); }
     else if (quickFilter === "INACTIVE") { params.set("status", "INACTIVE"); }
     else if (quickFilter === "IN_STOCK") { params.set("status", "ACTIVE"); params.set("minStock", "1"); }
+    else if (quickFilter === "NO_STOCK") { params.set("status", "ACTIVE"); params.set("maxStock", "0"); }
     else if (quickFilter === "ALL" || quickFilter === "LOW_STOCK") { params.set("status", "ACTIVE"); }
     if (selectedBrand) params.set("brandId", selectedBrand);
     if (selectedSize) params.set("size", selectedSize);

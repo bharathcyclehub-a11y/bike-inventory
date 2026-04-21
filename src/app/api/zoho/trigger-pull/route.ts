@@ -280,12 +280,30 @@ export async function POST(req: NextRequest) {
           const billNumbers = bills.map((b: { bill_number: string }) => b.bill_number);
           const existingBills = await prisma.vendorBill.findMany({
             where: { billNo: { in: billNumbers } },
-            select: { billNo: true },
+            select: { billNo: true, id: true, inboundShipment: { select: { id: true } }, _count: { select: { payments: true } } },
           });
-          const existingSet = new Set(existingBills.map((b) => b.billNo));
+          // Auto-cleanup orphaned VendorBills (no shipment + no payments) so they can be re-fetched
+          const orphanedBillIds = existingBills
+            .filter((b) => !b.inboundShipment && b._count.payments === 0)
+            .map((b) => b.id);
+          if (orphanedBillIds.length > 0) {
+            await prisma.vendorBill.deleteMany({ where: { id: { in: orphanedBillIds } } });
+          }
+          // Only block bills that still have a shipment or payments
+          const existingSet = new Set(
+            existingBills
+              .filter((b) => b.inboundShipment || b._count.payments > 0)
+              .map((b) => b.billNo)
+          );
           const newBills = bills.filter((b: { bill_number: string }) => !existingSet.has(b.bill_number));
 
           if (newBills.length > 0) {
+            // Clean up old preview records for these bills (from previous pulls) so they aren't blocked
+            const newBillZohoIds = newBills.map((b: { bill_id: string }) => b.bill_id);
+            await prisma.zohoPullPreview.deleteMany({
+              where: { zohoId: { in: newBillZohoIds }, entityType: "bill", status: { in: ["APPROVED", "REJECTED"] } },
+            });
+
             await prisma.$transaction(
               newBills.map((bill: { bill_id: string; bill_number: string; vendor_name: string; date: string; due_date: string; total: number; balance: number; status: string }) =>
                 prisma.zohoPullPreview.create({

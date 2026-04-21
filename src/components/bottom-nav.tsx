@@ -9,8 +9,6 @@ import {
   Package,
   MoreHorizontal,
   ArrowRightLeft,
-  QrCode,
-  ClipboardCheck,
   Building2,
   Receipt,
   Truck,
@@ -67,7 +65,7 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "INWARDS_CLERK":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
+        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
         { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
@@ -75,7 +73,7 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "OUTWARDS_CLERK":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
+        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
         { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
@@ -94,8 +92,6 @@ export function BottomNav({ role }: BottomNavProps) {
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";
-    // Exact match for /inwards/new to avoid double-highlight
-    if (href === "/inwards/new") return pathname === href;
     return pathname.startsWith(href);
   }
 

@@ -331,6 +331,7 @@ model Bin {
   transfersFrom TransferOrderItem[] @relation("TransferFromBin")
   transfersTo   TransferOrderItem[] @relation("TransferToBin")
   secondHandCycles SecondHandCycle[] @relation("SecondHandBin")
+  inboundLineItems InboundLineItem[]
 }
 
 model InventoryTransaction {
@@ -519,12 +520,14 @@ model VendorBill {
   nextFollowUpDate DateTime?
   followUpNotes    String?
   notes            String?
+  billedTo         String?        // "HUB" or "CENTRE"
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
   payments           VendorPayment[]
   issues             VendorIssue[]
   suggestedBankTxns  BankTransaction[] @relation("SuggestedBillTxn")
+  inboundShipment    InboundShipment?
 
   @@unique([vendorId, billNo])
   @@index([vendorId])
@@ -1042,7 +1045,7 @@ model InboundShipment {
   brandId               String
   brand                 Brand                 @relation(fields: [brandId], references: [id])
   billNo                String                // Brand's invoice number (from image)
-  billImageUrl          String                @db.Text // Base64 photo of paper bill
+  billImageUrl          String?               @db.Text // Base64 photo of paper bill (optional for Zoho bills)
   billPdfUrl            String?               // Supabase Storage URL for uploaded PDF
   billDate              DateTime
   expectedDeliveryDate  DateTime
@@ -1057,6 +1060,10 @@ model InboundShipment {
   createdBy             User                  @relation("InboundCreatedBy", fields: [createdById], references: [id])
   createdAt             DateTime              @default(now())
   updatedAt             DateTime              @updatedAt
+
+  vendorBillId          String?               @unique
+  vendorBill            VendorBill?           @relation(fields: [vendorBillId], references: [id])
+  zohoBillId            String?               // Zoho Books bill_id
 
   lineItems             InboundLineItem[]
   preBookings           PreBooking[]
@@ -1089,6 +1096,9 @@ model InboundLineItem {
   preBookedInvoiceNo     String?
   whatsAppSent           Boolean           @default(false)
   notes                  String?
+
+  binId                  String?
+  bin                    Bin?              @relation(fields: [binId], references: [id])
 
   preBooking             PreBooking?       @relation("PreBookingLineItem")
 

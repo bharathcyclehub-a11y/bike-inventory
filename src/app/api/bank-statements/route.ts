@@ -36,8 +36,25 @@ export async function POST(req: NextRequest) {
 
     if (!file) return errorResponse("No file uploaded", 400);
 
-    // Read file content
-    const text = await file.text();
+    // Read file content — handle both CSV/TXT and XLS/XLSX
+    let text: string;
+    const fileName = file.name.toLowerCase();
+
+    if (fileName.endsWith(".xls") || fileName.endsWith(".xlsx")) {
+      // Binary Excel file — convert to CSV using xlsx package
+      const XLSX = await import("xlsx");
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const sheetName = workbook.SheetNames[0];
+      text = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName]);
+    } else {
+      // CSV or TXT — read as text directly
+      text = await file.text();
+    }
+
+    if (!text || text.trim().length < 20) {
+      return errorResponse("File appears empty or unreadable. Ensure it's a valid CSV/XLS bank statement.", 400);
+    }
 
     // Get Claude API key from settings
     const apiKey = process.env.ANTHROPIC_API_KEY;

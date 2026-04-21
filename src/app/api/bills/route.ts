@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
 
     const dateFrom = searchParams.get("dateFrom") || undefined;
     const dateTo = searchParams.get("dateTo") || undefined;
+    const billedTo = searchParams.get("billedTo") || undefined;
 
     const where = {
       ...(search && {
@@ -28,6 +29,7 @@ export async function GET(req: NextRequest) {
       ...(status && { status: status as never }),
       ...(vendorId && { vendorId }),
       ...(overdue && { dueDate: { lt: new Date() }, status: { in: ["PENDING", "PARTIALLY_PAID"] as BillStatus[] } }),
+      ...(billedTo && { billedTo }),
       ...((dateFrom || dateTo) && {
         billDate: {
           ...(dateFrom && { gte: new Date(dateFrom) }),
@@ -41,7 +43,7 @@ export async function GET(req: NextRequest) {
         where,
         select: {
           id: true, billNo: true, amount: true, paidAmount: true,
-          status: true, dueDate: true, billDate: true, createdAt: true,
+          status: true, dueDate: true, billDate: true, billedTo: true, createdAt: true,
           vendor: { select: { name: true, code: true, paymentTermDays: true } },
           _count: { select: { payments: true } },
         },

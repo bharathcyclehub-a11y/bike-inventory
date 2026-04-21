@@ -64,11 +64,11 @@ const MENU_GROUPS: MenuGroup[] = [
   {
     title: "Accounts",
     items: [
+      { label: "Accounts Dashboard", icon: IndianRupee, href: "/accounts", roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"] },
       { label: "Bills & Payments", icon: FileText, href: "/bills", roles: ["ADMIN", "SUPERVISOR"] },
       { label: "Record Payment", icon: CreditCard, href: "/payments/new", roles: ["ADMIN", "SUPERVISOR"] },
       { label: "Receivables", icon: HandCoins, href: "/receivables", roles: ["ADMIN", "SUPERVISOR"] },
       { label: "Expenses", icon: Receipt, href: "/expenses", roles: ["ADMIN", "SUPERVISOR"] },
-      { label: "Service Revenue", icon: Wrench, href: "/service-revenue", roles: ["ADMIN"] },
     ],
   },
   {
@@ -97,6 +97,7 @@ const MENU_GROUPS: MenuGroup[] = [
     items: [
       { label: "Team Management", icon: Users, href: "/team", roles: ["ADMIN", "SUPERVISOR"] },
       { label: "Reports", icon: BarChart3, href: "/reports", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "Service Revenue", icon: Wrench, href: "/service-revenue", roles: ["ADMIN"] },
       { label: "AI Insights", icon: Brain, href: "/ai", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"] },
       { label: "Bins & Locations", icon: Warehouse, href: "/more/bins", roles: ["ADMIN"] },
       { label: "Brand Management", icon: Settings, href: "/more/brands", roles: ["ADMIN"] },

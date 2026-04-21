@@ -2,11 +2,10 @@
 
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
-import { ArrowLeft, CreditCard, Phone, MessageSquare, Calendar } from "lucide-react";
+import { ArrowLeft, CreditCard, Phone, MessageSquare } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
 interface BillDetail {
   id: string;
@@ -49,10 +48,6 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
   const { id } = use(params);
   const [bill, setBill] = useState<BillDetail | null>(null);
   const [loading, setLoading] = useState(true);
-  const [showFollowUp, setShowFollowUp] = useState(false);
-  const [followUpDate, setFollowUpDate] = useState("");
-  const [followUpNotes, setFollowUpNotes] = useState("");
-  const [saving, setSaving] = useState(false);
   const [cdInfo, setCdInfo] = useState<CdEligibility | null>(null);
 
   useEffect(() => {
@@ -61,8 +56,6 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       .then((res) => {
         if (res.success) {
           setBill(res.data);
-          if (res.data.nextFollowUpDate) setFollowUpDate(res.data.nextFollowUpDate.split("T")[0]);
-          if (res.data.followUpNotes) setFollowUpNotes(res.data.followUpNotes);
         }
       })
       .catch(() => {})
@@ -76,23 +69,6 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
       })
       .catch(() => {});
   }, [id]);
-
-  async function saveFollowUp() {
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/bills/${id}/follow-up`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nextFollowUpDate: followUpDate, followUpNotes }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setBill((prev) => prev ? { ...prev, ...data.data } : prev);
-        setShowFollowUp(false);
-      }
-    } catch {}
-    setSaving(false);
-  }
 
   if (loading) {
     return (
@@ -219,49 +195,6 @@ export default function BillDetailPage({ params }: { params: Promise<{ id: strin
           </div>
         </CardContent>
       </Card>
-
-      {/* Follow-up Section */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <h2 className="text-sm font-semibold text-slate-900">Follow-up</h2>
-          <button onClick={() => setShowFollowUp(!showFollowUp)} className="text-xs text-blue-600 font-medium">
-            {showFollowUp ? "Cancel" : "Update"}
-          </button>
-        </div>
-        {bill.lastFollowedUp && (
-          <p className="text-xs text-slate-500 mb-1">
-            Last followed up: {new Date(bill.lastFollowedUp).toLocaleDateString("en-IN")}
-          </p>
-        )}
-        {bill.nextFollowUpDate && !showFollowUp && (
-          <Card className="bg-amber-50 border-amber-200">
-            <CardContent className="p-2 flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-amber-600" />
-              <span className="text-xs text-amber-700">
-                Next: {new Date(bill.nextFollowUpDate).toLocaleDateString("en-IN")}
-                {bill.followUpNotes ? ` - ${bill.followUpNotes}` : ""}
-              </span>
-            </CardContent>
-          </Card>
-        )}
-        {showFollowUp && (
-          <Card>
-            <CardContent className="p-3 space-y-2">
-              <Input type="date" value={followUpDate} onChange={(e) => setFollowUpDate(e.target.value)} />
-              <textarea
-                placeholder="Follow-up notes..."
-                value={followUpNotes}
-                onChange={(e) => setFollowUpNotes(e.target.value)}
-                rows={2}
-                className="flex w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-              />
-              <Button size="sm" onClick={saveFollowUp} disabled={saving} className="w-full">
-                {saving ? "Saving..." : "Save Follow-up"}
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-      </div>
 
       {/* Payment History */}
       <h2 className="text-sm font-semibold text-slate-900 mb-2">Payments ({bill.payments.length})</h2>

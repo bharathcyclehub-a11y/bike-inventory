@@ -29,8 +29,8 @@ const ROLE_LABELS: Record<string, string> = {
   SUPERVISOR: "Supervisor",
   PURCHASE_MANAGER: "Purchase Mgr",
   ACCOUNTS_MANAGER: "Accounts Mgr",
-  INWARDS_CLERK: "Inwards Clerk",
-  OUTWARDS_CLERK: "Outwards Clerk",
+  INWARDS_CLERK: "Inventory Lead",
+  OUTWARDS_CLERK: "Dispatch Lead",
 };
 
 const EDITABLE_ROLES = ["SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"];

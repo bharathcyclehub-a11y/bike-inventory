@@ -3,13 +3,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { Search, Plus, Truck, Loader2, Package, Calendar } from "lucide-react";
+import { Search, Truck, Loader2, Calendar, Cloud, Download } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDebounce } from "@/lib/utils";
 import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface InboundShipment {
   id: string;
@@ -35,7 +35,30 @@ interface Stats {
   deliveredThisMonth: number;
 }
 
-type StatusFilter = "ALL" | "IN_TRANSIT" | "PARTIALLY_DELIVERED" | "arriving_this_week" | "DELIVERED";
+interface ZohoBillPreview {
+  id: string;
+  zohoId: string;
+  data: {
+    billNumber: string;
+    vendorName: string;
+    date: string;
+    total: number;
+    balance: number;
+    lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>;
+  };
+}
+
+type StatusFilter = "ALL" | "IN_TRANSIT" | "PARTIALLY_DELIVERED" | "arriving_this_week" | "DELIVERED" | "LEGACY";
+
+interface LegacyInward {
+  id: string;
+  referenceNo: string;
+  brandName: string;
+  createdAt: string;
+  createdBy: string;
+  items: { productName: string; sku: string; quantity: number }[];
+  totalQuantity: number;
+}
 
 function formatINR(n: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
@@ -62,9 +85,12 @@ const STATUS_BADGE: Record<string, { variant: "success" | "warning" | "info" | "
 export default function InboundPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canCreate = ["ADMIN", "PURCHASE_MANAGER"].includes(role);
+  const { canFetch } = usePermissions(role);
+  const canFetchBills = canFetch("inbound");
 
   const [shipments, setShipments] = useState<InboundShipment[]>([]);
+  const [legacyInwards, setLegacyInwards] = useState<LegacyInward[]>([]);
+  const [isLegacy, setIsLegacy] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>("IN_TRANSIT");
@@ -74,6 +100,16 @@ export default function InboundPage() {
   const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
+
+  // Zoho fetch flow
+  const [fetchStep, setFetchStep] = useState<"idle" | "pickDate" | "fetching" | "selecting" | "importing">("idle");
+  const [fetchProgress, setFetchProgress] = useState("");
+  const [fetchError, setFetchError] = useState("");
+  const [fetchPullId, setFetchPullId] = useState("");
+  const [fetchDays, setFetchDays] = useState<number>(7);
+  const [fetchCustomFrom, setFetchCustomFrom] = useState("");
+  const [billPreviews, setBillPreviews] = useState<ZohoBillPreview[]>([]);
+  const [selectedBills, setSelectedBills] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -88,7 +124,17 @@ export default function InboundPage() {
       fetch("/api/inbound/stats").then((r) => r.json()),
     ])
       .then(([listRes, statsRes]) => {
-        if (listRes.success) setShipments(listRes.data.shipments || []);
+        if (listRes.success) {
+          if (listRes.data.isLegacy) {
+            setLegacyInwards(listRes.data.shipments || []);
+            setShipments([]);
+            setIsLegacy(true);
+          } else {
+            setShipments(listRes.data.shipments || []);
+            setLegacyInwards([]);
+            setIsLegacy(false);
+          }
+        }
         if (statsRes.success) setStats(statsRes.data);
       })
       .catch(() => {})
@@ -97,12 +143,122 @@ export default function InboundPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // ─── Zoho Bill Fetch ───
+  const fetchWithTimeout = async (url: string, options?: RequestInit, timeoutMs = 20000) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "AbortError") throw new Error("Request timed out — try again");
+      throw e;
+    } finally { clearTimeout(timer); }
+  };
+
+  const handleFetchBills = async () => {
+    setFetchStep("fetching");
+    setFetchError("");
+    setFetchProgress("Connecting to Zoho...");
+    try {
+      const initRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "init" }),
+      }).then(r => r.json());
+      if (!initRes.success) throw new Error(initRes.error || "Init failed");
+      const pullId = initRes.data.pullId;
+      setFetchPullId(pullId);
+
+      let fromDate: string;
+      if (fetchDays === -1 && fetchCustomFrom) {
+        fromDate = fetchCustomFrom;
+      } else {
+        const fromDateObj = new Date();
+        fromDateObj.setDate(fromDateObj.getDate() - fetchDays);
+        fromDate = fromDateObj.toISOString().slice(0, 10);
+      }
+      const label = fetchDays === -1 ? "custom range" : `last ${fetchDays} days`;
+      setFetchProgress(`Pulling bills (${label})...`);
+
+      const billRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "bills", pullId, fromDate }),
+      }, 60000).then(r => r.json());
+      if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
+
+      const billsFound = billRes.data.billsNew || 0;
+      setFetchProgress(`Found ${billsFound} new bill${billsFound !== 1 ? "s" : ""}. Finalizing...`);
+
+      await fetchWithTimeout("/api/zoho/trigger-pull", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          step: "finalize", pullId,
+          billsNew: billRes.data.billsNew, apiCalls: billRes.data.apiCalls,
+          allErrors: billRes.data.errors || [],
+        }),
+      }).then(r => r.json()).catch(() => {});
+
+      setFetchProgress("Loading preview...");
+      const previewRes = await fetchWithTimeout(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
+      if (!previewRes.success) throw new Error(previewRes.error || "Failed to load preview");
+      const billItems = (previewRes.data.previews || []).filter(
+        (p: ZohoBillPreview & { entityType: string; status: string }) => p.entityType === "bill" && p.status === "PENDING"
+      );
+      setBillPreviews(billItems);
+      setSelectedBills(new Set(billItems.map((b: ZohoBillPreview) => b.id)));
+      setFetchStep(billItems.length > 0 ? "selecting" : "idle");
+      if (billItems.length === 0) {
+        setFetchError(billsFound > 0 ? `${billsFound} found but all already imported` : `No new bills found (${label})`);
+      }
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : "Fetch failed");
+      setFetchStep("idle");
+    } finally {
+      setFetchProgress("");
+    }
+  };
+
+  const toggleBill = (id: string) => {
+    setSelectedBills(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const handleImportSelected = async () => {
+    if (selectedBills.size === 0) return;
+    setFetchStep("importing");
+    try {
+      const res = await fetch("/api/zoho/pull-review/approve", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pullId: fetchPullId, action: "approve",
+          entityType: "bill", previewIds: Array.from(selectedBills),
+          source: "inventory",
+        }),
+      }).then(r => r.json());
+      if (!res.success) throw new Error(res.error || "Import failed");
+      const imported = res.data?.bills || 0;
+      const errors = res.data?.errors || [];
+      setFetchStep("idle");
+      setBillPreviews([]);
+      setSelectedBills(new Set());
+      fetchData();
+      if (errors.length > 0) {
+        setFetchError(`Imported ${imported} bill(s). Warnings: ${errors.join("; ")}`);
+      }
+    } catch (e) {
+      setFetchError(e instanceof Error ? e.message : "Import failed");
+      setFetchStep("selecting");
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h1 className="text-lg font-bold text-slate-900">Inbound Tracking</h1>
-          <p className="text-xs text-slate-500">Brand deliveries & pre-bookings</p>
+          <h1 className="text-lg font-bold text-slate-900">Inwards</h1>
+          <p className="text-xs text-slate-500">Zoho bills & shipment tracking</p>
         </div>
         <div className="flex items-center gap-2">
           {!showSearch && (
@@ -110,15 +266,142 @@ export default function InboundPage() {
               <Search className="h-4 w-4" />
             </button>
           )}
-          {canCreate && (
-            <Link href="/inbound/new">
-              <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700">
-                <Plus className="h-4 w-4 mr-1" /> Upload Bill
-              </Button>
-            </Link>
+          {canFetchBills && fetchStep !== "pickDate" && (
+            <button
+              onClick={() => setFetchStep("pickDate")}
+              disabled={fetchStep === "fetching" || fetchStep === "importing"}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
+            >
+              {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+              {fetchStep === "fetching" ? "Fetching..." : "Fetch Bills"}
+            </button>
           )}
         </div>
       </div>
+
+      {/* Fetch Date Picker */}
+      {fetchStep === "pickDate" && (
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
+          <p className="text-xs font-medium text-slate-700 mb-2">Fetch bills created in Zoho within:</p>
+          <div className="flex flex-wrap gap-2 mb-3">
+            {[
+              { label: "3 days", value: 3 },
+              { label: "7 days", value: 7 },
+              { label: "14 days", value: 14 },
+              { label: "30 days", value: 30 },
+              { label: "Custom", value: -1 },
+            ].map((opt) => (
+              <button
+                key={opt.value}
+                onClick={() => setFetchDays(opt.value)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  fetchDays === opt.value
+                    ? "bg-slate-900 text-white border-slate-900"
+                    : "bg-white text-slate-600 border-slate-300 hover:border-slate-400"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {fetchDays === -1 && (
+            <div className="flex gap-2 mb-3">
+              <div>
+                <label className="text-[10px] text-slate-500 block mb-0.5">From</label>
+                <input type="date" value={fetchCustomFrom} onChange={(e) => setFetchCustomFrom(e.target.value)}
+                  className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
+              </div>
+            </div>
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={handleFetchBills}
+              disabled={fetchDays === -1 && !fetchCustomFrom}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
+            >
+              <Cloud className="h-3.5 w-3.5" /> Fetch
+            </button>
+            <button
+              onClick={() => setFetchStep("idle")}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-500 border border-slate-300"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Fetch Progress */}
+      {fetchStep === "fetching" && fetchProgress && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
+          <span className="text-xs text-blue-700 font-medium">{fetchProgress}</span>
+        </div>
+      )}
+
+      {/* Fetch Error */}
+      {fetchError && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-2 text-xs text-amber-700">
+          {fetchError}
+          <button onClick={() => setFetchError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
+      {/* Bill Selection Panel */}
+      {fetchStep === "selecting" && billPreviews.length > 0 && (
+        <Card className="mb-3 border-blue-200 bg-blue-50/50">
+          <CardContent className="p-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold text-blue-800">
+                {billPreviews.length} new bill{billPreviews.length !== 1 ? "s" : ""} from Zoho
+              </p>
+              <div className="flex gap-2">
+                <button onClick={() => { setFetchStep("idle"); setBillPreviews([]); }}
+                  className="text-xs text-slate-500 underline">Cancel</button>
+                <button onClick={handleImportSelected} disabled={selectedBills.size === 0}
+                  className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50">
+                  <Download className="h-3 w-3" /> Import {selectedBills.size}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1.5 max-h-64 overflow-y-auto">
+              {billPreviews.map((bill) => (
+                <label key={bill.id}
+                  className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
+                    selectedBills.has(bill.id) ? "bg-blue-100 border border-blue-300" : "bg-white border border-slate-200"
+                  }`}>
+                  <input type="checkbox" checked={selectedBills.has(bill.id)}
+                    onChange={() => toggleBill(bill.id)} className="mt-0.5 rounded" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-slate-900">{bill.data.billNumber}</span>
+                      <span className="text-xs font-semibold text-slate-700">{formatINR(bill.data.total)}</span>
+                    </div>
+                    <p className="text-[10px] text-slate-600">{bill.data.vendorName}</p>
+                    {bill.data.lineItems.length > 0 && (
+                      <div className="mt-1 space-y-0.5">
+                        {bill.data.lineItems.map((li, idx) => (
+                          <p key={idx} className="text-[10px] text-slate-500">
+                            {li.name} — {li.sku || "no SKU"} x {li.quantity} @ {formatINR(li.rate)}
+                          </p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </label>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Importing indicator */}
+      {fetchStep === "importing" && (
+        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
+          <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+          <span className="text-xs text-blue-700 font-medium">Importing bills & creating shipments...</span>
+        </div>
+      )}
 
       {/* Stats */}
       {stats && (
@@ -174,6 +457,7 @@ export default function InboundPage() {
           { key: "PARTIALLY_DELIVERED", label: "Partial" },
           { key: "arriving_this_week", label: "This Week" },
           { key: "DELIVERED", label: "Delivered" },
+          { key: "LEGACY", label: "Pre-Merge" },
         ] as { key: StatusFilter; label: string }[]).map((f) => (
           <button key={f.key} onClick={() => setFilter(f.key)}
             className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
@@ -189,14 +473,50 @@ export default function InboundPage() {
         <div className="flex items-center justify-center py-12">
           <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
         </div>
+      ) : isLegacy ? (
+        legacyInwards.length === 0 ? (
+          <div className="text-center py-12">
+            <Truck className="h-10 w-10 text-slate-300 mx-auto mb-3" />
+            <p className="text-sm text-slate-400">No pre-merge inward records found</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs text-slate-500 mb-1">Showing {legacyInwards.length} inward records from before the merge</p>
+            {legacyInwards.map((g) => (
+              <Card key={g.id} className="border-slate-200 mb-2">
+                <CardContent className="p-3">
+                  <div className="flex items-start justify-between mb-1">
+                    <div className="flex-1 min-w-0 mr-2">
+                      <p className="text-sm font-semibold text-slate-900">{g.brandName}</p>
+                      <p className="text-xs text-slate-500">Ref: {g.referenceNo}</p>
+                    </div>
+                    <Badge variant="success">Received</Badge>
+                  </div>
+                  <div className="mt-1.5 space-y-0.5">
+                    {g.items.map((item, idx) => (
+                      <p key={idx} className="text-xs text-slate-600">
+                        {item.productName} {item.sku ? `(${item.sku})` : ""} <span className="text-slate-400">x {item.quantity}</span>
+                      </p>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-3 mt-2 text-xs text-slate-500">
+                    <span>{formatDate(g.createdAt)}</span>
+                    <span className="ml-auto">By: {g.createdBy}</span>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )
       ) : shipments.length === 0 ? (
         <div className="text-center py-12">
           <Truck className="h-10 w-10 text-slate-300 mx-auto mb-3" />
           <p className="text-sm text-slate-400">No shipments found</p>
-          {canCreate && (
-            <Link href="/inbound/new">
-              <Button variant="outline" size="sm" className="mt-3">Upload First Bill</Button>
-            </Link>
+          {canFetchBills && (
+            <button onClick={() => setFetchStep("pickDate")}
+              className="mt-3 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium">
+              Fetch Bills from Zoho
+            </button>
           )}
         </div>
       ) : (
@@ -215,11 +535,10 @@ export default function InboundPage() {
                       <Badge variant={badge.variant}>{badge.label}</Badge>
                     </div>
 
-                    {/* Item names */}
                     <div className="mt-1.5 space-y-0.5">
                       {s.lineItems.map((li, idx) => (
                         <p key={idx} className="text-xs text-slate-600">
-                          {li.productName} <span className="text-slate-400">× {li.quantity}</span>
+                          {li.productName} <span className="text-slate-400">x {li.quantity}</span>
                           {li.isDelivered && <span className="text-green-500 ml-1">✓</span>}
                         </p>
                       ))}

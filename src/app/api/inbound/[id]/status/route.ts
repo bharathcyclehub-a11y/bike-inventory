@@ -15,6 +15,7 @@ export async function PUT(
     const { id } = await params;
     const body = await req.json();
     const { status } = body;
+    const binAssignments: Array<{ lineItemId: string; binId: string }> = body.binAssignments || [];
 
     if (!["DELIVERED", "PARTIALLY_DELIVERED", "IN_TRANSIT"].includes(status)) {
       return errorResponse("Invalid status", 400);
@@ -53,25 +54,27 @@ export async function PUT(
           data: { isDelivered: true },
         });
 
-        // Set deliveredQty = quantity for items not yet marked
+        // Set deliveredQty + bin for items not yet marked
         for (const li of existing.lineItems) {
           if (!li.isDelivered) {
+            const binAssign = binAssignments.find((ba) => ba.lineItemId === li.id);
             await tx.inboundLineItem.update({
               where: { id: li.id },
-              data: { deliveredQty: li.quantity },
+              data: { deliveredQty: li.quantity, ...(binAssign ? { binId: binAssign.binId } : {}) },
             });
           }
         }
       }
 
-      // Add stock for delivered line items
-      const deliveredItems = status === "DELIVERED"
-        ? existing.lineItems
+      // Add stock for newly delivered line items (skip already-delivered ones)
+      const itemsToAddStock = status === "DELIVERED"
+        ? existing.lineItems.filter((li) => !li.isDelivered) // Only add stock for items not yet delivered
         : existing.lineItems.filter((li) => li.isDelivered);
 
-      for (const li of deliveredItems) {
+      for (const li of itemsToAddStock) {
         const qty = li.deliveredQty ?? li.quantity;
         if (qty <= 0) continue;
+        const binAssign = binAssignments.find((ba) => ba.lineItemId === li.id);
 
         // Find product by name (fuzzy match using first 20 chars)
         const searchName = li.productName.substring(0, 20);
@@ -87,7 +90,7 @@ export async function PUT(
 
           await tx.product.update({
             where: { id: matchedProduct.id },
-            data: { currentStock: newStock },
+            data: { currentStock: newStock, ...(binAssign ? { binId: binAssign.binId } : {}) },
           });
 
           await tx.inventoryTransaction.create({

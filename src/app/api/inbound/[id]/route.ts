@@ -23,6 +23,7 @@ export async function GET(
         lineItems: {
           include: {
             product: { select: { name: true, sku: true } },
+            bin: { select: { id: true, code: true, name: true, location: true } },
             preBooking: { select: { id: true, customerName: true, status: true } },
           },
         },
@@ -68,10 +69,13 @@ export async function PUT(
       const nowDelivered = body.deliveredQty > 0;
       const qty = body.deliveredQty;
 
+      const binId = body.binId || null;
+      if (!binId) return errorResponse("Bin assignment is required when marking items delivered", 400);
+
       await prisma.$transaction(async (tx) => {
         await tx.inboundLineItem.update({
           where: { id: body.lineItemId },
-          data: { isDelivered: nowDelivered, deliveredQty: qty },
+          data: { isDelivered: nowDelivered, deliveredQty: qty, binId },
         });
 
         // Add stock only when newly marking as delivered (not already delivered)
@@ -88,7 +92,7 @@ export async function PUT(
             const newStock = previousStock + qty;
             await tx.product.update({
               where: { id: matchedProduct.id },
-              data: { currentStock: newStock },
+              data: { currentStock: newStock, ...(binId ? { binId } : {}) },
             });
             await tx.inventoryTransaction.create({
               data: {
@@ -161,5 +165,70 @@ export async function PUT(
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed", 400);
+  }
+}
+
+// DELETE: Remove shipment (admin only, only if no stock was added)
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    await requireAuth(["ADMIN"]);
+    const { id } = await params;
+
+    const shipment = await prisma.inboundShipment.findUnique({
+      where: { id },
+      include: { lineItems: true },
+    });
+    if (!shipment) return errorResponse("Not found", 404);
+
+    await prisma.$transaction(async (tx) => {
+      // Reverse stock for delivered items
+      for (const li of shipment.lineItems) {
+        if (li.isDelivered && li.productId) {
+          const qty = li.deliveredQty ?? li.quantity;
+          const product = await tx.product.findUnique({ where: { id: li.productId } });
+          if (product && qty > 0) {
+            await tx.product.update({
+              where: { id: product.id },
+              data: { currentStock: Math.max(0, product.currentStock - qty) },
+            });
+          }
+          // Delete inventory transactions for this shipment
+          await tx.inventoryTransaction.deleteMany({
+            where: { productId: li.productId, referenceNo: shipment.shipmentNo, type: "INWARD" },
+          });
+        }
+      }
+
+      // Reset pre-bookings
+      await tx.preBooking.updateMany({
+        where: { matchedShipmentId: id },
+        data: { status: "WAITING", matchedShipmentId: null, matchedLineItemId: null },
+      });
+
+      // Delete line items, then shipment
+      await tx.inboundLineItem.deleteMany({ where: { shipmentId: id } });
+
+      // Delete linked VendorBill (so it can be re-fetched from Zoho)
+      if (shipment.vendorBillId) {
+        // Only delete if no payments recorded against it
+        const paymentCount = await tx.vendorPayment.count({ where: { billId: shipment.vendorBillId } });
+        if (paymentCount === 0) {
+          await tx.vendorBill.delete({ where: { id: shipment.vendorBillId } });
+        } else {
+          // Unlink but keep the VendorBill
+          await tx.inboundShipment.update({ where: { id }, data: { vendorBillId: null } });
+        }
+      }
+
+      await tx.inboundShipment.delete({ where: { id } });
+    });
+
+    return successResponse({ deleted: true });
+  } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    return errorResponse(error instanceof Error ? error.message : "Failed to delete", 400);
   }
 }

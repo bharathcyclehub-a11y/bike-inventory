@@ -48,6 +48,67 @@ export async function GET(req: NextRequest) {
       };
     }
 
+    // Legacy mode: show old INWARD InventoryTransactions not linked to InboundShipments
+    if (status === "LEGACY") {
+      const legacyWhere: Record<string, unknown> = {
+        type: "INWARD",
+        NOT: { referenceNo: { startsWith: "IB-" } },
+      };
+      if (search) {
+        legacyWhere.OR = [
+          { referenceNo: { contains: search, mode: "insensitive" } },
+          { notes: { contains: search, mode: "insensitive" } },
+          { product: { name: { contains: search, mode: "insensitive" } } },
+        ];
+      }
+      if (dateFrom || dateTo) {
+        legacyWhere.createdAt = {
+          ...(dateFrom && { gte: new Date(dateFrom) }),
+          ...(dateTo && { lte: new Date(dateTo + "T23:59:59.999Z") }),
+        };
+      }
+
+      const [legacyTxns, legacyTotal] = await Promise.all([
+        prisma.inventoryTransaction.findMany({
+          where: legacyWhere,
+          include: {
+            product: { select: { name: true, sku: true, brand: { select: { name: true } } } },
+            user: { select: { name: true } },
+          },
+          orderBy: { createdAt: "desc" },
+          skip,
+          take: limit,
+        }),
+        prisma.inventoryTransaction.count({ where: legacyWhere }),
+      ]);
+
+      // Group by referenceNo to look like shipments
+      const grouped = new Map<string, {
+        id: string; referenceNo: string; brandName: string; createdAt: string;
+        createdBy: string; items: { productName: string; sku: string; quantity: number }[];
+        totalQuantity: number;
+      }>();
+      for (const txn of legacyTxns) {
+        const ref = txn.referenceNo || txn.id;
+        if (!grouped.has(ref)) {
+          grouped.set(ref, {
+            id: txn.id,
+            referenceNo: ref,
+            brandName: txn.product.brand?.name || "Unknown",
+            createdAt: txn.createdAt.toISOString(),
+            createdBy: txn.user.name,
+            items: [],
+            totalQuantity: 0,
+          });
+        }
+        const g = grouped.get(ref)!;
+        g.items.push({ productName: txn.product.name, sku: txn.product.sku, quantity: txn.quantity });
+        g.totalQuantity += txn.quantity;
+      }
+
+      return successResponse({ shipments: Array.from(grouped.values()), total: legacyTotal, isLegacy: true });
+    }
+
     const [shipments, total] = await Promise.all([
       prisma.inboundShipment.findMany({
         where,

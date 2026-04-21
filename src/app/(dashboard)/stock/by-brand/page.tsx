@@ -34,6 +34,8 @@ interface BrandStock {
   products?: BrandProduct[];
 }
 
+type SortKey = "name" | "value" | "count" | "stock";
+
 export default function BrandStockPage() {
   const [brands, setBrands] = useState<BrandStock[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,6 +43,7 @@ export default function BrandStockPage() {
   const [loadingBrands, setLoadingBrands] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
+  const [sortBy, setSortBy] = useState<SortKey>("name");
 
   useEffect(() => {
     fetch("/api/stock/by-brand")
@@ -69,11 +72,19 @@ export default function BrandStockPage() {
     });
   }, []);
 
-  const filtered = debouncedSearch
+  const searched = debouncedSearch
     ? brands.filter((b) =>
         b.name.toLowerCase().includes(debouncedSearch.toLowerCase())
       )
     : brands;
+
+  const filtered = [...searched].sort((a, b) => {
+    if (sortBy === "name") return a.name.localeCompare(b.name);
+    if (sortBy === "value") return b.totalValue - a.totalValue;
+    if (sortBy === "count") return b.productCount - a.productCount;
+    if (sortBy === "stock") return b.totalStock - a.totalStock;
+    return 0;
+  });
 
   const totalProducts = filtered.reduce((s, b) => s + b.productCount, 0);
   const totalStock = filtered.reduce((s, b) => s + b.totalStock, 0);
@@ -110,7 +121,7 @@ export default function BrandStockPage() {
         </div>
       </div>
 
-      <div className="relative mb-3">
+      <div className="relative mb-2">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
         <Input
           placeholder="Search brand..."
@@ -118,6 +129,22 @@ export default function BrandStockPage() {
           onChange={(e) => setSearch(e.target.value)}
           className="pl-9"
         />
+      </div>
+
+      <div className="flex gap-1.5 mb-3 overflow-x-auto scrollbar-hide pb-1">
+        {([
+          { key: "name", label: "Name A-Z" },
+          { key: "value", label: "Highest Value" },
+          { key: "count", label: "Most Products" },
+          { key: "stock", label: "Most Stock" },
+        ] as { key: SortKey; label: string }[]).map((s) => (
+          <button key={s.key} onClick={() => setSortBy(s.key)}
+            className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
+              sortBy === s.key ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+            }`}>
+            {s.label}
+          </button>
+        ))}
       </div>
 
       {loading ? (
@@ -186,24 +213,27 @@ export default function BrandStockPage() {
                           <span className="text-xs text-slate-400">Loading products...</span>
                         </div>
                       ) : brand.products ? (
-                        brand.products.map((p) => (
-                          <Link key={p.id} href={`/stock/${p.id}`}>
-                            <div className="flex items-center gap-2 py-2 border-b border-slate-50 last:border-0 hover:bg-slate-50 -mx-1 px-1 rounded">
-                              <div className="flex-1 min-w-0">
-                                <p className="text-xs font-medium text-slate-800 truncate">{p.name}</p>
-                                <p className="text-[10px] text-slate-400">
-                                  {p.sku} | {p.category?.name || ""} {p.bin ? `| ${p.bin.code}` : ""}
-                                </p>
+                        brand.products.filter((p) => p.currentStock >= 1).length === 0 ? (
+                          <p className="text-xs text-slate-400 text-center py-3">No items in stock</p>
+                        ) : (
+                          brand.products.filter((p) => p.currentStock >= 1).map((p) => (
+                            <Link key={p.id} href={`/stock/${p.id}`}>
+                              <div className="flex items-center gap-2 py-2 border-b border-slate-50 last:border-0 hover:bg-slate-50 -mx-1 px-1 rounded">
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-xs font-medium text-slate-800 truncate">{p.name}</p>
+                                  <p className="text-[10px] text-slate-400">
+                                    {p.sku} | {p.category?.name || ""} {p.bin ? `| ${p.bin.code}` : ""}
+                                  </p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className={`text-sm font-bold ${
+                                    p.reorderLevel > 0 && p.currentStock <= p.reorderLevel ? "text-yellow-600" : "text-green-600"
+                                  }`}>{p.currentStock}</p>
+                                </div>
                               </div>
-                              <div className="text-right shrink-0">
-                                <p className={`text-sm font-bold ${
-                                  p.currentStock <= 0 ? "text-red-600" :
-                                  p.reorderLevel > 0 && p.currentStock <= p.reorderLevel ? "text-yellow-600" : "text-green-600"
-                                }`}>{p.currentStock}</p>
-                              </div>
-                            </div>
-                          </Link>
-                        ))
+                            </Link>
+                          ))
+                        )
                       ) : null}
                     </div>
                   )}

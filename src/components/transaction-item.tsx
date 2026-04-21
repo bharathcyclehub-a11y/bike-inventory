@@ -10,6 +10,7 @@ interface TransactionItemProps {
   quantity: number;
   time: string;
   reference?: string;
+  label?: string;
 }
 
 export function TransactionItem({
@@ -19,6 +20,7 @@ export function TransactionItem({
   quantity,
   time,
   reference,
+  label,
 }: TransactionItemProps) {
   return (
     <div className="flex items-center gap-3 py-3 border-b border-slate-100 last:border-0">
@@ -36,7 +38,7 @@ export function TransactionItem({
       </div>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium text-slate-900">
-          {productName}
+          {label || productName}
         </p>
         <p className="text-xs text-slate-500">
           {sku} {reference ? `| ${reference}` : ""}

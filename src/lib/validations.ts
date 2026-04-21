@@ -181,6 +181,10 @@ export const vendorBillSchema = z.object({
 export const vendorPaymentSchema = z.object({
   vendorId: z.string().min(1, "Vendor is required"),
   billId: z.string().optional(),
+  billAllocations: z.array(z.object({
+    billId: z.string(),
+    amount: z.number().min(0.01),
+  })).optional(),
   amount: z.number().min(0.01, "Amount must be positive"),
   cdDiscountAmount: z.number().min(0).optional(),
   paymentMode: z.enum(["CASH", "CHEQUE", "NEFT", "RTGS", "UPI", "CREDIT_ADJUSTMENT"]),

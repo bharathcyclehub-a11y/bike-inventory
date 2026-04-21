@@ -25,8 +25,8 @@ const ROLE_CONFIG: Record<string, { label: string; icon: typeof Shield; color: "
   SUPERVISOR: { label: "Store Supervisor", icon: Shield, color: "warning" },
   PURCHASE_MANAGER: { label: "Purchase Manager", icon: UserCog, color: "info" },
   ACCOUNTS_MANAGER: { label: "Accounts Manager", icon: UserCog, color: "info" },
-  INWARDS_CLERK: { label: "Purchase & Receiving Executive", icon: PackagePlus, color: "success" },
-  OUTWARDS_CLERK: { label: "Sales & Dispatch Executive", icon: PackageMinus, color: "default" },
+  INWARDS_CLERK: { label: "Inventory & Receiving Lead", icon: PackagePlus, color: "success" },
+  OUTWARDS_CLERK: { label: "Sales & Dispatch Lead", icon: PackageMinus, color: "default" },
 };
 
 export default function TeamPage() {

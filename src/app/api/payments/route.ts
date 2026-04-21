@@ -43,15 +43,23 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = vendorPaymentSchema.parse(body);
 
+    // Determine allocations: multi-bill or single-bill
+    const allocations = data.billAllocations && data.billAllocations.length > 0
+      ? data.billAllocations
+      : data.billId
+        ? [{ billId: data.billId, amount: data.amount }]
+        : [];
+
     const result = await prisma.$transaction(async (tx) => {
-      // Validate bill balance BEFORE creating payment
       const cdDiscount = data.cdDiscountAmount || 0;
-      if (data.billId) {
-        const bill = await tx.vendorBill.findUnique({ where: { id: data.billId } });
-        if (!bill) throw new Error("Bill not found");
+
+      // Validate all bill balances BEFORE creating payments
+      for (const alloc of allocations) {
+        const bill = await tx.vendorBill.findUnique({ where: { id: alloc.billId } });
+        if (!bill) throw new Error(`Bill not found: ${alloc.billId}`);
         const remaining = bill.amount - bill.paidAmount;
-        if (data.amount + cdDiscount > remaining) {
-          throw new Error(`Payment + discount exceeds bill balance. Remaining: ${remaining}`);
+        if (alloc.amount > remaining + 0.01) {
+          throw new Error(`Payment ₹${alloc.amount} exceeds bill ${bill.billNo} remaining ₹${remaining}`);
         }
       }
 
@@ -65,34 +73,59 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Create payment after validation passes
-      const payment = await tx.vendorPayment.create({
-        data: {
-          vendorId: data.vendorId,
-          billId: data.billId || null,
-          amount: data.amount,
-          cdDiscountAmount: cdDiscount,
-          paymentMode: data.paymentMode,
-          paymentDate: new Date(data.paymentDate),
-          referenceNo: data.referenceNo,
-          creditId: data.creditId || null,
-          notes: data.notes,
-          recordedById: user.id,
-        },
-        include: { vendor: { select: { name: true } }, bill: { select: { billNo: true } } },
-      });
-
-      // Update bill status (payment + CD discount both settle bill balance)
-      if (data.billId) {
-        const bill = await tx.vendorBill.findUnique({ where: { id: data.billId } });
-        if (bill) {
-          const newPaidAmount = bill.paidAmount + data.amount + cdDiscount;
-          const newStatus = newPaidAmount >= bill.amount ? "PAID" : "PARTIALLY_PAID";
-          await tx.vendorBill.update({
-            where: { id: data.billId },
-            data: { paidAmount: newPaidAmount, status: newStatus },
+      // Create payment records (one per bill allocation, or one advance payment)
+      const payments = [];
+      if (allocations.length > 0) {
+        for (const alloc of allocations) {
+          const payment = await tx.vendorPayment.create({
+            data: {
+              vendorId: data.vendorId,
+              billId: alloc.billId,
+              amount: alloc.amount,
+              cdDiscountAmount: allocations.length === 1 ? cdDiscount : 0,
+              paymentMode: data.paymentMode,
+              paymentDate: new Date(data.paymentDate),
+              referenceNo: data.referenceNo,
+              creditId: data.creditId || null,
+              notes: allocations.length > 1
+                ? `${data.notes || ""} [Multi-bill payment: ₹${data.amount}]`.trim()
+                : data.notes,
+              recordedById: user.id,
+            },
+            include: { vendor: { select: { name: true } }, bill: { select: { billNo: true } } },
           });
+          payments.push(payment);
+
+          // Update bill status
+          const bill = await tx.vendorBill.findUnique({ where: { id: alloc.billId } });
+          if (bill) {
+            const allocCd = allocations.length === 1 ? cdDiscount : 0;
+            const newPaidAmount = bill.paidAmount + alloc.amount + allocCd;
+            const newStatus = newPaidAmount >= bill.amount ? "PAID" : "PARTIALLY_PAID";
+            await tx.vendorBill.update({
+              where: { id: alloc.billId },
+              data: { paidAmount: newPaidAmount, status: newStatus },
+            });
+          }
         }
+      } else {
+        // Advance payment (no bill)
+        const payment = await tx.vendorPayment.create({
+          data: {
+            vendorId: data.vendorId,
+            billId: null,
+            amount: data.amount,
+            cdDiscountAmount: cdDiscount,
+            paymentMode: data.paymentMode,
+            paymentDate: new Date(data.paymentDate),
+            referenceNo: data.referenceNo,
+            creditId: data.creditId || null,
+            notes: data.notes,
+            recordedById: user.id,
+          },
+          include: { vendor: { select: { name: true } }, bill: { select: { billNo: true } } },
+        });
+        payments.push(payment);
       }
 
       // Update credit usage
@@ -106,7 +139,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      return payment;
+      return payments.length === 1 ? payments[0] : { payments, count: payments.length };
     });
 
     return successResponse(result, 201);

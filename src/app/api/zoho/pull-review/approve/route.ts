@@ -11,8 +11,8 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER", "PURCHASE_MANAGER"]);
     const body = await req.json();
-    const { pullId, action, entityType, previewIds } = body as {
-      pullId: string; action: "approve" | "reject"; entityType?: string; previewIds?: string[];
+    const { pullId, action, entityType, previewIds, source } = body as {
+      pullId: string; action: "approve" | "reject"; entityType?: string; previewIds?: string[]; source?: string;
     };
 
     if (!pullId || !["approve", "reject"].includes(action)) {
@@ -115,13 +115,19 @@ export async function POST(req: NextRequest) {
             itemBrandId = brand.id;
           }
 
+          // Auto-classify product type from name
+          const pName = String(d.name).toLowerCase();
+          const autoType = /\bcycl|bicycl|bike\b/.test(pName) ? "BICYCLE"
+            : /\btube|tyre|tire|brake|chain|spoke|pedal|gear|rim|handle|seat|mudguard|bell|lock|pump|light|carrier|stand|fork|derailleur|shifter|cassette|crank\b/.test(pName) ? "SPARE_PART"
+            : "ACCESSORY";
+
           await prisma.product.create({
             data: {
               sku,
               name: String(d.name),
               categoryId: defaultCategory.id,
               brandId: itemBrandId,
-              type: "SPARE_PART",
+              type: autoType,
               costPrice: Number(d.costPrice || 0),
               sellingPrice: Number(d.sellingPrice || 0),
               mrp: Number(d.sellingPrice || 0),
@@ -197,7 +203,7 @@ export async function POST(req: NextRequest) {
             dueDate.setDate(dueDate.getDate() + (vendor.paymentTermDays || 30));
           }
 
-          await prisma.vendorBill.create({
+          const vendorBill = await prisma.vendorBill.create({
             data: {
               billNo: String(d.billNumber),
               vendorId: vendor.id,
@@ -209,21 +215,115 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          // Create UNVERIFIED inward transactions for line items (all products verified above)
-          for (const { li, product } of matchedProducts) {
-            await prisma.inventoryTransaction.create({
-              data: {
-                type: "INWARD",
-                productId: product.id,
-                quantity: li.quantity,
-                previousStock: product.currentStock,
-                newStock: product.currentStock, // Stock NOT added until verified
-                referenceNo: String(d.billNumber),
-                notes: `[ZOHO][UNVERIFIED] Vendor: ${d.vendorName} | ${li.name} x${li.quantity} @ ₹${li.rate}`,
-                userId: systemUserId,
-              },
+          // ─── Create InboundShipment (only from inventory/inbound flow, not accounting) ───
+          if (source === "accounting") {
+            results.bills++;
+            await prisma.zohoPullPreview.update({
+              where: { id: preview.id },
+              data: { status: "APPROVED", reviewedAt: new Date(), reviewedById: user.id },
             });
+            continue;
           }
+
+          // Resolve brand from vendor (find most-used brand for this vendor, or create from vendor name)
+          let shipmentBrandId: string;
+          const vendorShipments = await prisma.inboundShipment.findMany({
+            where: { lineItems: { some: { product: { is: { NOT: undefined } } } } },
+            select: { brandId: true },
+            orderBy: { createdAt: "desc" },
+            take: 1,
+          });
+          if (vendorShipments.length > 0) {
+            shipmentBrandId = vendorShipments[0].brandId;
+          } else {
+            // Find or create brand from vendor name
+            const vendorName = String(d.vendorName).trim();
+            let brand = await prisma.brand.findFirst({ where: { name: { equals: vendorName, mode: "insensitive" } } });
+            if (!brand) {
+              brand = await prisma.brand.create({ data: { name: vendorName } });
+            }
+            shipmentBrandId = brand.id;
+          }
+
+          // Look up brand lead time for expected delivery date
+          const brandLeadTime = await prisma.brandLeadTime.findUnique({ where: { brandId: shipmentBrandId } });
+          const leadDays = brandLeadTime?.leadDays || 7;
+          const expectedDeliveryDate = new Date(billDate);
+          expectedDeliveryDate.setDate(expectedDeliveryDate.getDate() + leadDays);
+
+          // Generate shipment number: IB-YYYYMM-0001
+          const now = new Date();
+          const prefix = `IB-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+          const lastShipment = await prisma.inboundShipment.findFirst({
+            where: { shipmentNo: { startsWith: prefix } },
+            orderBy: { shipmentNo: "desc" },
+            select: { shipmentNo: true },
+          });
+          const seq = lastShipment
+            ? parseInt(lastShipment.shipmentNo.split("-").pop() || "0") + 1
+            : 1;
+          const shipmentNo = `${prefix}-${String(seq).padStart(4, "0")}`;
+
+          const totalAmount = matchedProducts.reduce((s, { li }) => s + (li.itemTotal || li.rate * li.quantity), 0);
+
+          // Auto-match pre-booked customers
+          const waitingPreBookings = await prisma.preBooking.findMany({
+            where: { status: "WAITING" },
+          });
+
+          const shipment = await prisma.inboundShipment.create({
+            data: {
+              shipmentNo,
+              brandId: shipmentBrandId,
+              billNo: String(d.billNumber),
+              billDate,
+              expectedDeliveryDate,
+              totalAmount,
+              totalItems: matchedProducts.length,
+              createdById: systemUserId,
+              vendorBillId: vendorBill.id,
+              zohoBillId: preview.zohoId || null,
+              lineItems: {
+                create: matchedProducts.map(({ li, product }) => {
+                  const preBookMatch = waitingPreBookings.find((pb) =>
+                    li.name.toLowerCase().includes(pb.productName.toLowerCase().substring(0, 15))
+                    || pb.productName.toLowerCase().includes(li.name.toLowerCase().substring(0, 15))
+                  );
+                  return {
+                    productName: li.name,
+                    productId: product.id,
+                    sku: li.sku || null,
+                    quantity: li.quantity,
+                    rate: li.rate,
+                    amount: li.itemTotal || li.rate * li.quantity,
+                    preBookedCustomerName: preBookMatch?.customerName || null,
+                    preBookedCustomerPhone: preBookMatch?.customerPhone || null,
+                    preBookedInvoiceNo: preBookMatch?.zohoInvoiceNo || null,
+                  };
+                }),
+              },
+            },
+            include: { lineItems: true },
+          });
+
+          // Update matched pre-bookings to MATCHED
+          for (const sli of shipment.lineItems) {
+            if (sli.preBookedInvoiceNo) {
+              const pb = waitingPreBookings.find((p) => p.zohoInvoiceNo === sli.preBookedInvoiceNo);
+              if (pb) {
+                await prisma.preBooking.update({
+                  where: { id: pb.id },
+                  data: {
+                    status: "MATCHED",
+                    matchedShipmentId: shipment.id,
+                    matchedLineItemId: sli.id,
+                    expectedDate: expectedDeliveryDate,
+                  },
+                });
+              }
+            }
+          }
+
           results.bills++;
         } else if (preview.entityType === "invoice") {
           const lineItems = (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];

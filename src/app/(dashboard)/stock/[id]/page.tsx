@@ -23,6 +23,7 @@ interface Transaction {
   type: string;
   quantity: number;
   referenceNo: string | null;
+  notes: string | null;
   createdAt: string;
   user: { name: string };
 }
@@ -62,6 +63,17 @@ function formatTime(dateStr: string) {
   return new Date(dateStr).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
 }
 
+function parseTransactionLabel(notes: string | null, type: string): string {
+  if (!notes) return type === "INWARD" ? "Inward" : "Outward";
+  const n = notes.toLowerCase();
+  if (n.includes("[inbound]")) return "Inbound Shipment";
+  if (n.includes("[stock_count]") || n.includes("stock count")) return "Stock Count";
+  if (n.includes("[delivery]") || n.includes("delivery")) return "Delivery";
+  if (n.includes("[transfer]") || n.includes("transfer")) return "Transfer";
+  if (n.includes("[adjustment]") || n.includes("adjust")) return "Adjustment";
+  return type === "INWARD" ? "Inward" : "Outward";
+}
+
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: session } = useSession();
@@ -72,19 +84,16 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [editData, setEditData] = useState<Record<string, unknown>>({ name: "", color: "", size: "", sellingPrice: 0, mrp: 0, reorderLevel: 0, brandId: "", categoryId: "", binId: "" });
+  const [editData, setEditData] = useState<Record<string, unknown>>({ name: "", color: "", size: "", sellingPrice: 0, mrp: 0, reorderLevel: 0, brandId: "", binId: "" });
   const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
-  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
   const [bins, setBins] = useState<{ id: string; code: string; name: string; location: string }[]>([]);
 
   useEffect(() => {
     Promise.all([
       fetch("/api/brands").then((r) => r.json()),
-      fetch("/api/categories").then((r) => r.json()),
       fetch("/api/bins").then((r) => r.json()),
-    ]).then(([bRes, cRes, binRes]) => {
+    ]).then(([bRes, binRes]) => {
       if (bRes.success) setBrands(bRes.data);
-      if (cRes.success) setCategories(cRes.data);
       if (binRes.success) setBins(binRes.data);
     }).catch(() => {});
   }, []);
@@ -125,7 +134,6 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       mrp: product!.mrp,
       reorderLevel: product!.reorderLevel,
       brandId: product!.brandId || "",
-      categoryId: product!.categoryId || "",
       binId: product!.binId || "",
     });
     setEditing(true);
@@ -195,23 +203,13 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
               <label className="text-[10px] text-slate-500">Name</label>
               <Input value={editData.name as string} onChange={(e) => setEditData({ ...editData, name: e.target.value })} />
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] text-slate-500">Brand</label>
-                <select value={editData.brandId as string} onChange={(e) => setEditData({ ...editData, brandId: e.target.value })}
-                  className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">No brand</option>
-                  {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500">Category</label>
-                <select value={editData.categoryId as string} onChange={(e) => setEditData({ ...editData, categoryId: e.target.value })}
-                  className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                  <option value="">No category</option>
-                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
-              </div>
+            <div>
+              <label className="text-[10px] text-slate-500">Brand</label>
+              <select value={editData.brandId as string} onChange={(e) => setEditData({ ...editData, brandId: e.target.value })}
+                className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">No brand</option>
+                {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
             </div>
             <div>
               <label className="text-[10px] text-slate-500">Bin / Location</label>
@@ -261,7 +259,6 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       <div className="flex flex-wrap gap-2 mb-3">
         <Badge variant="info">{product.sku}</Badge>
         {product.brand && <Badge variant="default" className="font-semibold">{product.brand.name}</Badge>}
-        {product.category && <Badge variant="default">{product.category.name}</Badge>}
         {product.type === "BICYCLE" && product.size && <Badge variant="default">{product.size}</Badge>}
         {product.condition !== "NEW" && <Badge variant="warning">{product.condition.replace("_", " ")}</Badge>}
       </div>
@@ -376,6 +373,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                 quantity={t.quantity}
                 time={formatTime(t.createdAt)}
                 reference={t.referenceNo || undefined}
+                label={parseTransactionLabel(t.notes, t.type)}
               />
             ))
           )}

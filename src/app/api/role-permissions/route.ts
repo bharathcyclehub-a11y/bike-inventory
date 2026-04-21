@@ -80,7 +80,7 @@ const DEFAULT_PERMISSIONS: RolePermissions = {
     edit: ["deliveries"].includes(f.key),
     delete: false,
     approve: ["deliveries"].includes(f.key),
-    fetch: false,
+    fetch: ["deliveries"].includes(f.key),
   }])),
 };
 

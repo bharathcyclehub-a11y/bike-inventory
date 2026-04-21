@@ -3,7 +3,8 @@
 import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Phone, CheckCircle2, Package, Calendar, Truck, Image as ImageIcon, FileText, RotateCcw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Loader2, Phone, CheckCircle2, Calendar, Truck, MapPin, RotateCcw, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +20,8 @@ interface LineItem {
   hsn: string | null;
   isDelivered: boolean;
   deliveredQty: number | null;
+  binId: string | null;
+  bin: { id: string; code: string; name: string; location: string } | null;
   preBookedCustomerName: string | null;
   preBookedCustomerPhone: string | null;
   preBookedInvoiceNo: string | null;
@@ -26,11 +29,18 @@ interface LineItem {
   preBooking: { id: string; customerName: string; status: string } | null;
 }
 
+interface Bin {
+  id: string;
+  code: string;
+  name: string;
+  location: string;
+}
+
 interface Shipment {
   id: string;
   shipmentNo: string;
   billNo: string;
-  billImageUrl: string;
+  billImageUrl: string | null;
   billPdfUrl: string | null;
   billDate: string;
   expectedDeliveryDate: string;
@@ -57,37 +67,64 @@ function formatDate(d: string) {
 
 export default function InboundDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
   const isAdmin = role === "ADMIN";
   const canDeliver = ["ADMIN", "SUPERVISOR", "INWARDS_CLERK"].includes(role);
 
   const [shipment, setShipment] = useState<Shipment | null>(null);
+  const [bins, setBins] = useState<Bin[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
-  const [showImage, setShowImage] = useState(false);
   const [itemLoading, setItemLoading] = useState<string | null>(null);
+  const [putawayLoading, setPutawayLoading] = useState(false);
+
+  // Per-item bin selections (lineItemId → binId)
+  const [binSelections, setBinSelections] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    fetch(`/api/inbound/${id}`)
-      .then((r) => r.json())
-      .then((res) => { if (res.success) setShipment(res.data); })
+    Promise.all([
+      fetch(`/api/inbound/${id}`).then((r) => r.json()),
+      fetch("/api/bins").then((r) => r.json()),
+    ])
+      .then(([shipRes, binRes]) => {
+        if (shipRes.success) setShipment(shipRes.data);
+        if (binRes.success) setBins(binRes.data || []);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [id]);
 
+  const refreshShipment = async () => {
+    const detail = await fetch(`/api/inbound/${id}`).then((r) => r.json());
+    if (detail.success) setShipment(detail.data);
+  };
+
   const handleMarkDelivered = async (status: string) => {
+    // Validate: all undelivered items must have a bin selected
+    const undeliveredItems = shipment?.lineItems.filter((li) => !li.isDelivered) || [];
+    const missingBin = undeliveredItems.filter((li) => !binSelections[li.id]);
+    if (status === "DELIVERED" && missingBin.length > 0) {
+      alert(`Please assign a bin to all items before marking delivered. ${missingBin.length} item(s) missing bin.`);
+      return;
+    }
+
     setActionLoading(true);
     try {
+      // Collect bin assignments for undelivered items
+      const binAssignments = shipment?.lineItems
+        .filter((li) => !li.isDelivered && binSelections[li.id])
+        .map((li) => ({ lineItemId: li.id, binId: binSelections[li.id] })) || [];
+
       const res = await fetch(`/api/inbound/${id}/status`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status, binAssignments }),
       }).then((r) => r.json());
       if (res.success) {
-        // Refresh
-        const detail = await fetch(`/api/inbound/${id}`).then((r) => r.json());
-        if (detail.success) setShipment(detail.data);
+        setBinSelections({});
+        await refreshShipment();
       }
     } catch { /* */ }
     finally { setActionLoading(false); }
@@ -100,7 +137,6 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
     const message = `Hello ${li.preBookedCustomerName}, great news! Your ${li.productName} has been dispatched from the brand and is expected to arrive at our store by ${expectedDate}. We'll notify you once it's ready for pickup/delivery. - Bharath Cycle Hub`;
     window.open(`https://wa.me/91${phone}?text=${encodeURIComponent(message)}`, "_blank");
 
-    // Mark as sent
     await fetch(`/api/inbound/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -109,19 +145,48 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   };
 
   const handleMarkItemDelivered = async (li: LineItem) => {
+    if (!binSelections[li.id]) {
+      alert("Please select a bin before marking this item as delivered.");
+      return;
+    }
     setItemLoading(li.id);
     try {
+      const binId = binSelections[li.id];
       const res = await fetch(`/api/inbound/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lineItemId: li.id, deliveredQty: li.quantity }),
+        body: JSON.stringify({ lineItemId: li.id, deliveredQty: li.quantity, binId }),
       }).then((r) => r.json());
       if (res.success) {
-        const detail = await fetch(`/api/inbound/${id}`).then((r) => r.json());
-        if (detail.success) setShipment(detail.data);
+        setBinSelections((prev) => { const n = { ...prev }; delete n[li.id]; return n; });
+        await refreshShipment();
       }
     } catch { /* */ }
     finally { setItemLoading(null); }
+  };
+
+  const handlePutaway = async () => {
+    const items = Object.entries(binSelections)
+      .filter(([lineItemId, binId]) => {
+        const li = shipment?.lineItems.find((l) => l.id === lineItemId);
+        return li?.isDelivered && !li.binId && binId;
+      })
+      .map(([lineItemId, binId]) => ({ lineItemId, binId }));
+
+    if (items.length === 0) return;
+    setPutawayLoading(true);
+    try {
+      const res = await fetch(`/api/inbound/${id}/putaway`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      }).then((r) => r.json());
+      if (res.success) {
+        setBinSelections({});
+        await refreshShipment();
+      }
+    } catch { /* */ }
+    finally { setPutawayLoading(false); }
   };
 
   const handleRevert = async () => {
@@ -134,10 +199,23 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         body: JSON.stringify({ status: "IN_TRANSIT" }),
       }).then((r) => r.json());
       if (res.success) {
-        const detail = await fetch(`/api/inbound/${id}`).then((r) => r.json());
-        if (detail.success) setShipment(detail.data);
+        await refreshShipment();
       } else {
         alert(res.error || "Cannot revert");
+      }
+    } catch { /* */ }
+    finally { setActionLoading(false); }
+  };
+
+  const handleDelete = async () => {
+    if (!confirm("Delete this shipment? This cannot be undone.")) return;
+    setActionLoading(true);
+    try {
+      const res = await fetch(`/api/inbound/${id}`, { method: "DELETE" }).then((r) => r.json());
+      if (res.success) {
+        router.push("/inbound");
+      } else {
+        alert(res.error || "Cannot delete");
       }
     } catch { /* */ }
     finally { setActionLoading(false); }
@@ -157,11 +235,18 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   }
 
   const deliveredCount = shipment.lineItems.filter((li) => li.isDelivered).length;
+  const needsBinCount = shipment.lineItems.filter((li) => li.isDelivered && !li.binId).length;
   const statusBadge = shipment.status === "DELIVERED"
     ? { variant: "success" as const, label: "Delivered" }
     : shipment.status === "PARTIALLY_DELIVERED"
     ? { variant: "info" as const, label: "Partial" }
     : { variant: "warning" as const, label: "In Transit" };
+
+  // Count putaway selections ready to save
+  const putawayReady = Object.entries(binSelections).filter(([liId]) => {
+    const li = shipment.lineItems.find((l) => l.id === liId);
+    return li?.isDelivered && !li.binId;
+  }).length;
 
   return (
     <div className="pb-4">
@@ -175,28 +260,6 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           <p className="text-xs text-slate-500">{shipment.brand.name} | Bill: {shipment.billNo}</p>
         </div>
       </div>
-
-      {/* Bill Image & PDF — admin only */}
-      {isAdmin && (
-        <>
-          <button onClick={() => setShowImage(!showImage)}
-            className="flex items-center gap-2 text-xs text-indigo-600 font-medium mb-3 hover:underline">
-            <ImageIcon className="h-3.5 w-3.5" /> {showImage ? "Hide" : "View"} Bill Image
-          </button>
-          {showImage && shipment.billImageUrl && (
-            <div className="rounded-xl overflow-hidden mb-4 bg-slate-100">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={shipment.billImageUrl} alt="Bill" className="w-full object-contain max-h-96" />
-            </div>
-          )}
-          {shipment.billPdfUrl && (
-            <a href={shipment.billPdfUrl} target="_blank" rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs text-indigo-600 font-medium mb-3 hover:underline">
-              <FileText className="h-3.5 w-3.5" /> View Invoice PDF
-            </a>
-          )}
-        </>
-      )}
 
       {/* Summary */}
       <Card className="mb-3">
@@ -227,8 +290,14 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
             <span className="text-xs text-slate-500">Items</span>
             <span className="text-sm text-slate-700">{deliveredCount}/{shipment.totalItems} delivered</span>
           </div>
+          {needsBinCount > 0 && (
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-slate-500">Needs Bin</span>
+              <Badge variant="warning" className="text-[10px]">{needsBinCount} item{needsBinCount > 1 ? "s" : ""}</Badge>
+            </div>
+          )}
           <div className="flex justify-between items-center">
-            <span className="text-xs text-slate-500">Uploaded by</span>
+            <span className="text-xs text-slate-500">Created by</span>
             <span className="text-xs text-slate-700">{shipment.createdBy.name} on {formatDate(shipment.createdAt)}</span>
           </div>
         </CardContent>
@@ -252,7 +321,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && (
         <div className="space-y-2 mb-3">
           <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-2 text-center">
-            Tap items below to mark them as delivered one by one, or mark all at once.
+            Select bin for each item, then mark as delivered. Or mark all at once.
           </p>
           <div className="flex gap-2">
             <Button onClick={() => handleMarkDelivered("DELIVERED")} disabled={actionLoading}
@@ -269,6 +338,23 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         </div>
       )}
 
+      {/* Post-delivery Putaway */}
+      {canDeliver && needsBinCount > 0 && shipment.status === "DELIVERED" && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3">
+          <p className="text-xs text-amber-800 font-medium mb-1 flex items-center gap-1.5">
+            <MapPin className="h-3.5 w-3.5" /> {needsBinCount} item{needsBinCount > 1 ? "s" : ""} need bin assignment
+          </p>
+          <p className="text-[10px] text-amber-600 mb-2">Select bins below, then save.</p>
+          {putawayReady > 0 && (
+            <Button onClick={handlePutaway} disabled={putawayLoading} size="sm"
+              className="w-full bg-amber-600 hover:bg-amber-700">
+              <Save className="h-3.5 w-3.5 mr-1.5" />
+              {putawayLoading ? "Saving..." : `Save Bin Assignment (${putawayReady})`}
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Line Items */}
       <p className="text-sm font-semibold text-slate-700 mb-2">Line Items</p>
       <div className="space-y-2 mb-4">
@@ -280,7 +366,10 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                   <p className="text-sm font-medium text-slate-900">{li.productName}</p>
                   {li.product && <p className="text-[10px] text-slate-500">{li.product.sku} | {li.product.name}</p>}
                 </div>
-                {li.isDelivered && <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {li.isDelivered && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+                  {li.isDelivered && !li.binId && <Badge variant="warning" className="text-[9px] px-1.5">No Bin</Badge>}
+                </div>
               </div>
 
               <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
@@ -289,15 +378,62 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                 {isAdmin && <span className="font-medium text-slate-700">{formatINR(li.amount)}</span>}
               </div>
 
-              {/* Mark individual item delivered */}
-              {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && (
-                <button
-                  onClick={() => handleMarkItemDelivered(li)}
-                  disabled={itemLoading === li.id}
-                  className="mt-2 w-full py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-medium border border-green-200 hover:bg-green-100 disabled:opacity-50"
+              {/* Current bin assignment */}
+              {li.bin && (
+                <div className="flex items-center gap-1.5 mt-1.5 text-[10px] text-indigo-600">
+                  <MapPin className="h-3 w-3" /> {li.bin.code} — {li.bin.name} ({li.bin.location})
+                </div>
+              )}
+
+              {/* Bin selector for undelivered items (during partial delivery) */}
+              {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && bins.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  <select
+                    value={binSelections[li.id] || ""}
+                    onChange={(e) => setBinSelections((prev) => ({ ...prev, [li.id]: e.target.value }))}
+                    className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
+                  >
+                    <option value="">Select bin *</option>
+                    {bins.map((b) => (
+                      <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => handleMarkItemDelivered(li)}
+                    disabled={itemLoading === li.id}
+                    className="w-full py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-medium border border-green-200 hover:bg-green-100 disabled:opacity-50"
+                  >
+                    {itemLoading === li.id ? "Marking..." : `Mark Delivered (Qty: ${li.quantity})`}
+                  </button>
+                </div>
+              )}
+
+              {/* Bin selector for IN_TRANSIT items (pre-select before Mark All Delivered) */}
+              {canDeliver && shipment.status === "IN_TRANSIT" && bins.length > 0 && (
+                <select
+                  value={binSelections[li.id] || ""}
+                  onChange={(e) => setBinSelections((prev) => ({ ...prev, [li.id]: e.target.value }))}
+                  className="mt-2 w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
                 >
-                  {itemLoading === li.id ? "Marking..." : `Mark Delivered (Qty: ${li.quantity})`}
-                </button>
+                  <option value="">Select bin *</option>
+                  {bins.map((b) => (
+                    <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
+                  ))}
+                </select>
+              )}
+
+              {/* Post-delivery bin assignment (delivered but no bin) */}
+              {canDeliver && li.isDelivered && !li.binId && bins.length > 0 && (
+                <select
+                  value={binSelections[li.id] || ""}
+                  onChange={(e) => setBinSelections((prev) => ({ ...prev, [li.id]: e.target.value }))}
+                  className="mt-2 w-full text-xs border border-amber-200 rounded-lg px-2 py-1.5 bg-amber-50 text-slate-700"
+                >
+                  <option value="">Assign bin...</option>
+                  {bins.map((b) => (
+                    <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
+                  ))}
+                </select>
               )}
 
               {/* Pre-booked customer */}
@@ -326,6 +462,18 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       {/* Notes */}
       {shipment.notes && (
         <p className="text-[10px] text-slate-400 text-center mt-4">Notes: {shipment.notes}</p>
+      )}
+
+      {/* Delete — admin only */}
+      {isAdmin && (
+        <button
+          onClick={handleDelete}
+          disabled={actionLoading}
+          className="mt-6 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-red-600 text-xs font-medium border border-red-200 hover:bg-red-50 disabled:opacity-50"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          {deliveredCount > 0 ? "Delete & Reverse Stock" : "Delete Shipment"}
+        </button>
       )}
     </div>
   );
