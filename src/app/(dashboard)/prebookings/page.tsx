@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { Loader2, UserCheck, Phone, Plus, Search, Zap, Link2, X, Truck } from "lucide-react";
+import { Loader2, UserCheck, Phone, Plus, Search, Zap, Link2, X, Truck, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -45,6 +45,21 @@ const STATUS_BADGE: Record<string, { variant: "warning" | "info" | "success" | "
   FULFILLED: { variant: "success", label: "Fulfilled" },
   CANCELLED: { variant: "default", label: "Cancelled" },
 };
+
+function daysAgo(dateStr: string) {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
+  if (diff === 0) return "Today";
+  if (diff === 1) return "1 day ago";
+  return `${diff} days ago`;
+}
+
+function agingColor(dateStr: string) {
+  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
+  if (diff >= 15) return "text-red-600 bg-red-50";
+  if (diff >= 7) return "text-amber-600 bg-amber-50";
+  if (diff >= 3) return "text-blue-600 bg-blue-50";
+  return "text-slate-500 bg-slate-50";
+}
 
 export default function PreBookingsPage() {
   const { data: session } = useSession();
@@ -338,7 +353,14 @@ export default function PreBookingsPage() {
                       <p className="text-sm font-medium text-slate-900">{pb.customerName}</p>
                       <p className="text-xs text-slate-500">{pb.productName}</p>
                     </div>
-                    <Badge variant={badge.variant}>{badge.label}</Badge>
+                    <div className="flex flex-col items-end gap-1">
+                      <Badge variant={badge.variant}>{badge.label}</Badge>
+                      {pb.status !== "FULFILLED" && pb.status !== "CANCELLED" && (
+                        <span className={`inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full ${agingColor(pb.createdAt)}`}>
+                          <Clock className="h-2.5 w-2.5" /> {daysAgo(pb.createdAt)}
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2 mt-1 flex-wrap">

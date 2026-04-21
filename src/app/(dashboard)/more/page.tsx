@@ -31,6 +31,7 @@ import {
   UserCheck,
   Clock,
   IndianRupee,
+  Wrench,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -67,6 +68,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { label: "Record Payment", icon: CreditCard, href: "/payments/new", roles: ["ADMIN", "SUPERVISOR"] },
       { label: "Receivables", icon: HandCoins, href: "/receivables", roles: ["ADMIN", "SUPERVISOR"] },
       { label: "Expenses", icon: Receipt, href: "/expenses", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "Service Revenue", icon: Wrench, href: "/service-revenue", roles: ["ADMIN"] },
     ],
   },
   {
