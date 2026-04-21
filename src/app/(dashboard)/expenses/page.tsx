@@ -155,7 +155,7 @@ export default function ExpensesPage() {
               <CardContent className="p-3">
                 <div className="flex items-start justify-between">
                   <div className="flex-1 min-w-0 mr-3">
-                    <p className="text-sm font-medium text-slate-900">{exp.description}</p>
+                    <p className="text-sm font-medium text-slate-900 truncate">{exp.description}</p>
                     <p className="text-xs text-slate-500 mt-0.5">
                       {new Date(exp.date).toLocaleDateString("en-IN")} | {exp.paidBy} | {exp.paymentMode}
                     </p>
