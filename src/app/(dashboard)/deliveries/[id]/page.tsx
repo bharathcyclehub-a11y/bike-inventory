@@ -41,6 +41,7 @@ interface DeliveryData {
   whatsAppDeliveredSent: boolean;
   freeAccessories: string | null;
   googleReviewLink: string | null;
+  invoiceType: string | null;
   isOutstation: boolean;
   courierName: string | null;
   courierTrackingNo: string | null;
@@ -54,7 +55,7 @@ interface DeliveryData {
   } | null;
 }
 
-const STATUS_STEPS = ["PENDING", "VERIFIED", "SCHEDULED", "OUT_FOR_DELIVERY", "DELIVERED"];
+const STATUS_STEPS = ["PENDING", "SCHEDULED", "OUT_FOR_DELIVERY", "DELIVERED"];
 const OUTSTATION_STEPS = ["VERIFIED", "PACKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"];
 
 function formatINR(n: number) {
@@ -91,6 +92,10 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
   // Free accessories
   const [freeAccessories, setFreeAccessories] = useState("");
+
+  // WhatsApp templates
+  const [templates, setTemplates] = useState<Record<string, string>>({});
+  const [showDispatchWhatsApp, setShowDispatchWhatsApp] = useState(false);
   const [editingAccessories, setEditingAccessories] = useState(false);
 
   const fetchData = () => {
@@ -113,6 +118,13 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   };
 
   useEffect(() => { fetchData(); }, [id]); // eslint-disable-line
+
+  useEffect(() => {
+    fetch("/api/whatsapp-templates")
+      .then((r) => r.json())
+      .then((res) => { if (res.success) setTemplates(res.data); })
+      .catch(() => {});
+  }, []);
 
   const updateStatus = async (status: string, extra?: Record<string, unknown>) => {
     setActionLoading(true);
@@ -196,6 +208,18 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
     fetchData();
   };
 
+  const renderTemplate = (template: string, vars: Record<string, string>) => {
+    let msg = template;
+    for (const [key, val] of Object.entries(vars)) {
+      msg = msg.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), val);
+    }
+    // Handle optional sections: {{#key}}...{{/key}} — remove if value empty
+    msg = msg.replace(/\{\{#(\w+)\}\}([\s\S]*?)\{\{\/\1\}\}/g, (_, key, content) => {
+      return vars[key] ? content.replace(new RegExp(`\\{\\{${key}\\}\\}`, "g"), vars[key]) : "";
+    });
+    return msg.trim();
+  };
+
   const getLineItemsText = () => {
     if (!data?.lineItems || data.lineItems.length === 0) return "";
     return data.lineItems.map((item) => `- ${item.name} (Qty: ${item.quantity})`).join("\n");
@@ -226,17 +250,13 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const sendScheduledWhatsApp = () => {
     if (!data?.customerPhone) return;
     const date = data.scheduledDate ? new Date(data.scheduledDate).toLocaleDateString("en-IN") : "TBD";
-    const msg = `Hello ${data.customerName},
-
-Your order from Bharath Cycle Hub has been scheduled for delivery.
-
-Product: ${getProductName()}
-Delivery Date: ${date}
-
-Please share your delivery location on WhatsApp so our rider can reach you.
-
-Thank you!
-- Bharath Cycle Hub`;
+    const msg = templates.scheduled
+      ? renderTemplate(templates.scheduled, {
+          customerName: data.customerName,
+          productName: getProductName(),
+          deliveryDate: date,
+        })
+      : `Hello ${data.customerName},\n\nYour order from Bharath Cycle Hub has been scheduled for delivery.\n\nProduct: ${getProductName()}\nDelivery Date: ${date}\n\nPlease share your delivery location on WhatsApp so our rider can reach you.\n\nThank you!\n- Bharath Cycle Hub`;
     openWhatsApp(data.customerPhone, msg);
     markWhatsAppSent("whatsAppScheduledSent");
   };
@@ -259,51 +279,31 @@ Thank you!
     const accessories = data.freeAccessories || freeAccessories || "None";
     const vNo = data.vehicleNo || vehicleNo;
     const trackingLink = data.courierTrackingNo || courierTrackingNo;
-    const isLocal = !data.isOutstation;
 
-    let msg: string;
-    if (isLocal && (vNo || trackingLink)) {
-      msg = `Hello ${data.customerName},
-
-Your ${productName} is on the way!
-${vNo ? `\nVehicle No: ${vNo}` : ""}${trackingLink ? `\nTrack: ${trackingLink}` : ""}
-
-Items:
-${lineItemsText}
-
-Free Accessories:
-${accessories}
-
-Thank you for choosing Bharath Cycle Hub!`;
-    } else {
-      msg = `Hello ${data.customerName},
-
-Congratulations! Your ${productName} has been dispatched and is on its way!
-
-Items:
-${lineItemsText}
-
-Free Accessories:
-${accessories}
-
-Thank you for choosing Bharath Cycle Hub!`;
-    }
+    const msg = templates.dispatched
+      ? renderTemplate(templates.dispatched, {
+          customerName: data.customerName,
+          productName,
+          vehicleNo: vNo || "",
+          trackingLink: trackingLink || "",
+          lineItems: lineItemsText,
+          accessories,
+        })
+      : `Hello ${data.customerName},\n\nYour ${productName} is on the way!${vNo ? `\n\nVehicle No: ${vNo}` : ""}${trackingLink ? `\nTrack: ${trackingLink}` : ""}\n\nItems:\n${lineItemsText}\n\nFree Accessories:\n${accessories}\n\nThank you for choosing Bharath Cycle Hub!`;
     openWhatsApp(data.customerPhone, msg);
     markWhatsAppSent("whatsAppDispatchedSent");
+    setShowDispatchWhatsApp(false);
   };
 
   const sendDeliveredWhatsApp = () => {
     if (!data?.customerPhone) return;
     const reviewLink = data.googleReviewLink || "https://g.page/r/bharathcyclehub/review";
-    const msg = `Hello ${data.customerName},
-
-Thank you for your purchase from Bharath Cycle Hub!
-
-We'd love to hear about your experience. Please leave us a review:
-${reviewLink}
-
-Thank you!
-- Bharath Cycle Hub`;
+    const msg = templates.delivered
+      ? renderTemplate(templates.delivered, {
+          customerName: data.customerName,
+          reviewLink,
+        })
+      : `Hello ${data.customerName},\n\nThank you for your purchase from Bharath Cycle Hub!\n\nWe'd love to hear about your experience. Please leave us a review:\n${reviewLink}\n\nThank you!\n- Bharath Cycle Hub`;
     openWhatsApp(data.customerPhone, msg);
     markWhatsAppSent("whatsAppDeliveredSent");
   };
@@ -341,7 +341,7 @@ Thank you!
       </div>
 
       {/* Progress Steps */}
-      {!["FLAGGED", "WALK_OUT", "PREBOOKED", "PENDING"].includes(data.status) && (
+      {!["FLAGGED", "WALK_OUT", "PREBOOKED", "PENDING", "VERIFIED"].includes(data.status) && (
         <div className="flex items-center gap-1 mb-3">
           {activeSteps.map((step, i) => (
             <div key={step} className="flex-1">
@@ -354,8 +354,8 @@ Thank you!
         </div>
       )}
 
-      {/* PENDING progress (no outstation yet) */}
-      {data.status === "PENDING" && (
+      {/* PENDING/VERIFIED progress */}
+      {["PENDING", "VERIFIED"].includes(data.status) && (
         <div className="flex items-center gap-1 mb-3">
           {STATUS_STEPS.map((step, i) => (
             <div key={step} className="flex-1">
@@ -389,8 +389,8 @@ Thank you!
         </CardContent>
       </Card>
 
-      {/* Save Contact Card (only at VERIFIED step) */}
-      {data.status === "VERIFIED" && data.customerPhone && (
+      {/* Save Contact Card */}
+      {["PENDING", "VERIFIED"].includes(data.status) && data.customerPhone && (
         <Card className="mb-3 border-blue-200 bg-blue-50">
           <CardContent className="p-3">
             <button
@@ -464,7 +464,10 @@ Thank you!
               <label className="text-[10px] text-slate-500">Courier Cost</label>
               <Input type="number" value={courierCost} onChange={(e) => setCourierCost(e.target.value)} placeholder="0" className="text-xs" />
             </div>
-            <button onClick={handleSaveCourier} disabled={actionLoading}
+            <button onClick={async () => {
+              await handleSaveCourier();
+              setShowDispatchWhatsApp(true);
+            }} disabled={actionLoading}
               className="w-full bg-amber-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
               {actionLoading ? "Saving..." : "Save Courier Info"}
             </button>
@@ -751,16 +754,64 @@ Thank you!
         </Card>
       )}
 
+      {/* Auto-prompt: Send WhatsApp after dispatch */}
+      {showDispatchWhatsApp && data.customerPhone && !data.whatsAppDispatchedSent && (
+        <Card className="mb-3 border-green-300 bg-green-50 ring-2 ring-green-300">
+          <CardContent className="p-3 space-y-2">
+            <p className="text-xs font-semibold text-green-900">Dispatched! Send WhatsApp to customer?</p>
+            <p className="text-[10px] text-green-700">
+              {data.vehicleNo && `Vehicle: ${data.vehicleNo}`}
+              {data.vehicleNo && data.courierTrackingNo && " | "}
+              {data.courierTrackingNo && `Tracking: ${data.courierTrackingNo}`}
+            </p>
+            <div className="flex gap-2">
+              <button onClick={sendDispatchedWhatsApp}
+                className="flex-1 flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium">
+                <MessageCircle className="h-4 w-4" /> Send WhatsApp Now
+              </button>
+              <button onClick={() => setShowDispatchWhatsApp(false)}
+                className="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">
+                Skip
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Action Buttons */}
       <div className="space-y-2">
-        {data.status === "PENDING" && (
+        {data.status === "PENDING" && data.invoiceType === "SALES" && !showSchedule && (
           <div className="flex gap-2">
-            <button onClick={() => updateStatus("VERIFIED")} disabled={actionLoading}
-              className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
-              <CheckCircle2 className="h-4 w-4" /> Verify
+            <button onClick={() => {
+              const woWarning = data.paymentStatus?.hasPending
+                ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
+                : "";
+              const items = data.lineItems || [];
+              const stockLines = items.map(i => `  ${i.name} x${i.quantity}`).join("\n");
+              const msg = items.length > 0
+                ? `${woWarning}Mark as walk-out?\n\nStock will be deducted:\n${stockLines}`
+                : `${woWarning}Mark as walk-out? Stock will be deducted.`;
+              if (!confirm(msg)) return;
+              updateStatus("WALK_OUT");
+            }} disabled={actionLoading}
+              className="flex-1 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+              Walk-out (Took it)
+            </button>
+            <button onClick={() => setShowSchedule(true)}
+              className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
+              Schedule Delivery
             </button>
             <button onClick={handleFlag}
               className="flex items-center justify-center gap-2 bg-red-100 text-red-700 px-4 py-2.5 rounded-lg text-sm font-medium">
+              <Flag className="h-4 w-4" /> Flag
+            </button>
+          </div>
+        )}
+
+        {data.status === "PENDING" && !data.invoiceType && (
+          <div className="flex gap-2">
+            <button onClick={handleFlag}
+              className="flex-1 flex items-center justify-center gap-2 bg-red-100 text-red-700 px-4 py-2.5 rounded-lg text-sm font-medium">
               <Flag className="h-4 w-4" /> Flag
             </button>
           </div>
@@ -807,13 +858,14 @@ Thank you!
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => {
-                    updateStatus("OUT_FOR_DELIVERY", {
+                  onClick={async () => {
+                    await updateStatus("OUT_FOR_DELIVERY", {
                       courierName: "Porter",
                       vehicleNo: vehicleNo.trim() || undefined,
                       courierTrackingNo: courierTrackingNo.trim() || undefined,
                     });
                     setShowDispatch(false);
+                    setShowDispatchWhatsApp(true);
                   }}
                   disabled={actionLoading}
                   className="flex-1 bg-orange-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
@@ -843,14 +895,15 @@ Thank you!
               </div>
               <div className="flex gap-2">
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     if (!courierName.trim()) { alert("Please enter courier name"); return; }
-                    updateStatus("OUT_FOR_DELIVERY", {
+                    await updateStatus("OUT_FOR_DELIVERY", {
                       courierName: courierName.trim(),
                       courierTrackingNo: courierTrackingNo.trim() || undefined,
                       courierCost: courierCost ? parseFloat(courierCost) : undefined,
                     });
                     setShowDispatch(false);
+                    setShowDispatchWhatsApp(true);
                   }}
                   disabled={actionLoading}
                   className="flex-1 bg-amber-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">

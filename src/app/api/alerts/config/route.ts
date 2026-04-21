@@ -21,12 +21,19 @@ export async function PUT(req: NextRequest) {
   try {
     await requireAuth(["ADMIN"]);
     const body = await req.json();
-    const { redFlagPhones } = body as { redFlagPhones: string };
+    const { redFlagPhones, whatsappTemplates } = body as {
+      redFlagPhones?: string;
+      whatsappTemplates?: { scheduled?: string; dispatched?: string; delivered?: string };
+    };
+
+    const updateData: Record<string, unknown> = {};
+    if (redFlagPhones !== undefined) updateData.redFlagPhones = redFlagPhones;
+    if (whatsappTemplates !== undefined) updateData.whatsappTemplates = whatsappTemplates;
 
     const config = await prisma.alertConfig.upsert({
       where: { id: "singleton" },
-      update: { redFlagPhones },
-      create: { id: "singleton", redFlagPhones },
+      update: updateData,
+      create: { id: "singleton", ...updateData },
     });
 
     return successResponse(config);

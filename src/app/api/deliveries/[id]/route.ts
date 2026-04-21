@@ -61,7 +61,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       // Status transition guards (inside transaction for atomicity)
       if (data.status) {
         const VALID: Record<string, string[]> = {
-          PENDING: ["VERIFIED", "FLAGGED"],
+          PENDING: ["VERIFIED", "WALK_OUT", "SCHEDULED", "FLAGGED"],
           VERIFIED: ["WALK_OUT", "SCHEDULED", "PACKED"],
           SCHEDULED: ["OUT_FOR_DELIVERY", "VERIFIED", "PACKED"],
           PACKED: ["SHIPPED"],

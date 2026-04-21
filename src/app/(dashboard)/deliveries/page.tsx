@@ -858,8 +858,11 @@ export default function DeliveriesPage() {
                     )}
                     {d.status === "PENDING" && d.invoiceType === "SALES" && (
                       <>
-                        <button onClick={() => handleVerify(d.id)}
-                          className="flex-1 bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Verify</button>
+                        <button onClick={() => handleWalkOut(d.id)}
+                          className="flex-1 bg-green-600 text-white py-1.5 rounded-md text-xs font-medium">Walk-out</button>
+                        <Link href={`/deliveries/${d.id}`} className="flex-1">
+                          <button className="w-full bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Schedule</button>
+                        </Link>
                         <button onClick={() => handleFlag(d.id)}
                           className="bg-red-100 text-red-700 px-3 py-1.5 rounded-md text-xs font-medium">Flag</button>
                       </>

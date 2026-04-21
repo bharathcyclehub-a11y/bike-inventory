@@ -195,6 +195,12 @@ const menuItems: MenuItem[] = [
     roles: ["ADMIN"],
   },
   {
+    label: "WhatsApp Templates",
+    icon: MessageSquare,
+    href: "/more/whatsapp-templates",
+    roles: ["ADMIN"],
+  },
+  {
     label: "Alert Config",
     icon: Bell,
     href: "/more/alerts",
