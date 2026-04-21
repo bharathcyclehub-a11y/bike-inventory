@@ -146,8 +146,8 @@ export default function NewInboundPage() {
 
   // Submit
   const handleSubmit = async () => {
-    if (!selectedBrand || !billImageUrl || !billNo || !billDate || lineItems.length === 0) {
-      setError("Brand, bill photo, bill number, bill date, and at least one item required");
+    if (!selectedBrand || (!billImageUrl && !billPdfUrl) || !billNo || !billDate || lineItems.length === 0) {
+      setError("Brand, bill photo or PDF, bill number, bill date, and at least one item required");
       return;
     }
     setStep("submitting");
@@ -417,7 +417,7 @@ export default function NewInboundPage() {
             {error && <p className="text-sm text-red-600">{error}</p>}
 
             <Button type="button" size="lg" onClick={handleSubmit}
-              disabled={step === "submitting" || !selectedBrand || !billImageUrl || !billNo || !billDate || lineItems.length === 0}
+              disabled={step === "submitting" || !selectedBrand || (!billImageUrl && !billPdfUrl) || !billNo || !billDate || lineItems.length === 0}
               className="w-full bg-indigo-600 hover:bg-indigo-700">
               {step === "submitting" ? (
                 <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Creating...</>

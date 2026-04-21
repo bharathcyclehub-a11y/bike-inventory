@@ -128,7 +128,7 @@ export async function POST(req: NextRequest) {
         shipmentNo,
         brandId: data.brandId,
         billNo: data.billNo,
-        billImageUrl: data.billImageUrl,
+        billImageUrl: data.billImageUrl || "",
         billPdfUrl: data.billPdfUrl || null,
         billDate,
         expectedDeliveryDate,

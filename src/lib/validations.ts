@@ -306,7 +306,7 @@ export const deliveryUpdateSchema = z.object({
 export const inboundShipmentSchema = z.object({
   brandId: z.string().min(1, "Brand is required"),
   billNo: z.string().min(1, "Bill number is required"),
-  billImageUrl: z.string().min(1, "Bill image is required"),
+  billImageUrl: z.string().optional(),
   billPdfUrl: z.string().optional(),
   billDate: z.string().min(1, "Bill date is required"),
   notes: z.string().optional(),
