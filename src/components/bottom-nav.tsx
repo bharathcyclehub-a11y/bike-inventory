@@ -67,7 +67,7 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "INWARDS_CLERK":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
+        { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
         { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
@@ -75,7 +75,7 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "OUTWARDS_CLERK":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
+        { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
         { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
