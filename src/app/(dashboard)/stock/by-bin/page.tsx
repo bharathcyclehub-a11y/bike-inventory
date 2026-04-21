@@ -187,7 +187,7 @@ export default function BinStockPage() {
                             </p>
                           </div>
                           <div className="text-right shrink-0 mr-1">
-                            <p className="text-sm font-bold text-slate-700">{formatINR(bin.totalValue)}</p>
+                            <p className="text-sm font-bold text-slate-700">{bin.totalStock.toLocaleString("en-IN")} <span className="text-[10px] font-normal text-slate-400">units</span></p>
                           </div>
                           {isExpanded ? (
                             <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
