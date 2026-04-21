@@ -59,6 +59,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
+  const isAdmin = role === "ADMIN";
   const canDeliver = ["ADMIN", "SUPERVISOR", "INWARDS_CLERK"].includes(role);
 
   const [shipment, setShipment] = useState<Shipment | null>(null);
@@ -139,22 +140,26 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         </div>
       </div>
 
-      {/* Bill Image toggle */}
-      <button onClick={() => setShowImage(!showImage)}
-        className="flex items-center gap-2 text-xs text-indigo-600 font-medium mb-3 hover:underline">
-        <ImageIcon className="h-3.5 w-3.5" /> {showImage ? "Hide" : "View"} Bill Image
-      </button>
-      {showImage && shipment.billImageUrl && (
-        <div className="rounded-xl overflow-hidden mb-4 bg-slate-100">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={shipment.billImageUrl} alt="Bill" className="w-full object-contain max-h-96" />
-        </div>
-      )}
-      {shipment.billPdfUrl && (
-        <a href={shipment.billPdfUrl} target="_blank" rel="noopener noreferrer"
-          className="inline-flex items-center gap-1.5 text-xs text-indigo-600 font-medium mb-3 hover:underline">
-          <FileText className="h-3.5 w-3.5" /> View Invoice PDF
-        </a>
+      {/* Bill Image & PDF — admin only */}
+      {isAdmin && (
+        <>
+          <button onClick={() => setShowImage(!showImage)}
+            className="flex items-center gap-2 text-xs text-indigo-600 font-medium mb-3 hover:underline">
+            <ImageIcon className="h-3.5 w-3.5" /> {showImage ? "Hide" : "View"} Bill Image
+          </button>
+          {showImage && shipment.billImageUrl && (
+            <div className="rounded-xl overflow-hidden mb-4 bg-slate-100">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={shipment.billImageUrl} alt="Bill" className="w-full object-contain max-h-96" />
+            </div>
+          )}
+          {shipment.billPdfUrl && (
+            <a href={shipment.billPdfUrl} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs text-indigo-600 font-medium mb-3 hover:underline">
+              <FileText className="h-3.5 w-3.5" /> View Invoice PDF
+            </a>
+          )}
+        </>
       )}
 
       {/* Summary */}
@@ -176,10 +181,12 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
               <span className="text-sm font-medium text-green-600">{formatDate(shipment.deliveredAt)}</span>
             </div>
           )}
-          <div className="flex justify-between items-center">
-            <span className="text-xs text-slate-500">Total</span>
-            <span className="text-sm font-semibold text-slate-900">{formatINR(shipment.totalAmount)}</span>
-          </div>
+          {isAdmin && (
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-slate-500">Total</span>
+              <span className="text-sm font-semibold text-slate-900">{formatINR(shipment.totalAmount)}</span>
+            </div>
+          )}
           <div className="flex justify-between items-center">
             <span className="text-xs text-slate-500">Items</span>
             <span className="text-sm text-slate-700">{deliveredCount}/{shipment.totalItems} delivered</span>
@@ -221,8 +228,8 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
 
               <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
                 <span>Qty: {li.quantity}</span>
-                <span>Rate: {formatINR(li.rate)}</span>
-                <span className="font-medium text-slate-700">{formatINR(li.amount)}</span>
+                {isAdmin && <span>Rate: {formatINR(li.rate)}</span>}
+                {isAdmin && <span className="font-medium text-slate-700">{formatINR(li.amount)}</span>}
               </div>
 
               {/* Pre-booked customer */}
