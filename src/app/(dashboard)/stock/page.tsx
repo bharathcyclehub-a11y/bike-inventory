@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { useDebounce, fuzzySearchFields } from "@/lib/utils";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
+import { usePermissions } from "@/lib/use-permissions";
 
 const STOCK_COLUMNS: ExportColumn[] = [
   { header: "SKU", key: "sku" },
@@ -99,7 +100,8 @@ export default function StockPage() {
   const userRole = (session?.user as { role?: string })?.role || "";
   const canBulkEdit = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(userRole);
 
-  const canFetchItems = ["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "PURCHASE_MANAGER"].includes(userRole);
+  const { canFetch } = usePermissions(userRole);
+  const canFetchItems = canFetch("stock");
 
   // Fetch Items from Zoho
   const [fetchStep, setFetchStep] = useState<"idle" | "pickDate" | "fetching" | "selecting" | "importing">("idle");

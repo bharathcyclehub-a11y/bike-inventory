@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useDebounce, getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
 import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface DeliveryItem {
   id: string;
@@ -91,7 +92,8 @@ interface ZohoInvoicePreview {
 export default function DeliveriesPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canFetchInvoices = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER", "OUTWARDS_CLERK"].includes(role);
+  const { canFetch } = usePermissions(role);
+  const canFetchInvoices = canFetch("deliveries");
   const isAdmin = role === "ADMIN";
 
   const [deliveries, setDeliveries] = useState<DeliveryItem[]>([]);
