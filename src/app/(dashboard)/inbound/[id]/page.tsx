@@ -80,8 +80,8 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const [itemLoading, setItemLoading] = useState<string | null>(null);
   const [putawayLoading, setPutawayLoading] = useState(false);
 
-  // Per-item bin selections (lineItemId → binId)
-  const [binSelections, setBinSelections] = useState<Record<string, string>>({});
+  // Per-item bin selections: lineItemId → array of binIds (one per unit)
+  const [binSelections, setBinSelections] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     Promise.all([
@@ -101,21 +101,57 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
     if (detail.success) setShipment(detail.data);
   };
 
+  // Set bin for a specific unit of a line item
+  const setBinForUnit = (lineItemId: string, unitIndex: number, binId: string, totalQty: number) => {
+    setBinSelections((prev) => {
+      const current = prev[lineItemId] || new Array(totalQty).fill("");
+      const updated = [...current];
+      // Ensure array is the right length
+      while (updated.length < totalQty) updated.push("");
+      updated[unitIndex] = binId;
+      return { ...prev, [lineItemId]: updated };
+    });
+  };
+
+  // Set all units of a line item to the same bin
+  const setBinForAll = (lineItemId: string, binId: string, totalQty: number) => {
+    setBinSelections((prev) => ({
+      ...prev,
+      [lineItemId]: new Array(totalQty).fill(binId),
+    }));
+  };
+
+  // Get bin selections as grouped allocations [{binId, qty}]
+  const getBinAllocations = (lineItemId: string): Array<{ binId: string; qty: number }> => {
+    const selections = binSelections[lineItemId] || [];
+    const groups: Record<string, number> = {};
+    for (const binId of selections) {
+      if (binId) groups[binId] = (groups[binId] || 0) + 1;
+    }
+    return Object.entries(groups).map(([binId, qty]) => ({ binId, qty }));
+  };
+
   const handleMarkDelivered = async (status: string) => {
-    // Validate: all undelivered items must have a bin selected
     const undeliveredItems = shipment?.lineItems.filter((li) => !li.isDelivered) || [];
-    const missingBin = undeliveredItems.filter((li) => !binSelections[li.id]);
-    if (status === "DELIVERED" && missingBin.length > 0) {
-      alert(`Please assign a bin to all items before marking delivered. ${missingBin.length} item(s) missing bin.`);
-      return;
+    if (status === "DELIVERED") {
+      for (const li of undeliveredItems) {
+        const selections = binSelections[li.id] || [];
+        const allFilled = selections.length === li.quantity && selections.every((b) => b);
+        if (!allFilled) {
+          alert(`Please assign a bin to all units of "${li.productName}" (${li.quantity} units) before marking delivered.`);
+          return;
+        }
+      }
     }
 
     setActionLoading(true);
     try {
-      // Collect bin assignments for undelivered items
-      const binAssignments = shipment?.lineItems
-        .filter((li) => !li.isDelivered && binSelections[li.id])
-        .map((li) => ({ lineItemId: li.id, binId: binSelections[li.id] })) || [];
+      const binAssignments = undeliveredItems
+        .filter((li) => binSelections[li.id]?.some((b) => b))
+        .map((li) => ({
+          lineItemId: li.id,
+          binAllocations: getBinAllocations(li.id),
+        }));
 
       const res = await fetch(`/api/inbound/${id}/status`, {
         method: "PUT",
@@ -145,17 +181,19 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   };
 
   const handleMarkItemDelivered = async (li: LineItem) => {
-    if (!binSelections[li.id]) {
-      alert("Please select a bin before marking this item as delivered.");
+    const selections = binSelections[li.id] || [];
+    const allFilled = selections.length === li.quantity && selections.every((b) => b);
+    if (!allFilled) {
+      alert(`Please select a bin for all ${li.quantity} unit(s) before marking delivered.`);
       return;
     }
     setItemLoading(li.id);
     try {
-      const binId = binSelections[li.id];
+      const binAllocations = getBinAllocations(li.id);
       const res = await fetch(`/api/inbound/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lineItemId: li.id, deliveredQty: li.quantity, binId }),
+        body: JSON.stringify({ lineItemId: li.id, deliveredQty: li.quantity, binAllocations }),
       }).then((r) => r.json());
       if (res.success) {
         setBinSelections((prev) => { const n = { ...prev }; delete n[li.id]; return n; });
@@ -167,11 +205,15 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
 
   const handlePutaway = async () => {
     const items = Object.entries(binSelections)
-      .filter(([lineItemId, binId]) => {
+      .filter(([lineItemId]) => {
         const li = shipment?.lineItems.find((l) => l.id === lineItemId);
-        return li?.isDelivered && !li.binId && binId;
+        return li?.isDelivered && !li.binId;
       })
-      .map(([lineItemId, binId]) => ({ lineItemId, binId }));
+      .map(([lineItemId]) => ({
+        lineItemId,
+        binId: (binSelections[lineItemId] || [])[0] || "",
+      }))
+      .filter((i) => i.binId);
 
     if (items.length === 0) return;
     setPutawayLoading(true);
@@ -221,6 +263,65 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
     finally { setActionLoading(false); }
   };
 
+  // Render bin selectors for a line item (one per unit)
+  const renderBinSelectors = (li: LineItem, variant: "default" | "amber" = "default") => {
+    const qty = li.quantity;
+    const selections = binSelections[li.id] || [];
+    const borderClass = variant === "amber" ? "border-amber-200" : "border-slate-200";
+    const bgClass = variant === "amber" ? "bg-amber-50" : "bg-white";
+
+    if (qty === 1) {
+      return (
+        <select
+          value={selections[0] || ""}
+          onChange={(e) => setBinForUnit(li.id, 0, e.target.value, qty)}
+          className={`mt-2 w-full text-xs border ${borderClass} rounded-lg px-2 py-1.5 ${bgClass} text-slate-700`}
+        >
+          <option value="">Select bin *</option>
+          {bins.map((b) => (
+            <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
+          ))}
+        </select>
+      );
+    }
+
+    // Multiple units — show "Apply to all" + per-unit selectors
+    const allSame = selections.length > 0 && selections.every((b) => b && b === selections[0]);
+    return (
+      <div className="mt-2 space-y-1.5">
+        {/* Apply to all shortcut */}
+        <div className="flex items-center gap-2">
+          <select
+            value={allSame ? selections[0] : ""}
+            onChange={(e) => { if (e.target.value) setBinForAll(li.id, e.target.value, qty); }}
+            className={`flex-1 text-xs border ${borderClass} rounded-lg px-2 py-1.5 ${bgClass} text-slate-700`}
+          >
+            <option value="">Apply same bin to all {qty} units</option>
+            {bins.map((b) => (
+              <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
+            ))}
+          </select>
+        </div>
+        {/* Per-unit selectors */}
+        {Array.from({ length: qty }).map((_, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-400 w-10 shrink-0">#{i + 1}</span>
+            <select
+              value={selections[i] || ""}
+              onChange={(e) => setBinForUnit(li.id, i, e.target.value, qty)}
+              className={`flex-1 text-xs border ${borderClass} rounded-lg px-2 py-1.5 ${bgClass} text-slate-700`}
+            >
+              <option value="">Select bin *</option>
+              {bins.map((b) => (
+                <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
+              ))}
+            </select>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>;
   }
@@ -242,7 +343,6 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
     ? { variant: "info" as const, label: "Partial" }
     : { variant: "warning" as const, label: "In Transit" };
 
-  // Count putaway selections ready to save
   const putawayReady = Object.entries(binSelections).filter(([liId]) => {
     const li = shipment.lineItems.find((l) => l.id === liId);
     return li?.isDelivered && !li.binId;
@@ -321,7 +421,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && (
         <div className="space-y-2 mb-3">
           <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-2 text-center">
-            Select bin for each item, then mark as delivered. Or mark all at once.
+            Select bin for each unit, then mark as delivered. Or mark all at once.
           </p>
           <div className="flex gap-2">
             <Button onClick={() => handleMarkDelivered("DELIVERED")} disabled={actionLoading}
@@ -385,55 +485,28 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                 </div>
               )}
 
-              {/* Bin selector for undelivered items (during partial delivery) */}
+              {/* Bin selectors for undelivered items (during partial delivery) */}
               {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && bins.length > 0 && (
-                <div className="mt-2 space-y-2">
-                  <select
-                    value={binSelections[li.id] || ""}
-                    onChange={(e) => setBinSelections((prev) => ({ ...prev, [li.id]: e.target.value }))}
-                    className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
-                  >
-                    <option value="">Select bin *</option>
-                    {bins.map((b) => (
-                      <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
-                    ))}
-                  </select>
+                <div>
+                  {renderBinSelectors(li)}
                   <button
                     onClick={() => handleMarkItemDelivered(li)}
                     disabled={itemLoading === li.id}
-                    className="w-full py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-medium border border-green-200 hover:bg-green-100 disabled:opacity-50"
+                    className="mt-2 w-full py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-medium border border-green-200 hover:bg-green-100 disabled:opacity-50"
                   >
                     {itemLoading === li.id ? "Marking..." : `Mark Delivered (Qty: ${li.quantity})`}
                   </button>
                 </div>
               )}
 
-              {/* Bin selector for IN_TRANSIT items (pre-select before Mark All Delivered) */}
+              {/* Bin selectors for IN_TRANSIT items (pre-select before Mark All Delivered) */}
               {canDeliver && shipment.status === "IN_TRANSIT" && bins.length > 0 && (
-                <select
-                  value={binSelections[li.id] || ""}
-                  onChange={(e) => setBinSelections((prev) => ({ ...prev, [li.id]: e.target.value }))}
-                  className="mt-2 w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
-                >
-                  <option value="">Select bin *</option>
-                  {bins.map((b) => (
-                    <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
-                  ))}
-                </select>
+                renderBinSelectors(li)
               )}
 
               {/* Post-delivery bin assignment (delivered but no bin) */}
               {canDeliver && li.isDelivered && !li.binId && bins.length > 0 && (
-                <select
-                  value={binSelections[li.id] || ""}
-                  onChange={(e) => setBinSelections((prev) => ({ ...prev, [li.id]: e.target.value }))}
-                  className="mt-2 w-full text-xs border border-amber-200 rounded-lg px-2 py-1.5 bg-amber-50 text-slate-700"
-                >
-                  <option value="">Assign bin...</option>
-                  {bins.map((b) => (
-                    <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
-                  ))}
-                </select>
+                renderBinSelectors(li, "amber")
               )}
 
               {/* Pre-booked customer */}

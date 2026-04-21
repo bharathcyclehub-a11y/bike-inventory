@@ -69,13 +69,15 @@ export async function PUT(
       const nowDelivered = body.deliveredQty > 0;
       const qty = body.deliveredQty;
 
-      const binId = body.binId || null;
-      if (!binId) return errorResponse("Bin assignment is required when marking items delivered", 400);
+      // Support per-unit bin allocation: binAllocations=[{binId, qty}] or legacy single binId
+      const binAllocations: Array<{ binId: string; qty: number }> = body.binAllocations || (body.binId ? [{ binId: body.binId, qty }] : []);
+      if (binAllocations.length === 0) return errorResponse("Bin assignment is required when marking items delivered", 400);
+      const primaryBinId = binAllocations[0].binId;
 
       await prisma.$transaction(async (tx) => {
         await tx.inboundLineItem.update({
           where: { id: body.lineItemId },
-          data: { isDelivered: nowDelivered, deliveredQty: qty, binId },
+          data: { isDelivered: nowDelivered, deliveredQty: qty, binId: primaryBinId },
         });
 
         // Add stock only when newly marking as delivered (not already delivered)
@@ -88,23 +90,27 @@ export async function PUT(
               });
 
           if (matchedProduct) {
-            const previousStock = matchedProduct.currentStock;
-            const newStock = previousStock + qty;
+            // Create one inventory transaction per bin allocation
+            let runningStock = matchedProduct.currentStock;
+            for (const alloc of binAllocations) {
+              const previousStock = runningStock;
+              runningStock += alloc.qty;
+              await tx.inventoryTransaction.create({
+                data: {
+                  type: "INWARD",
+                  productId: matchedProduct.id,
+                  quantity: alloc.qty,
+                  previousStock,
+                  newStock: runningStock,
+                  referenceNo: lineItem.shipment.shipmentNo,
+                  notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${alloc.qty} → Bin: ${alloc.binId.slice(-6)}`,
+                  userId: user.id,
+                },
+              });
+            }
             await tx.product.update({
               where: { id: matchedProduct.id },
-              data: { currentStock: newStock, ...(binId ? { binId } : {}) },
-            });
-            await tx.inventoryTransaction.create({
-              data: {
-                type: "INWARD",
-                productId: matchedProduct.id,
-                quantity: qty,
-                previousStock,
-                newStock,
-                referenceNo: lineItem.shipment.shipmentNo,
-                notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${qty}`,
-                userId: user.id,
-              },
+              data: { currentStock: runningStock, binId: primaryBinId },
             });
           }
 
