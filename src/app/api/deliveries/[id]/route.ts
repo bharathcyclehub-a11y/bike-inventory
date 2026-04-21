@@ -195,9 +195,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const delivery = await prisma.delivery.findUnique({ where: { id } });
     if (!delivery) return errorResponse("Delivery not found", 404);
 
-    if (!["PENDING", "FLAGGED", "PREBOOKED"].includes(delivery.status)) {
-      return errorResponse("Can only delete PENDING, FLAGGED, or PREBOOKED deliveries", 400);
-    }
+    // Admin can delete deliveries in any status
 
     await prisma.delivery.delete({ where: { id } });
     return successResponse({ deleted: true });
