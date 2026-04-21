@@ -3,7 +3,7 @@
 import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Phone, CheckCircle2, Package, Calendar, Truck, Image as ImageIcon } from "lucide-react";
+import { ArrowLeft, Loader2, Phone, CheckCircle2, Package, Calendar, Truck, Image as ImageIcon, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -31,6 +31,7 @@ interface Shipment {
   shipmentNo: string;
   billNo: string;
   billImageUrl: string;
+  billPdfUrl: string | null;
   billDate: string;
   expectedDeliveryDate: string;
   status: string;
@@ -148,6 +149,12 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={shipment.billImageUrl} alt="Bill" className="w-full object-contain max-h-96" />
         </div>
+      )}
+      {shipment.billPdfUrl && (
+        <a href={shipment.billPdfUrl} target="_blank" rel="noopener noreferrer"
+          className="inline-flex items-center gap-1.5 text-xs text-indigo-600 font-medium mb-3 hover:underline">
+          <FileText className="h-3.5 w-3.5" /> View Invoice PDF
+        </a>
       )}
 
       {/* Summary */}

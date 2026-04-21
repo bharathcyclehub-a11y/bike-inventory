@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { ArrowLeft, Camera, Loader2, CheckCircle2, Trash2, Edit3 } from "lucide-react";
+import { ArrowLeft, Camera, Loader2, CheckCircle2, Trash2, Edit3, FileText, Upload } from "lucide-react";
+import { uploadImage } from "@/lib/supabase";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,10 @@ export default function NewInboundPage() {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedBrand, setSelectedBrand] = useState("");
   const [billImageUrl, setBillImageUrl] = useState("");
+  const [billPdfUrl, setBillPdfUrl] = useState("");
+  const [pdfName, setPdfName] = useState("");
+  const [uploadingPdf, setUploadingPdf] = useState(false);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   const [billNo, setBillNo] = useState("");
   const [billDate, setBillDate] = useState(new Date().toISOString().split("T")[0]);
   const [lineItems, setLineItems] = useState<LineItem[]>([]);
@@ -80,6 +85,33 @@ export default function NewInboundPage() {
     reader.readAsDataURL(file);
   };
 
+  // Handle PDF upload to Supabase
+  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.type !== "application/pdf") {
+      setError("Only PDF files are allowed");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError("PDF must be under 10 MB");
+      return;
+    }
+    setUploadingPdf(true);
+    setError("");
+    try {
+      const path = `bills/${Date.now()}-${file.name.replace(/\s+/g, "-")}`;
+      const url = await uploadImage(file, path);
+      setBillPdfUrl(url);
+      setPdfName(file.name);
+    } catch {
+      setError("Failed to upload PDF. Try again.");
+    } finally {
+      setUploadingPdf(false);
+      if (pdfInputRef.current) pdfInputRef.current.value = "";
+    }
+  };
+
   // Manual add row
   const addRow = () => {
     setLineItems([...lineItems, { productName: "", quantity: 1, rate: 0, amount: 0 }]);
@@ -116,6 +148,7 @@ export default function NewInboundPage() {
           brandId: selectedBrand,
           billNo,
           billImageUrl,
+          billPdfUrl: billPdfUrl || undefined,
           billDate,
           notes: notes || undefined,
           lineItems: lineItems.map((li) => ({
@@ -170,6 +203,8 @@ export default function NewInboundPage() {
             setStep("brand");
             setSelectedBrand("");
             setBillImageUrl("");
+            setBillPdfUrl("");
+            setPdfName("");
             setBillNo("");
             setBillDate(new Date().toISOString().split("T")[0]);
             setLineItems([]);
@@ -227,6 +262,35 @@ export default function NewInboundPage() {
                 className="w-full h-32 border-2 border-dashed border-indigo-300 rounded-lg flex flex-col items-center justify-center gap-2 bg-indigo-50/50 hover:bg-indigo-50 transition-colors">
                 <Camera className="h-8 w-8 text-indigo-400" />
                 <span className="text-xs font-medium text-indigo-600">Tap to take photo of bill</span>
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* PDF Upload */}
+        {selectedBrand && (
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Invoice PDF (optional)</label>
+            <input ref={pdfInputRef} type="file" accept="application/pdf" onChange={handlePdfUpload} className="hidden" />
+
+            {billPdfUrl ? (
+              <div className="flex items-center gap-3 bg-green-50 border border-green-200 rounded-lg p-3">
+                <FileText className="h-8 w-8 text-green-600 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-green-800 truncate">{pdfName}</p>
+                  <p className="text-[10px] text-green-600">Uploaded</p>
+                </div>
+                <button onClick={() => { setBillPdfUrl(""); setPdfName(""); }}
+                  className="text-xs text-red-500 hover:underline shrink-0">Remove</button>
+              </div>
+            ) : (
+              <button type="button" onClick={() => pdfInputRef.current?.click()} disabled={uploadingPdf}
+                className="w-full h-20 border-2 border-dashed border-slate-300 rounded-lg flex items-center justify-center gap-2 bg-slate-50/50 hover:bg-slate-50 transition-colors disabled:opacity-50">
+                {uploadingPdf ? (
+                  <><Loader2 className="h-5 w-5 animate-spin text-slate-400" /><span className="text-xs text-slate-500">Uploading...</span></>
+                ) : (
+                  <><Upload className="h-5 w-5 text-slate-400" /><span className="text-xs font-medium text-slate-500">Upload invoice PDF</span></>
+                )}
               </button>
             )}
           </div>

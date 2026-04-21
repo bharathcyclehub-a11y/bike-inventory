@@ -1041,6 +1041,7 @@ model InboundShipment {
   brand                 Brand                 @relation(fields: [brandId], references: [id])
   billNo                String                // Brand's invoice number (from image)
   billImageUrl          String                @db.Text // Base64 photo of paper bill
+  billPdfUrl            String?               // Supabase Storage URL for uploaded PDF
   billDate              DateTime
   expectedDeliveryDate  DateTime
   status                InboundShipmentStatus @default(IN_TRANSIT)
