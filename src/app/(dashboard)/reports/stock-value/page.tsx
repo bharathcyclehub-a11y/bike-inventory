@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, TrendingUp, TrendingDown, Truck, Package } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 
 interface StockValueData {
@@ -11,7 +11,18 @@ interface StockValueData {
   totalCostValue: number;
   totalSellingValue: number;
   totalMrpValue: number;
-  breakdown: Array<{ name: string; count: number; qty: number; costValue: number; sellingValue: number; mrpValue: number }>;
+  totalInTransitQty: number;
+  totalInTransitValue: number;
+  totalOutwardQty: number;
+  totalOutwardValue: number;
+  effectiveCostValue: number;
+  effectiveQty: number;
+  breakdown: Array<{
+    name: string; count: number; qty: number;
+    costValue: number; sellingValue: number; mrpValue: number;
+    inTransitQty: number; inTransitValue: number;
+    outwardQty: number; outwardValue: number;
+  }>;
 }
 
 function fmt(amount: number) {
@@ -45,24 +56,76 @@ export default function StockValuePage() {
         <h1 className="text-lg font-bold text-slate-900">Stock Value</h1>
       </div>
 
-      {/* Summary */}
+      {/* Effective Stock Value — the main number */}
+      {data && (
+        <Card className="bg-indigo-50 border-indigo-200 mb-3">
+          <CardContent className="p-4">
+            <p className="text-xs text-indigo-600 font-medium mb-1">Effective Stock Value</p>
+            <p className="text-2xl font-bold text-indigo-800">{fmt(data.effectiveCostValue)}</p>
+            <p className="text-[10px] text-indigo-500 mt-1">
+              {data.effectiveQty.toLocaleString("en-IN")} units (current + in-transit − outward pending)
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Formula breakdown */}
+      {data && (
+        <div className="space-y-1.5 mb-4">
+          {/* Current Stock */}
+          <Card>
+            <CardContent className="p-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Package className="h-4 w-4 text-blue-500" />
+                <div>
+                  <p className="text-xs font-medium text-slate-700">Current Stock</p>
+                  <p className="text-[10px] text-slate-400">{data.totalItems.toLocaleString("en-IN")} units</p>
+                </div>
+              </div>
+              <p className="text-sm font-bold text-blue-700">{fmt(data.totalCostValue)}</p>
+            </CardContent>
+          </Card>
+
+          {/* + In Transit */}
+          <Card className="bg-amber-50/50 border-amber-200">
+            <CardContent className="p-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-amber-500" />
+                <div>
+                  <p className="text-xs font-medium text-amber-700">+ In Transit (Inbound)</p>
+                  <p className="text-[10px] text-amber-500">{data.totalInTransitQty.toLocaleString("en-IN")} units arriving</p>
+                </div>
+              </div>
+              <p className="text-sm font-bold text-amber-700">+ {fmt(data.totalInTransitValue)}</p>
+            </CardContent>
+          </Card>
+
+          {/* − Outward Pending */}
+          <Card className="bg-red-50/50 border-red-200">
+            <CardContent className="p-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TrendingDown className="h-4 w-4 text-red-500" />
+                <div>
+                  <p className="text-xs font-medium text-red-700">− Outward Pending (Deliveries)</p>
+                  <p className="text-[10px] text-red-500">{data.totalOutwardQty.toLocaleString("en-IN")} units to dispatch</p>
+                </div>
+              </div>
+              <p className="text-sm font-bold text-red-700">− {fmt(data.totalOutwardValue)}</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Selling vs MRP */}
       {data && (
         <div className="grid grid-cols-2 gap-2 mb-4">
-          <Card><CardContent className="p-3">
-            <p className="text-xs text-slate-500">Total Items</p>
-            <p className="text-lg font-bold text-slate-900">{data.totalItems.toLocaleString("en-IN")}</p>
-          </CardContent></Card>
-          <Card><CardContent className="p-3">
-            <p className="text-xs text-slate-500">Products</p>
-            <p className="text-lg font-bold text-slate-900">{data.totalProducts}</p>
-          </CardContent></Card>
-          <Card className="bg-blue-50 border-blue-200"><CardContent className="p-3">
-            <p className="text-xs text-blue-600">Cost Value</p>
-            <p className="text-lg font-bold text-blue-700">{fmt(data.totalCostValue)}</p>
-          </CardContent></Card>
           <Card className="bg-green-50 border-green-200"><CardContent className="p-3">
             <p className="text-xs text-green-600">Selling Value</p>
             <p className="text-lg font-bold text-green-700">{fmt(data.totalSellingValue)}</p>
+          </CardContent></Card>
+          <Card className="bg-purple-50 border-purple-200"><CardContent className="p-3">
+            <p className="text-xs text-purple-600">MRP Value</p>
+            <p className="text-lg font-bold text-purple-700">{fmt(data.totalMrpValue)}</p>
           </CardContent></Card>
         </div>
       )}
@@ -94,6 +157,16 @@ export default function StockValuePage() {
                   <span className="text-blue-600">Cost: {fmt(group.costValue)}</span>
                   <span className="text-green-600">Sell: {fmt(group.sellingValue)}</span>
                 </div>
+                {(group.inTransitQty > 0 || group.outwardQty > 0) && (
+                  <div className="flex gap-4 text-[10px] mt-1">
+                    {group.inTransitQty > 0 && (
+                      <span className="text-amber-600">+{group.inTransitQty} incoming</span>
+                    )}
+                    {group.outwardQty > 0 && (
+                      <span className="text-red-600">−{group.outwardQty} outward</span>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
