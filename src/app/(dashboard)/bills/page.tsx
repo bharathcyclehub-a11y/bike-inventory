@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { useDebounce } from "@/lib/utils";
+import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 
 const BILL_COLUMNS: ExportColumn[] = [
   { header: "Bill No", key: "billNo" },
@@ -73,6 +74,9 @@ export default function BillsPage() {
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
   const [billSearch, setBillSearch] = useState("");
+  const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
+  const [dateFrom, setDateFrom] = useState<string | undefined>();
+  const [dateTo, setDateTo] = useState<string | undefined>();
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -83,13 +87,15 @@ export default function BillsPage() {
       params.set("status", filter);
     }
     if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
 
     fetch(`/api/bills?${params}`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setBills(res.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch]);
+  }, [filter, debouncedSearch, dateFrom, dateTo]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -315,7 +321,7 @@ export default function BillsPage() {
         />
       </div>
 
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-2 pb-1">
         {STATUS_FILTERS.map((s) => (
           <button
             key={s}
@@ -328,6 +334,12 @@ export default function BillsPage() {
           </button>
         ))}
       </div>
+
+      <DateFilter
+        value={dateFilter}
+        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        className="mb-3"
+      />
 
       {loading ? (
         <div className="space-y-2">

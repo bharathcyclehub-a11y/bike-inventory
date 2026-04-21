@@ -15,6 +15,9 @@ export async function GET(req: NextRequest) {
     const customerId = searchParams.get("customerId") || undefined;
     const overdue = searchParams.get("overdue") === "true";
 
+    const dateFrom = searchParams.get("dateFrom") || undefined;
+    const dateTo = searchParams.get("dateTo") || undefined;
+
     const where = {
       ...(search && {
         OR: [
@@ -25,6 +28,12 @@ export async function GET(req: NextRequest) {
       ...(status && { status: status as never }),
       ...(customerId && { customerId }),
       ...(overdue && { dueDate: { lt: new Date() }, status: { in: ["PENDING", "PARTIALLY_PAID"] as InvoiceStatus[] } }),
+      ...((dateFrom || dateTo) && {
+        invoiceDate: {
+          ...(dateFrom && { gte: new Date(dateFrom) }),
+          ...(dateTo && { lte: new Date(dateTo + "T23:59:59.999Z") }),
+        },
+      }),
     };
 
     const [invoices, total] = await Promise.all([

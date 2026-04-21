@@ -20,6 +20,8 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status") || undefined;
     const priority = searchParams.get("priority") || undefined;
     const vendorId = searchParams.get("vendorId") || undefined;
+    const dateFrom = searchParams.get("dateFrom") || undefined;
+    const dateTo = searchParams.get("dateTo") || undefined;
 
     const where = {
       ...(search && {
@@ -35,6 +37,12 @@ export async function GET(req: NextRequest) {
       ...(status && { status: status as never }),
       ...(priority && { priority: priority as never }),
       ...(vendorId && { vendorId }),
+      ...((dateFrom || dateTo) && {
+        createdAt: {
+          ...(dateFrom && { gte: new Date(dateFrom) }),
+          ...(dateTo && { lte: new Date(dateTo + "T23:59:59.999Z") }),
+        },
+      }),
     };
 
     const [issues, total, openCount, inProgressCount, resolvedCount] =

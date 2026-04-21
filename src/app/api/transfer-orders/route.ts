@@ -25,9 +25,18 @@ export async function GET(req: NextRequest) {
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status"); // PENDING, APPROVED, REJECTED, all
 
+    const dateFrom = searchParams.get("dateFrom") || undefined;
+    const dateTo = searchParams.get("dateTo") || undefined;
+
     const where = {
       ...(status && status !== "all" && {
         status: status as "PENDING" | "APPROVED" | "REJECTED",
+      }),
+      ...((dateFrom || dateTo) && {
+        createdAt: {
+          ...(dateFrom && { gte: new Date(dateFrom) }),
+          ...(dateTo && { lte: new Date(dateTo + "T23:59:59.999Z") }),
+        },
       }),
     };
 

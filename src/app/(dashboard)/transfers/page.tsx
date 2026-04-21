@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Plus, ArrowRightLeft, ArrowRight, CheckCircle2, XCircle, Clock, Loader2, Package } from "lucide-react";
+import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -41,18 +42,23 @@ export default function TransfersPage() {
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [approving, setApproving] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
+  const [dateFrom, setDateFrom] = useState<string | undefined>();
+  const [dateTo, setDateTo] = useState<string | undefined>();
 
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
     if (filter !== "all") params.set("status", filter);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
 
     fetch(`/api/transfer-orders?${params}`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setOrders(res.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter]);
+  }, [filter, dateFrom, dateTo]);
 
   async function handleAction(id: string, action: "approve" | "reject") {
     setApproving(id);
@@ -96,6 +102,12 @@ export default function TransfersPage() {
           </Button>
         </Link>
       </div>
+
+      <DateFilter
+        value={dateFilter}
+        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        className="mb-2"
+      />
 
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1">
         {(["all", "PENDING", "APPROVED", "REJECTED"] as StatusFilter[]).map((f) => (

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { useDebounce, getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
+import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 
 const PO_COLUMNS: ExportColumn[] = [
   { header: "PO Number", key: "poNumber" },
@@ -55,19 +56,24 @@ export default function PurchaseOrdersPage() {
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
+  const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
+  const [dateFrom, setDateFrom] = useState<string | undefined>();
+  const [dateTo, setDateTo] = useState<string | undefined>();
 
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
     if (statusFilter !== "ALL") params.set("status", statusFilter);
     if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
 
     fetch(`/api/purchase-orders?${params}`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setOrders(res.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [statusFilter, debouncedSearch]);
+  }, [statusFilter, debouncedSearch, dateFrom, dateTo]);
 
   return (
     <div>
@@ -95,6 +101,12 @@ export default function PurchaseOrdersPage() {
           className="pl-9"
         />
       </div>
+
+      <DateFilter
+        value={dateFilter}
+        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        className="mb-2"
+      />
 
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
         {STATUS_FILTERS.map((s) => (

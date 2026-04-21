@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useDebounce, getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
+import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 
 interface DeliveryItem {
   id: string;
@@ -120,6 +121,8 @@ export default function DeliveriesPage() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showOutstation, setShowOutstation] = useState(false);
   const [dateRange, setDateRange] = useState<string>("all");
+  const [dateFrom, setDateFrom] = useState<string | undefined>();
+  const [dateTo, setDateTo] = useState<string | undefined>();
   const [editingDateId, setEditingDateId] = useState<string | null>(null);
   const [editDate, setEditDate] = useState("");
 
@@ -129,7 +132,9 @@ export default function DeliveriesPage() {
     if (filter !== "ALL") params.set("status", filter);
     if (debouncedSearch) params.set("search", debouncedSearch);
     if (showOutstation) params.set("outstation", "true");
-    if (dateRange !== "all") params.set("dateRange", dateRange);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
+    if (dateRange !== "all" && dateRange !== "custom") params.set("dateRange", dateRange);
     params.set("limit", "100");
 
     Promise.all([
@@ -142,7 +147,7 @@ export default function DeliveriesPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch, showOutstation, dateRange]);
+  }, [filter, debouncedSearch, showOutstation, dateRange, dateFrom, dateTo]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -529,23 +534,15 @@ export default function DeliveriesPage() {
       </div>
 
       {/* Date Range Filter */}
-      <div className="flex gap-1.5 overflow-x-auto scrollbar-hide mb-2 pb-1">
-        {[
-          { key: "all", label: "All Dates" },
-          { key: "today", label: "Today" },
-          { key: "tomorrow", label: "Tomorrow" },
-          { key: "3days", label: "3 Days" },
-          { key: "week", label: "This Week" },
-          { key: "month", label: "This Month" },
-        ].map((chip) => (
-          <button key={chip.key} onClick={() => setDateRange(chip.key)}
-            className={`shrink-0 px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              dateRange === chip.key ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
-            }`}>
-            {chip.label}
-          </button>
-        ))}
-      </div>
+      <DateFilter
+        value={dateRange as DateRangeKey}
+        onChange={(key, from, to) => {
+          setDateRange(key);
+          setDateFrom(from);
+          setDateTo(to);
+        }}
+        className="mb-2"
+      />
 
       {/* Local search */}
       <div className="relative mb-2">

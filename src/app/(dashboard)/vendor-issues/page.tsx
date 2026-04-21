@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useDebounce } from "@/lib/utils";
+import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 
 interface IssueItem {
   id: string;
@@ -65,6 +66,9 @@ export default function VendorIssuesPage() {
   const [priorityFilter, setPriorityFilter] = useState("ALL");
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
+  const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
+  const [dateFrom, setDateFrom] = useState<string | undefined>();
+  const [dateTo, setDateTo] = useState<string | undefined>();
 
   const openCount = issues[0]?.openCount ?? 0;
   const inProgressCount = issues[0]?.inProgressCount ?? 0;
@@ -77,6 +81,8 @@ export default function VendorIssuesPage() {
     if (statusFilter !== "ALL") params.set("status", statusFilter);
     if (priorityFilter !== "ALL") params.set("priority", priorityFilter);
     if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
 
     fetch(`/api/vendor-issues?${params}`)
       .then((r) => r.json())
@@ -85,7 +91,7 @@ export default function VendorIssuesPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [vendorIdParam, statusFilter, priorityFilter, debouncedSearch]);
+  }, [vendorIdParam, statusFilter, priorityFilter, debouncedSearch, dateFrom, dateTo]);
 
   const handleDelete = async (e: React.MouseEvent, issueId: string, issueNo: string) => {
     e.preventDefault();
@@ -134,6 +140,13 @@ export default function VendorIssuesPage() {
           className="pl-9"
         />
       </div>
+
+      {/* Date Filter */}
+      <DateFilter
+        value={dateFilter}
+        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        className="mb-2"
+      />
 
       {/* Status filter chips */}
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-2 pb-1">

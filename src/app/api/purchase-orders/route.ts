@@ -13,9 +13,25 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status") || undefined;
     const vendorId = searchParams.get("vendorId") || undefined;
 
+    const search = searchParams.get("search") || undefined;
+    const dateFrom = searchParams.get("dateFrom") || undefined;
+    const dateTo = searchParams.get("dateTo") || undefined;
+
     const where = {
       ...(status && { status: status as never }),
       ...(vendorId && { vendorId }),
+      ...(search && {
+        OR: [
+          { poNumber: { contains: search, mode: "insensitive" as const } },
+          { vendor: { name: { contains: search, mode: "insensitive" as const } } },
+        ],
+      }),
+      ...((dateFrom || dateTo) && {
+        orderDate: {
+          ...(dateFrom && { gte: new Date(dateFrom) }),
+          ...(dateTo && { lte: new Date(dateTo + "T23:59:59.999Z") }),
+        },
+      }),
     };
 
     const [orders, total] = await Promise.all([

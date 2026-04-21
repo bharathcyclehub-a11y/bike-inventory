@@ -11,6 +11,7 @@ import {
   ClipboardCheck,
   LogOut,
   ChevronRight,
+  ChevronDown,
   MessageSquare,
   Building2,
   ShoppingCart,
@@ -44,6 +45,11 @@ interface MenuItem {
   comingSoon?: boolean;
 }
 
+interface MenuGroup {
+  title: string;
+  items: MenuItem[];
+}
+
 const ROLE_LABELS: Record<Role, string> = {
   ADMIN: "Owner / Director",
   SUPERVISOR: "Store Supervisor",
@@ -53,171 +59,51 @@ const ROLE_LABELS: Record<Role, string> = {
   OUTWARDS_CLERK: "Sales & Dispatch Lead",
 };
 
-// Ordered by frequency of use — tailored per role
-const menuItems: MenuItem[] = [
+const MENU_GROUPS: MenuGroup[] = [
   {
-    label: "Bills & Payments",
-    icon: FileText,
-    href: "/bills",
-    roles: ["ADMIN", "SUPERVISOR"],
+    title: "Accounts",
+    items: [
+      { label: "Bills & Payments", icon: FileText, href: "/bills", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "Record Payment", icon: CreditCard, href: "/payments/new", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "Receivables", icon: HandCoins, href: "/receivables", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "Expenses", icon: Receipt, href: "/expenses", roles: ["ADMIN", "SUPERVISOR"] },
+    ],
   },
   {
-    label: "Record Payment",
-    icon: CreditCard,
-    href: "/payments/new",
-    roles: ["ADMIN", "SUPERVISOR"],
+    title: "Purchase",
+    items: [
+      { label: "Vendors", icon: Building2, href: "/vendors", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"] },
+      { label: "Purchase Orders", icon: ShoppingCart, href: "/purchase-orders", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"] },
+      { label: "Vendor Issues", icon: AlertCircle, href: "/vendor-issues", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"] },
+      { label: "Inbound Tracking", icon: Truck, href: "/inbound", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_CLERK"] },
+    ],
   },
   {
-    label: "Receivables",
-    icon: HandCoins,
-    href: "/receivables",
-    roles: ["ADMIN", "SUPERVISOR"],
+    title: "Operations",
+    items: [
+      { label: "Transfers", icon: ArrowRightLeft, href: "/transfers", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "Stock Audit", icon: ClipboardCheck, href: "/stock-audit", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"] },
+      { label: "Barcode Scanner", icon: QrCode, href: "/scanner", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"] },
+      { label: "Reorder Dashboard", icon: RefreshCw, href: "/reorder", roles: ["ADMIN", "PURCHASE_MANAGER"] },
+      { label: "Deliveries", icon: Truck, href: "/deliveries", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"] },
+      { label: "Pre-Bookings", icon: UserCheck, href: "/prebookings", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"] },
+      { label: "Second-Hand Cycles", icon: Bike, href: "/second-hand", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER", "INWARDS_CLERK"] },
+    ],
   },
   {
-    label: "Vendor Issues",
-    icon: AlertCircle,
-    href: "/vendor-issues",
-    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"],
-  },
-  {
-    label: "Vendors",
-    icon: Building2,
-    href: "/vendors",
-    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"],
-  },
-  {
-    label: "Purchase Orders",
-    icon: ShoppingCart,
-    href: "/purchase-orders",
-    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"],
-  },
-  {
-    label: "Expenses",
-    icon: Receipt,
-    href: "/expenses",
-    roles: ["ADMIN", "SUPERVISOR"],
-  },
-  {
-    label: "Transfers",
-    icon: ArrowRightLeft,
-    href: "/transfers",
-    roles: ["ADMIN", "SUPERVISOR"],
-  },
-  {
-    label: "Team Management",
-    icon: Users,
-    href: "/team",
-    roles: ["ADMIN", "SUPERVISOR"],
-  },
-  {
-    label: "Reports",
-    icon: BarChart3,
-    href: "/reports",
-    roles: ["ADMIN", "SUPERVISOR"],
-  },
-  {
-    label: "Reorder Dashboard",
-    icon: RefreshCw,
-    href: "/reorder",
-    roles: ["ADMIN", "PURCHASE_MANAGER"],
-  },
-  {
-    label: "Stock Audit",
-    icon: ClipboardCheck,
-    href: "/stock-audit",
-    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
-  },
-  {
-    label: "Barcode Scanner",
-    icon: QrCode,
-    href: "/scanner",
-    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
-  },
-  {
-    label: "Bins & Locations",
-    icon: Warehouse,
-    href: "/more/bins",
-    roles: ["ADMIN"],
-  },
-  {
-    label: "Brand Management",
-    icon: Settings,
-    href: "/more/brands",
-    roles: ["ADMIN"],
-  },
-  {
-    label: "AI Insights",
-    icon: Brain,
-    href: "/ai",
-    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"],
-  },
-  {
-    label: "Team Chat",
-    icon: MessageSquare,
-    href: "#",
-    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"],
-    comingSoon: true,
-  },
-  {
-    label: "Inbound Tracking",
-    icon: Truck,
-    href: "/inbound",
-    roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_CLERK"],
-  },
-  {
-    label: "Pre-Bookings",
-    icon: UserCheck,
-    href: "/prebookings",
-    roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"],
-  },
-  {
-    label: "Brand Lead Times",
-    icon: Clock,
-    href: "/more/brand-lead-times",
-    roles: ["ADMIN"],
-  },
-  {
-    label: "Deliveries",
-    icon: Truck,
-    href: "/deliveries",
-    roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"],
-  },
-  {
-    label: "Second-Hand Cycles",
-    icon: Bike,
-    href: "/second-hand",
-    roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER", "INWARDS_CLERK"],
-  },
-  {
-    label: "Price Correction",
-    icon: IndianRupee,
-    href: "/price-correction",
-    roles: ["ADMIN"],
-  },
-  {
-    label: "WhatsApp Templates",
-    icon: MessageSquare,
-    href: "/more/whatsapp-templates",
-    roles: ["ADMIN"],
-  },
-  {
-    label: "Alert Config",
-    icon: Bell,
-    href: "/more/alerts",
-    roles: ["ADMIN"],
-  },
-  {
-    label: "Zoho Books Sync",
-    icon: Cloud,
-    href: "/more/zoho",
-    roles: ["ADMIN"],
-  },
-  {
-    label: "Settings",
-    icon: Settings,
-    href: "#",
-    roles: ["ADMIN"],
-    comingSoon: true,
+    title: "Admin",
+    items: [
+      { label: "Team Management", icon: Users, href: "/team", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "Reports", icon: BarChart3, href: "/reports", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "AI Insights", icon: Brain, href: "/ai", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"] },
+      { label: "Bins & Locations", icon: Warehouse, href: "/more/bins", roles: ["ADMIN"] },
+      { label: "Brand Management", icon: Settings, href: "/more/brands", roles: ["ADMIN"] },
+      { label: "Brand Lead Times", icon: Clock, href: "/more/brand-lead-times", roles: ["ADMIN"] },
+      { label: "Price Correction", icon: IndianRupee, href: "/price-correction", roles: ["ADMIN"] },
+      { label: "WhatsApp Templates", icon: MessageSquare, href: "/more/whatsapp-templates", roles: ["ADMIN"] },
+      { label: "Alert Config", icon: Bell, href: "/more/alerts", roles: ["ADMIN"] },
+      { label: "Zoho Books Sync", icon: Cloud, href: "/more/zoho", roles: ["ADMIN"] },
+    ],
   },
 ];
 
@@ -227,6 +113,7 @@ export default function MorePage() {
   const role = (user?.role || "INWARDS_CLERK") as Role;
   const [syncClearing, setSyncClearing] = useState(false);
   const [syncResult, setSyncResult] = useState("");
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(MENU_GROUPS.map((g) => g.title)));
 
   const handleClearSync = async () => {
     setSyncClearing(true);
@@ -245,7 +132,13 @@ export default function MorePage() {
     finally { setSyncClearing(false); }
   };
 
-  const visibleItems = menuItems.filter((item) => item.roles.includes(role));
+  const toggleGroup = (title: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      next.has(title) ? next.delete(title) : next.add(title);
+      return next;
+    });
+  };
 
   return (
     <div>
@@ -264,31 +157,55 @@ export default function MorePage() {
         </CardContent>
       </Card>
 
-      {/* Menu Items */}
-      <div className="space-y-1">
-        {visibleItems.map((item) => {
-          const Icon = item.icon;
-          if (item.comingSoon) {
-            return (
-              <div key={item.label} className="flex items-center gap-3 px-4 py-3 rounded-lg opacity-50 cursor-not-allowed">
-                <Icon className="h-5 w-5 text-slate-400" />
-                <span className="flex-1 text-sm font-medium text-slate-500">
-                  {item.label}
-                </span>
-                <Badge variant="default">Soon</Badge>
-              </div>
-            );
-          }
+      {/* Grouped Menu */}
+      <div className="space-y-2">
+        {MENU_GROUPS.map((group) => {
+          const visibleItems = group.items.filter((item) => item.roles.includes(role));
+          if (visibleItems.length === 0) return null;
+          const isExpanded = expandedGroups.has(group.title);
+
           return (
-            <Link key={item.href} href={item.href}>
-              <div className="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-slate-100 transition-colors">
-                <Icon className="h-5 w-5 text-slate-500" />
-                <span className="flex-1 text-sm font-medium text-slate-700">
-                  {item.label}
-                </span>
-                <ChevronRight className="h-4 w-4 text-slate-400" />
-              </div>
-            </Link>
+            <Card key={group.title}>
+              <button
+                onClick={() => toggleGroup(group.title)}
+                className="w-full flex items-center justify-between px-4 py-3"
+              >
+                <span className="text-sm font-bold text-slate-800">{group.title}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-slate-400">{visibleItems.length}</span>
+                  {isExpanded ? (
+                    <ChevronDown className="h-4 w-4 text-slate-400" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4 text-slate-400" />
+                  )}
+                </div>
+              </button>
+              {isExpanded && (
+                <div className="border-t border-slate-100">
+                  {visibleItems.map((item) => {
+                    const Icon = item.icon;
+                    if (item.comingSoon) {
+                      return (
+                        <div key={item.label} className="flex items-center gap-3 px-4 py-2.5 opacity-50 cursor-not-allowed">
+                          <Icon className="h-4 w-4 text-slate-400" />
+                          <span className="flex-1 text-sm text-slate-500">{item.label}</span>
+                          <Badge variant="default">Soon</Badge>
+                        </div>
+                      );
+                    }
+                    return (
+                      <Link key={item.href} href={item.href}>
+                        <div className="flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors">
+                          <Icon className="h-4 w-4 text-slate-500" />
+                          <span className="flex-1 text-sm text-slate-700">{item.label}</span>
+                          <ChevronRight className="h-3.5 w-3.5 text-slate-300" />
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
           );
         })}
       </div>

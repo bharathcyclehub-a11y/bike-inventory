@@ -13,6 +13,8 @@ export async function GET(req: NextRequest) {
     const { limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status") || undefined;
     const search = searchParams.get("search") || undefined;
+    const dateFrom = searchParams.get("dateFrom") || undefined;
+    const dateTo = searchParams.get("dateTo") || undefined;
 
     // "arriving_this_week" is a special filter
     const isArrivingThisWeek = status === "arriving_this_week";
@@ -37,6 +39,13 @@ export async function GET(req: NextRequest) {
         { shipmentNo: { contains: search, mode: "insensitive" } },
         { brand: { name: { contains: search, mode: "insensitive" } } },
       ];
+    }
+
+    if (dateFrom || dateTo) {
+      where.billDate = {
+        ...(dateFrom && { gte: new Date(dateFrom) }),
+        ...(dateTo && { lte: new Date(dateTo + "T23:59:59.999Z") }),
+      };
     }
 
     const [shipments, total] = await Promise.all([

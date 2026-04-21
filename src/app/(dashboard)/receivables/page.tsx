@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useDebounce } from "@/lib/utils";
+import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 
 interface InvoiceItem {
   id: string;
@@ -60,6 +61,9 @@ export default function ReceivablesPage() {
   const [fetchError, setFetchError] = useState("");
   const [fetchPullId, setFetchPullId] = useState("");
   const [fetchProgress, setFetchProgress] = useState("");
+  const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
+  const [dateFrom, setDateFrom] = useState<string | undefined>();
+  const [dateTo, setDateTo] = useState<string | undefined>();
 
   // Summary stats
   const totalOutstanding = invoices.reduce((sum, inv) => sum + Math.max(0, inv.amount - inv.paidAmount), 0);
@@ -76,13 +80,15 @@ export default function ReceivablesPage() {
       params.set("status", filter);
     }
     if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
 
     fetch(`/api/customer-invoices?${params}`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setInvoices(res.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch]);
+  }, [filter, debouncedSearch, dateFrom, dateTo]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -335,6 +341,13 @@ export default function ReceivablesPage() {
           className="pl-9"
         />
       </div>
+
+      {/* Date Filter */}
+      <DateFilter
+        value={dateFilter}
+        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        className="mb-2"
+      />
 
       {/* Status Filters */}
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">

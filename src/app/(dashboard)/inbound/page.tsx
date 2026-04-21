@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDebounce } from "@/lib/utils";
+import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 
 interface InboundShipment {
   id: string;
@@ -70,12 +71,17 @@ export default function InboundPage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
   const [showSearch, setShowSearch] = useState(false);
+  const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
+  const [dateFrom, setDateFrom] = useState<string | undefined>();
+  const [dateTo, setDateTo] = useState<string | undefined>();
 
   const fetchData = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
     if (filter !== "ALL") params.set("status", filter);
     if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
 
     Promise.all([
       fetch(`/api/inbound?${params}`).then((r) => r.json()),
@@ -87,7 +93,7 @@ export default function InboundPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch]);
+  }, [filter, debouncedSearch, dateFrom, dateTo]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -153,7 +159,14 @@ export default function InboundPage() {
         </div>
       )}
 
-      {/* Filter */}
+      {/* Date Filter */}
+      <DateFilter
+        value={dateFilter}
+        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        className="mb-2"
+      />
+
+      {/* Status Filter */}
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1">
         {([
           { key: "ALL", label: "All" },

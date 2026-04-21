@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Plus, Receipt, Search } from "lucide-react";
+import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -47,11 +48,16 @@ export default function ExpensesPage() {
   const [filter, setFilter] = useState("ALL");
   const [totalAmount, setTotalAmount] = useState(0);
   const [searchText, setSearchText] = useState("");
+  const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
+  const [dateFrom, setDateFrom] = useState<string | undefined>();
+  const [dateTo, setDateTo] = useState<string | undefined>();
 
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
     if (filter !== "ALL") params.set("category", filter);
+    if (dateFrom) params.set("dateFrom", dateFrom);
+    if (dateTo) params.set("dateTo", dateTo);
 
     fetch(`/api/expenses?${params}`)
       .then((r) => r.json())
@@ -63,7 +69,7 @@ export default function ExpensesPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter]);
+  }, [filter, dateFrom, dateTo]);
 
   if (sessionStatus === "loading") {
     return (
@@ -113,6 +119,12 @@ export default function ExpensesPage() {
           </CardContent>
         </Card>
       )}
+
+      <DateFilter
+        value={dateFilter}
+        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        className="mb-2"
+      />
 
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
         {CATEGORY_FILTERS.map((c) => (
