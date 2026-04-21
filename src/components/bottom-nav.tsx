@@ -35,7 +35,7 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "ADMIN":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/inwards", label: "Inwards", icon: ArrowDownCircle, key: "inwards" },
+        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
         { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
@@ -43,41 +43,39 @@ function getTabsForRole(role: Role): TabConfig[] {
     case "SUPERVISOR":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
+        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
         { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/bills", label: "Bills", icon: ArrowDownCircle, key: "bills" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "PURCHASE_MANAGER":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/reorder", label: "Reorder", icon: ArrowRightLeft, key: "reorder" },
-        { href: "/purchase-orders", label: "POs", icon: ArrowDownCircle, key: "pos" },
+        { href: "/purchase-orders", label: "POs", icon: Receipt, key: "pos" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "ACCOUNTS_MANAGER":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
+        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
         { href: "/expenses", label: "Expenses", icon: Receipt, key: "expenses" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/stock-audit", label: "Audit", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "INWARDS_CLERK":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/inwards", label: "Verify", icon: ArrowDownCircle, key: "inwards" },
+        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
         { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/stock-audit", label: "Stock Count", icon: ClipboardCheck, key: "stock-audit" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "OUTWARDS_CLERK":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
         { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },

@@ -131,6 +131,8 @@ export async function PUT(
             name: li.productName,
             quantity: li.deliveredQty ?? li.quantity,
             rate: li.rate,
+            gstPercent: li.gstPercent || 0,
+            hsn: li.hsn || "",
           })),
         });
       } catch (zohoErr) {

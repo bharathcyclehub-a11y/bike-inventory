@@ -151,6 +151,8 @@ export async function POST(req: NextRequest) {
               sku: li.sku || null,
               quantity: li.quantity,
               rate: li.rate,
+              gstPercent: li.gstPercent || 0,
+              gstAmount: li.gstAmount || 0,
               amount: li.amount,
               hsn: li.hsn || null,
               preBookedCustomerName: preBookMatch?.customerName || null,

@@ -13,8 +13,10 @@ const PARSE_PROMPT = `You are a bill/invoice parser for a bicycle store. Extract
 3. **lineItems** — an array of items, each with:
    - productName: the product/item name (full name as written)
    - quantity: number of units (default 1 if unclear)
-   - rate: unit price (number, no currency symbol)
-   - amount: total for this line (qty × rate)
+   - rate: unit price BEFORE tax (number, no currency symbol)
+   - gstPercent: GST percentage applied to this item (e.g. 5, 12, 18, 28). Look for CGST+SGST or IGST columns. If CGST is 9% and SGST is 9%, then gstPercent is 18.
+   - gstAmount: total GST amount for this line item (CGST+SGST or IGST amount)
+   - amount: total for this line INCLUDING GST (rate × qty + gst). This is the final payable amount.
    - hsn: HSN/SAC code if visible (optional)
 
 Return ONLY valid JSON in this exact format, no markdown, no explanation:
@@ -22,7 +24,7 @@ Return ONLY valid JSON in this exact format, no markdown, no explanation:
   "billNo": "string",
   "billDate": "YYYY-MM-DD",
   "lineItems": [
-    { "productName": "string", "quantity": 1, "rate": 0, "amount": 0, "hsn": "" }
+    { "productName": "string", "quantity": 1, "rate": 0, "gstPercent": 0, "gstAmount": 0, "amount": 0, "hsn": "" }
   ]
 }
 
@@ -87,7 +89,7 @@ export async function POST(req: NextRequest) {
       jsonStr = jsonMatch[1].trim();
     }
 
-    let parsed: { billNo: string; billDate: string; lineItems: Array<{ productName: string; quantity: number; rate: number; amount: number; hsn?: string }> };
+    let parsed: { billNo: string; billDate: string; lineItems: Array<{ productName: string; quantity: number; rate: number; gstPercent?: number; gstAmount?: number; amount: number; hsn?: string }> };
     try {
       parsed = JSON.parse(jsonStr);
     } catch {
@@ -103,15 +105,28 @@ export async function POST(req: NextRequest) {
       productName: String(li.productName || "").trim(),
       quantity: Math.max(1, Math.round(Number(li.quantity) || 1)),
       rate: Math.max(0, Number(li.rate) || 0),
+      gstPercent: Math.max(0, Number(li.gstPercent) || 0),
+      gstAmount: Math.max(0, Number(li.gstAmount) || 0),
       amount: Math.max(0, Number(li.amount) || 0),
       hsn: String(li.hsn || "").trim(),
     })).filter((li) => li.productName.length > 0);
 
-    // Recalculate amounts if they seem off
+    // Recalculate GST and amounts if they seem off
     for (const li of parsed.lineItems) {
-      const calc = li.quantity * li.rate;
-      if (li.amount === 0 && calc > 0) li.amount = calc;
-      if (Math.abs(li.amount - calc) > calc * 0.5 && calc > 0) li.amount = calc;
+      const baseAmount = li.quantity * li.rate;
+      const gstPct = li.gstPercent || 0;
+      // If gstAmount is 0 but we have gstPercent, calculate it
+      if ((li.gstAmount || 0) === 0 && gstPct > 0 && baseAmount > 0) {
+        li.gstAmount = Math.round(baseAmount * gstPct / 100);
+      }
+      const gstAmt = li.gstAmount || 0;
+      // If amount is 0 or just the base, add GST
+      const expectedTotal = baseAmount + gstAmt;
+      if (li.amount === 0 && expectedTotal > 0) li.amount = expectedTotal;
+      // If amount doesn't include GST (matches base), add GST
+      if (gstAmt > 0 && Math.abs(li.amount - baseAmount) < 1) {
+        li.amount = expectedTotal;
+      }
     }
 
     // Match product names against existing products in the system

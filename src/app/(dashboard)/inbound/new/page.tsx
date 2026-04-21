@@ -22,6 +22,8 @@ interface LineItem {
   sku?: string;
   quantity: number;
   rate: number;
+  gstPercent: number;
+  gstAmount: number;
   amount: number;
   hsn?: string;
   // AI match fields
@@ -96,12 +98,15 @@ export default function NewInboundPage() {
 
       // Auto-fill line items with match info
       if (result.lineItems && result.lineItems.length > 0) {
-        setLineItems(result.lineItems.map((li: LineItem) => ({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        setLineItems(result.lineItems.map((li: any) => ({
           productName: li.productName,
           productId: li.matchedProductId || undefined,
           sku: li.matchedSku || undefined,
           quantity: li.quantity,
           rate: li.rate,
+          gstPercent: li.gstPercent || 0,
+          gstAmount: li.gstAmount || 0,
           amount: li.amount,
           hsn: li.hsn || undefined,
           matchedProductId: li.matchedProductId,
@@ -203,15 +208,17 @@ export default function NewInboundPage() {
 
   // Manual add row
   const addRow = () => {
-    setLineItems([...lineItems, { productName: "", quantity: 1, rate: 0, amount: 0 }]);
+    setLineItems([...lineItems, { productName: "", quantity: 1, rate: 0, gstPercent: 0, gstAmount: 0, amount: 0 }]);
   };
 
   const updateRow = (idx: number, field: keyof LineItem, value: string | number) => {
     setLineItems((prev) => prev.map((item, i) => {
       if (i !== idx) return item;
       const updated = { ...item, [field]: value };
-      if (field === "quantity" || field === "rate") {
-        updated.amount = (updated.quantity || 0) * (updated.rate || 0);
+      if (field === "quantity" || field === "rate" || field === "gstPercent") {
+        const base = (updated.quantity || 0) * (updated.rate || 0);
+        updated.gstAmount = Math.round(base * (updated.gstPercent || 0) / 100);
+        updated.amount = base + updated.gstAmount;
       }
       // If user edits productName, clear the match
       if (field === "productName") {
@@ -652,7 +659,7 @@ export default function NewInboundPage() {
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-4 gap-2">
                           <div>
                             <label className="text-[10px] text-slate-500">Qty</label>
                             <Input type="number" min="1" value={li.quantity}
@@ -660,16 +667,27 @@ export default function NewInboundPage() {
                               className="text-sm" />
                           </div>
                           <div>
-                            <label className="text-[10px] text-slate-500">Rate</label>
+                            <label className="text-[10px] text-slate-500">Rate (pre-tax)</label>
                             <Input type="number" min="0" value={li.rate}
                               onChange={(e) => updateRow(idx, "rate", parseFloat(e.target.value) || 0)}
                               className="text-sm" />
                           </div>
                           <div>
-                            <label className="text-[10px] text-slate-500">Amount</label>
+                            <label className="text-[10px] text-slate-500">GST %</label>
+                            <Input type="number" min="0" max="28" value={li.gstPercent}
+                              onChange={(e) => updateRow(idx, "gstPercent", parseFloat(e.target.value) || 0)}
+                              className="text-sm" />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-slate-500">Total (incl.)</label>
                             <Input type="number" value={li.amount} readOnly className="text-sm bg-slate-50" />
                           </div>
                         </div>
+                        {li.gstAmount > 0 && (
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            Base: {new Intl.NumberFormat("en-IN").format(li.quantity * li.rate)} + GST {li.gstPercent}%: {new Intl.NumberFormat("en-IN").format(li.gstAmount)}
+                          </p>
+                        )}
                       </CardContent>
                     </Card>
                   ))}

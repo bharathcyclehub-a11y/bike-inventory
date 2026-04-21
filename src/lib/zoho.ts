@@ -227,7 +227,7 @@ export class ZohoClient {
   async createBill(data: {
     vendorName: string; billNo: string; billDate: string;
     dueDate: string; amount: number;
-    lineItems: Array<{ name: string; quantity: number; rate: number }>;
+    lineItems: Array<{ name: string; quantity: number; rate: number; gstPercent?: number; hsn?: string }>;
   }) {
     return this.apiCall("POST", "/bills", {
       JSONString: JSON.stringify({
@@ -235,10 +235,14 @@ export class ZohoClient {
         bill_number: data.billNo,
         date: data.billDate,
         due_date: data.dueDate,
+        is_inclusive_tax: false,
+        gst_treatment: "business_gst",
         line_items: data.lineItems.map((item) => ({
           name: item.name,
           quantity: item.quantity,
           rate: item.rate,
+          tax_percentage: item.gstPercent || 0,
+          hsn_or_sac: item.hsn || "",
         })),
       }),
     });

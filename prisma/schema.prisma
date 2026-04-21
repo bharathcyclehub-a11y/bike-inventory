@@ -1077,6 +1077,8 @@ model InboundLineItem {
   sku                    String?
   quantity               Int
   rate                   Float
+  gstPercent             Float             @default(0)
+  gstAmount              Float             @default(0)
   amount                 Float
   hsn                    String?
   isDelivered            Boolean           @default(false)

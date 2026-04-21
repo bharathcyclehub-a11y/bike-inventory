@@ -316,6 +316,8 @@ export const inboundShipmentSchema = z.object({
     sku: z.string().optional(),
     quantity: z.number().int().min(1),
     rate: z.number().min(0),
+    gstPercent: z.number().min(0).max(100).optional(),
+    gstAmount: z.number().min(0).optional(),
     amount: z.number().min(0),
     hsn: z.string().optional(),
   })).min(1, "At least one line item is required"),
