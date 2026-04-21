@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { ArrowLeft, Camera, Loader2, CheckCircle2, Trash2, Edit3, FileText, Upload } from "lucide-react";
+import { ArrowLeft, Camera, Loader2, CheckCircle2, Trash2, Edit3, FileText, Upload, Sparkles, Link2, AlertCircle } from "lucide-react";
 import { uploadImage } from "@/lib/supabase";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,11 @@ interface LineItem {
   rate: number;
   amount: number;
   hsn?: string;
+  // AI match fields
+  matchedProductId?: string;
+  matchedProductName?: string;
+  matchedSku?: string;
+  matchScore?: number;
 }
 
 type Step = "brand" | "photo" | "verify" | "submitting" | "done";
@@ -37,7 +42,9 @@ export default function NewInboundPage() {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedBrand, setSelectedBrand] = useState("");
   const [billImageUrl, setBillImageUrl] = useState("");
+  const [billImageData, setBillImageData] = useState(""); // base64 for AI
   const [billPdfUrl, setBillPdfUrl] = useState("");
+  const [billPdfData, setBillPdfData] = useState(""); // base64 for AI
   const [pdfName, setPdfName] = useState("");
   const [uploadingPdf, setUploadingPdf] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -49,6 +56,11 @@ export default function NewInboundPage() {
   const [error, setError] = useState("");
   const [createdShipment, setCreatedShipment] = useState<{ shipmentNo: string; expectedDeliveryDate: string } | null>(null);
 
+  // AI parsing state
+  const [parsing, setParsing] = useState(false);
+  const [parseStatus, setParseStatus] = useState("");
+  const [aiParsed, setAiParsed] = useState(false);
+
   const selectedBrandData = brands.find((b) => b.brandId === selectedBrand);
 
   useEffect(() => {
@@ -56,6 +68,57 @@ export default function NewInboundPage() {
       if (res.success) setBrands(res.data);
     }).catch(() => {});
   }, []);
+
+  // AI Parse bill
+  const parseBillWithAI = async (imageData: string, mimeType: string) => {
+    setParsing(true);
+    setParseStatus("Reading bill with AI...");
+    setError("");
+    try {
+      const res = await fetch("/api/inbound/parse-bill", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageData, mimeType, brandId: selectedBrand }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setError(data.error || "AI parsing failed. Enter details manually.");
+        return;
+      }
+
+      const result = data.data;
+
+      // Auto-fill bill no and date
+      if (result.billNo) setBillNo(result.billNo);
+      if (result.billDate && /^\d{4}-\d{2}-\d{2}$/.test(result.billDate)) {
+        setBillDate(result.billDate);
+      }
+
+      // Auto-fill line items with match info
+      if (result.lineItems && result.lineItems.length > 0) {
+        setLineItems(result.lineItems.map((li: LineItem) => ({
+          productName: li.productName,
+          productId: li.matchedProductId || undefined,
+          sku: li.matchedSku || undefined,
+          quantity: li.quantity,
+          rate: li.rate,
+          amount: li.amount,
+          hsn: li.hsn || undefined,
+          matchedProductId: li.matchedProductId,
+          matchedProductName: li.matchedProductName,
+          matchedSku: li.matchedSku,
+          matchScore: li.matchScore,
+        })));
+      }
+
+      setAiParsed(true);
+      setParseStatus(`AI found ${result.lineItems?.length || 0} items. Review and edit below.`);
+    } catch {
+      setError("AI parsing failed. Please enter details manually.");
+    } finally {
+      setParsing(false);
+    }
+  };
 
   // Handle photo capture
   const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -67,7 +130,7 @@ export default function NewInboundPage() {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const maxSize = 1200; // higher res for OCR
+        const maxSize = 1200;
         let w = img.width;
         let h = img.height;
         if (w > maxSize || h > maxSize) {
@@ -78,15 +141,18 @@ export default function NewInboundPage() {
         canvas.height = h;
         const ctx = canvas.getContext("2d")!;
         ctx.drawImage(img, 0, 0, w, h);
-        setBillImageUrl(canvas.toDataURL("image/jpeg", 0.8));
-        setStep("verify");
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.8);
+        setBillImageUrl(dataUrl);
+        setBillImageData(dataUrl);
+        // Auto-parse with AI
+        parseBillWithAI(dataUrl, "image/jpeg");
       };
       img.src = reader.result as string;
     };
     reader.readAsDataURL(file);
   };
 
-  // Handle PDF upload to Supabase
+  // Handle PDF upload to Supabase + AI parse
   const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -98,6 +164,15 @@ export default function NewInboundPage() {
       setError("PDF must be under 10 MB");
       return;
     }
+
+    // Read base64 for AI parsing
+    const pdfBase64 = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.readAsDataURL(file);
+    });
+    setBillPdfData(pdfBase64);
+
     setUploadingPdf(true);
     setUploadProgress(10);
     setError("");
@@ -105,7 +180,6 @@ export default function NewInboundPage() {
       const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
       setUploadProgress(20);
       const path = `bills/${Date.now()}-${file.name.replace(/\s+/g, "-")}`;
-      // Simulate progress steps during upload
       const progressInterval = setInterval(() => {
         setUploadProgress((prev) => Math.min(prev + 10, 90));
       }, 500);
@@ -114,6 +188,9 @@ export default function NewInboundPage() {
       setUploadProgress(100);
       setBillPdfUrl(url);
       setPdfName(`${file.name} (${sizeMB} MB)`);
+
+      // Auto-parse PDF with AI
+      parseBillWithAI(pdfBase64, "application/pdf");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to upload PDF";
       setError(`PDF upload error: ${msg}`);
@@ -136,12 +213,59 @@ export default function NewInboundPage() {
       if (field === "quantity" || field === "rate") {
         updated.amount = (updated.quantity || 0) * (updated.rate || 0);
       }
+      // If user edits productName, clear the match
+      if (field === "productName") {
+        updated.matchedProductId = undefined;
+        updated.matchedProductName = undefined;
+        updated.matchedSku = undefined;
+        updated.matchScore = undefined;
+        updated.productId = undefined;
+        updated.sku = undefined;
+      }
       return updated;
+    }));
+  };
+
+  // Accept AI match
+  const acceptMatch = (idx: number) => {
+    setLineItems((prev) => prev.map((item, i) => {
+      if (i !== idx || !item.matchedProductId) return item;
+      return {
+        ...item,
+        productId: item.matchedProductId,
+        sku: item.matchedSku,
+        productName: item.matchedProductName || item.productName,
+      };
+    }));
+  };
+
+  // Reject AI match (use bill name as-is)
+  const rejectMatch = (idx: number) => {
+    setLineItems((prev) => prev.map((item, i) => {
+      if (i !== idx) return item;
+      return {
+        ...item,
+        matchedProductId: undefined,
+        matchedProductName: undefined,
+        matchedSku: undefined,
+        matchScore: undefined,
+        productId: undefined,
+        sku: undefined,
+      };
     }));
   };
 
   const removeRow = (idx: number) => {
     setLineItems((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  // Re-parse with AI
+  const handleReparse = () => {
+    if (billPdfData) {
+      parseBillWithAI(billPdfData, "application/pdf");
+    } else if (billImageData) {
+      parseBillWithAI(billImageData, "image/jpeg");
+    }
   };
 
   // Submit
@@ -159,7 +283,7 @@ export default function NewInboundPage() {
         body: JSON.stringify({
           brandId: selectedBrand,
           billNo,
-          billImageUrl,
+          billImageUrl: billImageUrl || "",
           billPdfUrl: billPdfUrl || undefined,
           billDate,
           notes: notes || undefined,
@@ -215,13 +339,17 @@ export default function NewInboundPage() {
             setStep("brand");
             setSelectedBrand("");
             setBillImageUrl("");
+            setBillImageData("");
             setBillPdfUrl("");
+            setBillPdfData("");
             setPdfName("");
             setBillNo("");
             setBillDate(new Date().toISOString().split("T")[0]);
             setLineItems([]);
             setNotes("");
             setCreatedShipment(null);
+            setAiParsed(false);
+            setParseStatus("");
           }}>Upload Another</Button>
         </div>
       </div>
@@ -234,7 +362,7 @@ export default function NewInboundPage() {
         <Link href="/inbound" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <div>
           <h1 className="text-lg font-bold text-slate-900">Upload Brand Bill</h1>
-          <p className="text-xs text-slate-500">Upload bill photo → enter details → track delivery</p>
+          <p className="text-xs text-slate-500">Upload bill photo or PDF → AI reads it → review & submit</p>
         </div>
       </div>
 
@@ -256,7 +384,7 @@ export default function NewInboundPage() {
         {/* Step 2: Photo */}
         {selectedBrand && (
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Bill Photo *</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Bill Photo</label>
             <input ref={fileInputRef} type="file" accept="image/*" capture="environment"
               onChange={handlePhotoCapture} className="hidden" />
 
@@ -282,7 +410,7 @@ export default function NewInboundPage() {
         {/* PDF Upload */}
         {selectedBrand && (
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Invoice PDF (optional)</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Invoice PDF</label>
             <input ref={pdfInputRef} type="file" accept="application/pdf" onChange={handlePdfUpload} className="hidden" />
 
             {billPdfUrl ? (
@@ -292,7 +420,7 @@ export default function NewInboundPage() {
                   <p className="text-sm font-medium text-green-800 truncate">{pdfName}</p>
                   <p className="text-[10px] text-green-600">Uploaded</p>
                 </div>
-                <button onClick={() => { setBillPdfUrl(""); setPdfName(""); }}
+                <button onClick={() => { setBillPdfUrl(""); setBillPdfData(""); setPdfName(""); }}
                   className="text-xs text-red-500 hover:underline shrink-0">Remove</button>
               </div>
             ) : (
@@ -318,7 +446,35 @@ export default function NewInboundPage() {
           </div>
         )}
 
-        {/* Bill Details — visible once brand is selected */}
+        {/* AI Parsing Status */}
+        {parsing && (
+          <Card className="border-purple-200 bg-purple-50">
+            <CardContent className="p-3 flex items-center gap-3">
+              <Loader2 className="h-5 w-5 animate-spin text-purple-600 shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-purple-900">AI Reading Bill...</p>
+                <p className="text-[10px] text-purple-600">{parseStatus}</p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {aiParsed && !parsing && (
+          <Card className="border-green-200 bg-green-50">
+            <CardContent className="p-3 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-green-600 shrink-0" />
+                <p className="text-xs text-green-800 font-medium">{parseStatus}</p>
+              </div>
+              <button onClick={handleReparse} disabled={parsing}
+                className="text-[10px] text-green-700 font-medium hover:underline shrink-0">
+                Re-parse
+              </button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Bill Details */}
         {selectedBrand && (
           <>
             <div className="grid grid-cols-2 gap-3">
@@ -355,17 +511,54 @@ export default function NewInboundPage() {
                 </button>
               </div>
 
-              {lineItems.length === 0 ? (
+              {lineItems.length === 0 && !parsing ? (
                 <div className="text-center py-6 border-2 border-dashed border-slate-200 rounded-lg">
                   <Edit3 className="h-6 w-6 text-slate-300 mx-auto mb-2" />
-                  <p className="text-xs text-slate-400">No items yet. AI didn&apos;t find any or add manually.</p>
+                  <p className="text-xs text-slate-400">
+                    {(billImageUrl || billPdfUrl) ? "AI didn't find items. Add manually." : "Upload a bill photo or PDF for AI auto-fill, or add manually."}
+                  </p>
                   <button onClick={addRow} className="text-xs text-indigo-600 font-medium mt-2">Add Item</button>
                 </div>
               ) : (
                 <div className="space-y-2">
                   {lineItems.map((li, idx) => (
-                    <Card key={idx} className="border-indigo-100">
+                    <Card key={idx} className={li.matchedProductId ? "border-green-200" : "border-indigo-100"}>
                       <CardContent className="p-3">
+                        {/* Product match indicator */}
+                        {li.matchedProductName && (
+                          <div className="flex items-center justify-between mb-2 bg-green-50 rounded-lg p-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <Link2 className="h-3 w-3 text-green-600 shrink-0" />
+                              <div className="min-w-0">
+                                <p className="text-[10px] text-green-700 font-medium truncate">
+                                  Matched: {li.matchedProductName}
+                                </p>
+                                <p className="text-[9px] text-green-500">
+                                  SKU: {li.matchedSku} | {li.matchScore}% match
+                                </p>
+                              </div>
+                            </div>
+                            <div className="flex gap-1 shrink-0">
+                              <button onClick={() => acceptMatch(idx)}
+                                className="text-[9px] bg-green-600 text-white px-2 py-0.5 rounded font-medium">
+                                Use
+                              </button>
+                              <button onClick={() => rejectMatch(idx)}
+                                className="text-[9px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded font-medium">
+                                Ignore
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* No match warning for AI-parsed items */}
+                        {aiParsed && !li.matchedProductId && !li.productId && li.productName && (
+                          <div className="flex items-center gap-1.5 mb-2 text-amber-600">
+                            <AlertCircle className="h-3 w-3 shrink-0" />
+                            <p className="text-[10px]">No match in system — will be added as new name</p>
+                          </div>
+                        )}
+
                         <div className="flex items-start justify-between mb-2">
                           <Input value={li.productName}
                             onChange={(e) => updateRow(idx, "productName", e.target.value)}
