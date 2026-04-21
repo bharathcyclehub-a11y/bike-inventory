@@ -871,6 +871,7 @@ model Delivery {
   courierName             String?
   courierTrackingNo       String?
   courierCost             Float?
+  vehicleNo               String?
 
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt

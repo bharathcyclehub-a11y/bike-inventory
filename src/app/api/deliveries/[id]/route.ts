@@ -94,6 +94,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.courierName !== undefined) updateData.courierName = data.courierName;
       if (data.courierTrackingNo !== undefined) updateData.courierTrackingNo = data.courierTrackingNo;
       if (data.courierCost !== undefined) updateData.courierCost = data.courierCost;
+      if (data.vehicleNo !== undefined) updateData.vehicleNo = data.vehicleNo;
       if (data.freeAccessories !== undefined) updateData.freeAccessories = data.freeAccessories;
 
       // WhatsApp tracking flags

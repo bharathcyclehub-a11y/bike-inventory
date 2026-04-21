@@ -293,6 +293,7 @@ export const deliveryUpdateSchema = z.object({
   courierName: z.string().optional(),
   courierTrackingNo: z.string().optional(),
   courierCost: z.number().optional(),
+  vehicleNo: z.string().optional(),
   freeAccessories: z.string().optional(),
   whatsAppScheduledSent: z.boolean().optional(),
   whatsAppDispatchedSent: z.boolean().optional(),

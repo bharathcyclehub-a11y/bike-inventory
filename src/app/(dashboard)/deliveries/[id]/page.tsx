@@ -11,7 +11,6 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { getAreaFromPincode, isBangalorePincode } from "@/lib/pincode-lookup";
 
 interface DeliveryData {
   id: string;
@@ -45,6 +44,7 @@ interface DeliveryData {
   isOutstation: boolean;
   courierName: string | null;
   courierTrackingNo: string | null;
+  vehicleNo: string | null;
   courierCost: number | null;
   paymentStatus: {
     hasPending: boolean;
@@ -70,9 +70,6 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
   // Schedule form
   const [showSchedule, setShowSchedule] = useState(false);
-  const [address, setAddress] = useState("");
-  const [area, setArea] = useState("");
-  const [pincode, setPincode] = useState("");
   const [schedDate, setSchedDate] = useState("");
   const [delNotes, setDelNotes] = useState("");
   const [isOutstation, setIsOutstation] = useState(false);
@@ -84,6 +81,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const [courierName, setCourierName] = useState("");
   const [courierTrackingNo, setCourierTrackingNo] = useState("");
   const [courierCost, setCourierCost] = useState("");
+
+  // Local dispatch fields
+  const [vehicleNo, setVehicleNo] = useState("");
 
   // Inline date editing
   const [editingDate, setEditingDate] = useState(false);
@@ -99,15 +99,13 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       .then((res) => {
         if (res.success) {
           setData(res.data);
-          setAddress(res.data.customerAddress || "");
-          setArea(res.data.customerArea || "");
-          setPincode(res.data.customerPincode || "");
           setDelNotes(res.data.deliveryNotes || "");
           setFreeAccessories(res.data.freeAccessories || "");
           setIsOutstation(res.data.isOutstation || false);
           setCourierName(res.data.courierName || "");
           setCourierTrackingNo(res.data.courierTrackingNo || "");
           setCourierCost(res.data.courierCost ? String(res.data.courierCost) : "");
+          setVehicleNo(res.data.vehicleNo || "");
         }
       })
       .catch(() => {})
@@ -115,17 +113,6 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   };
 
   useEffect(() => { fetchData(); }, [id]); // eslint-disable-line
-
-  /** When pincode changes in the form, auto-fill area and detect outstation */
-  const handlePincodeBlur = () => {
-    if (pincode.length !== 6) return;
-    const detectedArea = getAreaFromPincode(pincode);
-    if (detectedArea) {
-      setArea(detectedArea);
-    }
-    const outstation = !isBangalorePincode(pincode);
-    setIsOutstation(outstation);
-  };
 
   const updateStatus = async (status: string, extra?: Record<string, unknown>) => {
     setActionLoading(true);
@@ -141,14 +128,11 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   };
 
   const handleSchedule = async () => {
-    if (!schedDate || !address) return;
+    if (!schedDate) return;
     setActionLoading(true);
     try {
       const payload: Record<string, unknown> = {
         status: "SCHEDULED",
-        customerAddress: address,
-        customerArea: area,
-        customerPincode: pincode,
         scheduledDate: schedDate,
         deliveryNotes: delNotes,
         isOutstation,
@@ -207,7 +191,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
     const result = await res.json();
     if (result.success && result.data.alertPhones?.length > 0) {
       const phone = result.data.alertPhones[0].replace(/\D/g, "");
-      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(result.data.whatsappMessage)}`, "_blank");
+      window.open(`https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(result.data.whatsappMessage)}`, "_blank");
     }
     fetchData();
   };
@@ -224,7 +208,8 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
   const openWhatsApp = (phone: string, message: string) => {
     const cleanPhone = phone.replace(/\D/g, "").slice(-10);
-    window.open(`https://wa.me/91${cleanPhone}?text=${encodeURIComponent(message)}`, "_blank");
+    const encodedMsg = encodeURIComponent(message);
+    window.open(`https://api.whatsapp.com/send?phone=91${cleanPhone}&text=${encodedMsg}`, "_blank");
   };
 
   const markWhatsAppSent = async (field: "whatsAppScheduledSent" | "whatsAppDispatchedSent" | "whatsAppDeliveredSent") => {
@@ -240,16 +225,17 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
   const sendScheduledWhatsApp = () => {
     if (!data?.customerPhone) return;
+    const date = data.scheduledDate ? new Date(data.scheduledDate).toLocaleDateString("en-IN") : "TBD";
     const msg = `Hello ${data.customerName},
 
 Your order from Bharath Cycle Hub has been scheduled for delivery.
 
 Product: ${getProductName()}
-Delivery Date: ${data.scheduledDate ? new Date(data.scheduledDate).toLocaleDateString("en-IN") : "TBD"}
-Address: ${data.customerAddress || "N/A"}
+Delivery Date: ${date}
 
-We'll notify you when it's dispatched. Thank you!
+Please share your delivery location on WhatsApp so our rider can reach you.
 
+Thank you!
 - Bharath Cycle Hub`;
     openWhatsApp(data.customerPhone, msg);
     markWhatsAppSent("whatsAppScheduledSent");
@@ -268,17 +254,40 @@ We'll notify you when it's dispatched. Thank you!
 
   const sendDispatchedWhatsApp = () => {
     if (!data?.customerPhone) return;
-    const msg = `Hello ${data.customerName},
+    const productName = getProductName();
+    const lineItemsText = getLineItemsText();
+    const accessories = data.freeAccessories || freeAccessories || "None";
+    const vNo = data.vehicleNo || vehicleNo;
+    const trackingLink = data.courierTrackingNo || courierTrackingNo;
+    const isLocal = !data.isOutstation;
 
-Congratulations! Your ${getProductName()} has been dispatched and is on its way!
+    let msg: string;
+    if (isLocal && (vNo || trackingLink)) {
+      msg = `Hello ${data.customerName},
+
+Your ${productName} is on the way!
+${vNo ? `\nVehicle No: ${vNo}` : ""}${trackingLink ? `\nTrack: ${trackingLink}` : ""}
 
 Items:
-${getLineItemsText()}
+${lineItemsText}
 
 Free Accessories:
-${data.freeAccessories || freeAccessories || "None"}
+${accessories}
 
 Thank you for choosing Bharath Cycle Hub!`;
+    } else {
+      msg = `Hello ${data.customerName},
+
+Congratulations! Your ${productName} has been dispatched and is on its way!
+
+Items:
+${lineItemsText}
+
+Free Accessories:
+${accessories}
+
+Thank you for choosing Bharath Cycle Hub!`;
+    }
     openWhatsApp(data.customerPhone, msg);
     markWhatsAppSent("whatsAppDispatchedSent");
   };
@@ -571,50 +580,6 @@ Thank you!
           <CardContent className="p-3 space-y-2">
             <p className="text-xs font-semibold text-slate-700">Schedule Delivery</p>
             <div>
-              <label className="text-[10px] text-slate-500">Address *</label>
-              <textarea value={address} onChange={(e) => setAddress(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs min-h-[60px] focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Full delivery address..." />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] text-slate-500">Area</label>
-                <Input value={area} onChange={(e) => setArea(e.target.value)} placeholder="e.g. Koramangala" className="text-xs" />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500">Pincode (6 digits)</label>
-                <Input
-                  value={pincode}
-                  onChange={(e) => {
-                    const val = e.target.value.replace(/\D/g, "").slice(0, 6);
-                    setPincode(val);
-                  }}
-                  onBlur={handlePincodeBlur}
-                  placeholder="560034"
-                  className="text-xs"
-                  maxLength={6}
-                  inputMode="numeric"
-                />
-              </div>
-            </div>
-
-            {/* Outstation auto-detect banner */}
-            {pincode.length === 6 && !isBangalorePincode(pincode) && (
-              <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                <Globe className="h-4 w-4 text-amber-600 shrink-0" />
-                <div>
-                  <p className="text-xs font-medium text-amber-900">Outstation Delivery</p>
-                  <p className="text-[10px] text-amber-700">Pincode {pincode} is outside Bangalore. Courier details will be required.</p>
-                </div>
-              </div>
-            )}
-
-            {/* Bangalore area auto-detected */}
-            {pincode.length === 6 && isBangalorePincode(pincode) && getAreaFromPincode(pincode) && (
-              <p className="text-[10px] text-green-600">Auto-detected: {getAreaFromPincode(pincode)}</p>
-            )}
-
-            <div>
               <label className="text-[10px] text-slate-500">Delivery Date *</label>
               <div className="grid grid-cols-3 gap-1.5 mt-1">
                 {[
@@ -648,9 +613,9 @@ Thank you!
               <Input value={delNotes} onChange={(e) => setDelNotes(e.target.value)} placeholder="Landmark, instructions..." className="text-xs" />
             </div>
             <div className="flex gap-2">
-              <button onClick={handleSchedule} disabled={!schedDate || !address || actionLoading}
-                className={`flex-1 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50 ${isOutstation ? "bg-amber-600" : "bg-blue-600"}`}>
-                {actionLoading ? "Scheduling..." : isOutstation ? "Schedule (Outstation)" : "Schedule"}
+              <button onClick={handleSchedule} disabled={!schedDate || actionLoading}
+                className="flex-1 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50 bg-blue-600">
+                {actionLoading ? "Scheduling..." : "Schedule"}
               </button>
               <button onClick={() => setShowSchedule(false)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">Cancel</button>
             </div>
@@ -801,7 +766,7 @@ Thank you!
           </div>
         )}
 
-        {data.status === "VERIFIED" && (
+        {data.status === "VERIFIED" && !showSchedule && (
           <div className="flex gap-2">
             <button onClick={() => {
               const woWarning = data.paymentStatus?.hasPending
@@ -828,17 +793,49 @@ Thank you!
           </button>
         )}
 
-        {showDispatch && data.status === "SCHEDULED" && (
+        {showDispatch && data.status === "SCHEDULED" && !isOuts && (
           <Card className="border-orange-200">
             <CardContent className="p-3 space-y-2">
-              <p className="text-xs font-semibold text-slate-700">Dispatch Details</p>
+              <p className="text-xs font-semibold text-slate-700">Dispatch Details (Porter)</p>
               <div>
-                <label className="text-[10px] text-slate-500">Courier / Delivery Person *</label>
-                <Input value={courierName} onChange={(e) => setCourierName(e.target.value)} placeholder="e.g. Store delivery, DTDC, BlueDart" className="text-xs" />
+                <label className="text-[10px] text-slate-500">Vehicle Number</label>
+                <Input value={vehicleNo} onChange={(e) => setVehicleNo(e.target.value)} placeholder="e.g. KA-01-AB-1234" className="text-xs" />
               </div>
               <div>
-                <label className="text-[10px] text-slate-500">Tracking / Reference No</label>
-                <Input value={courierTrackingNo} onChange={(e) => setCourierTrackingNo(e.target.value)} placeholder="Vehicle no, tracking ID..." className="text-xs" />
+                <label className="text-[10px] text-slate-500">Tracking Link</label>
+                <Input value={courierTrackingNo} onChange={(e) => setCourierTrackingNo(e.target.value)} placeholder="Porter / tracking URL" className="text-xs" />
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    updateStatus("OUT_FOR_DELIVERY", {
+                      courierName: "Porter",
+                      vehicleNo: vehicleNo.trim() || undefined,
+                      courierTrackingNo: courierTrackingNo.trim() || undefined,
+                    });
+                    setShowDispatch(false);
+                  }}
+                  disabled={actionLoading}
+                  className="flex-1 bg-orange-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+                  {actionLoading ? "Dispatching..." : "Confirm Dispatch"}
+                </button>
+                <button onClick={() => setShowDispatch(false)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">Cancel</button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {showDispatch && data.status === "SCHEDULED" && isOuts && (
+          <Card className="border-orange-200">
+            <CardContent className="p-3 space-y-2">
+              <p className="text-xs font-semibold text-slate-700">Dispatch Details (Outstation)</p>
+              <div>
+                <label className="text-[10px] text-slate-500">Courier / Delivery Person *</label>
+                <Input value={courierName} onChange={(e) => setCourierName(e.target.value)} placeholder="e.g. DTDC, BlueDart" className="text-xs" />
+              </div>
+              <div>
+                <label className="text-[10px] text-slate-500">Tracking Number</label>
+                <Input value={courierTrackingNo} onChange={(e) => setCourierTrackingNo(e.target.value)} placeholder="Tracking ID" className="text-xs" />
               </div>
               <div>
                 <label className="text-[10px] text-slate-500">Delivery Cost (₹)</label>
@@ -847,7 +844,7 @@ Thank you!
               <div className="flex gap-2">
                 <button
                   onClick={() => {
-                    if (!courierName.trim()) { alert("Please enter courier/delivery person name"); return; }
+                    if (!courierName.trim()) { alert("Please enter courier name"); return; }
                     updateStatus("OUT_FOR_DELIVERY", {
                       courierName: courierName.trim(),
                       courierTrackingNo: courierTrackingNo.trim() || undefined,
@@ -856,7 +853,7 @@ Thank you!
                     setShowDispatch(false);
                   }}
                   disabled={actionLoading}
-                  className="flex-1 bg-orange-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+                  className="flex-1 bg-amber-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
                   {actionLoading ? "Dispatching..." : "Confirm Dispatch"}
                 </button>
                 <button onClick={() => setShowDispatch(false)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">Cancel</button>
