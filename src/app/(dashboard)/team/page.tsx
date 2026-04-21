@@ -57,11 +57,18 @@ export default function TeamPage() {
           <p className="text-xs text-slate-500">{members.length} members</p>
         </div>
         {isAdmin && (
-          <Link href="/team/new">
-            <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
-              <Plus className="h-3.5 w-3.5 mr-1" />Add
-            </Button>
-          </Link>
+          <div className="flex gap-2">
+            <Link href="/team/permissions">
+              <Button size="sm" variant="outline" className="text-xs">
+                <Shield className="h-3.5 w-3.5 mr-1" />Roles
+              </Button>
+            </Link>
+            <Link href="/team/new">
+              <Button size="sm" className="bg-blue-600 hover:bg-blue-700">
+                <Plus className="h-3.5 w-3.5 mr-1" />Add
+              </Button>
+            </Link>
+          </div>
         )}
       </div>
 

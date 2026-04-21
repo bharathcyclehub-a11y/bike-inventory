@@ -888,6 +888,7 @@ model AlertConfig {
   redFlagPhones   String?
   googleReviewLink String?
   whatsappTemplates Json?    // { scheduled, dispatched, delivered } message templates
+  rolePermissions Json?      // { ROLE: { feature: { view, edit, delete, approve } } }
   updatedAt       DateTime @updatedAt
 }
 

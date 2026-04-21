@@ -88,3 +88,31 @@ export async function PUT(
     return errorResponse(error instanceof Error ? error.message : "Failed to update user", 400);
   }
 }
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const currentUser = await requireAuth(["ADMIN"]);
+    const { id } = await params;
+
+    if (currentUser.id === id) {
+      return errorResponse("Cannot delete your own account", 400);
+    }
+
+    const user = await prisma.user.findUnique({ where: { id } });
+    if (!user) return errorResponse("User not found", 404);
+
+    // Soft-delete: deactivate instead of hard delete to preserve transaction history
+    await prisma.user.update({
+      where: { id },
+      data: { isActive: false },
+    });
+
+    return successResponse({ deleted: true, name: user.name });
+  } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    return errorResponse(error instanceof Error ? error.message : "Failed to delete user", 400);
+  }
+}

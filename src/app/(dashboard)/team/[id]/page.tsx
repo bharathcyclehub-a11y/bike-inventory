@@ -3,7 +3,8 @@
 import { use, useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Save, ShieldAlert } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, Save, ShieldAlert, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -42,8 +43,10 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
   const { data: session } = useSession();
   const currentUser = session?.user as { role?: string; userId?: string } | undefined;
   const isAdmin = currentUser?.role === "ADMIN";
+  const router = useRouter();
 
   const [user, setUser] = useState<UserDetail | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("");
@@ -209,6 +212,24 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
           <Button onClick={handleSave} size="lg" disabled={saving} className="w-full bg-blue-600 hover:bg-blue-700">
             <Save className="h-4 w-4 mr-2" />{saving ? "Saving..." : "Save Changes"}
           </Button>
+
+          {/* Delete (deactivate) user */}
+          {currentUser?.userId !== id && (
+            <Button variant="outline" size="lg" disabled={deleting}
+              className="w-full border-red-300 text-red-600 hover:bg-red-50"
+              onClick={async () => {
+                if (!confirm(`Remove ${user.name} from the team? They will be deactivated.`)) return;
+                setDeleting(true);
+                try {
+                  const res = await fetch(`/api/users/${id}`, { method: "DELETE" }).then(r => r.json());
+                  if (res.success) router.push("/team");
+                  else setError(res.error || "Failed to remove");
+                } catch { setError("Network error"); }
+                finally { setDeleting(false); }
+              }}>
+              <Trash2 className="h-4 w-4 mr-2" />{deleting ? "Removing..." : "Remove from Team"}
+            </Button>
+          )}
 
           <p className="text-xs text-slate-400 text-center">
             Member since {new Date(user.createdAt).toLocaleDateString("en-IN")}
