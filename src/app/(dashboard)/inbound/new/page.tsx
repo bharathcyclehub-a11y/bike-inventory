@@ -255,6 +255,39 @@ export default function NewInboundPage() {
     }));
   };
 
+  // Manual SKU match
+  const [skuLoading, setSkuLoading] = useState<number | null>(null);
+  const handleSkuMatch = async (idx: number, skuValue: string) => {
+    if (!skuValue.trim()) return;
+    setSkuLoading(idx);
+    try {
+      const res = await fetch(`/api/products?search=${encodeURIComponent(skuValue.trim())}&status=ACTIVE&limit=1`);
+      const data = await res.json();
+      if (data.success && data.data && data.data.length > 0) {
+        const product = data.data[0];
+        setLineItems((prev) => prev.map((item, i) => {
+          if (i !== idx) return item;
+          return {
+            ...item,
+            productId: product.id,
+            sku: product.sku,
+            matchedProductId: product.id,
+            matchedProductName: product.name,
+            matchedSku: product.sku,
+            matchScore: 100,
+          };
+        }));
+      } else {
+        setError(`No product found for SKU "${skuValue}"`);
+        setTimeout(() => setError(""), 3000);
+      }
+    } catch {
+      setError("Failed to lookup SKU");
+    } finally {
+      setSkuLoading(null);
+    }
+  };
+
   const removeRow = (idx: number) => {
     setLineItems((prev) => prev.filter((_, i) => i !== idx));
   };
@@ -268,10 +301,18 @@ export default function NewInboundPage() {
     }
   };
 
+  // Check all items matched
+  const allItemsMatched = lineItems.length > 0 && lineItems.every((li) => li.productId);
+  const unmatchedCount = lineItems.filter((li) => !li.productId).length;
+
   // Submit
   const handleSubmit = async () => {
     if (!selectedBrand || (!billImageUrl && !billPdfUrl) || !billNo || !billDate || lineItems.length === 0) {
       setError("Brand, bill photo or PDF, bill number, bill date, and at least one item required");
+      return;
+    }
+    if (!allItemsMatched) {
+      setError(`${unmatchedCount} item(s) not matched. Use SKU to match all items before submitting.`);
       return;
     }
     setStep("submitting");
@@ -525,15 +566,36 @@ export default function NewInboundPage() {
                     <Card key={idx} className={li.matchedProductId ? "border-green-200" : "border-indigo-100"}>
                       <CardContent className="p-3">
                         {/* Product match indicator */}
-                        {li.matchedProductName && (
+                        {li.matchedProductName && li.productId && (
                           <div className="flex items-center justify-between mb-2 bg-green-50 rounded-lg p-2">
                             <div className="flex items-center gap-1.5 min-w-0">
-                              <Link2 className="h-3 w-3 text-green-600 shrink-0" />
+                              <CheckCircle2 className="h-3 w-3 text-green-600 shrink-0" />
                               <div className="min-w-0">
                                 <p className="text-[10px] text-green-700 font-medium truncate">
                                   Matched: {li.matchedProductName}
                                 </p>
                                 <p className="text-[9px] text-green-500">
+                                  SKU: {li.matchedSku}
+                                </p>
+                              </div>
+                            </div>
+                            <button onClick={() => rejectMatch(idx)}
+                              className="text-[9px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded font-medium shrink-0">
+                              Change
+                            </button>
+                          </div>
+                        )}
+
+                        {/* AI suggested match — needs confirmation */}
+                        {li.matchedProductName && !li.productId && (
+                          <div className="flex items-center justify-between mb-2 bg-blue-50 rounded-lg p-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <Link2 className="h-3 w-3 text-blue-600 shrink-0" />
+                              <div className="min-w-0">
+                                <p className="text-[10px] text-blue-700 font-medium truncate">
+                                  AI suggests: {li.matchedProductName}
+                                </p>
+                                <p className="text-[9px] text-blue-500">
                                   SKU: {li.matchedSku} | {li.matchScore}% match
                                 </p>
                               </div>
@@ -541,21 +603,44 @@ export default function NewInboundPage() {
                             <div className="flex gap-1 shrink-0">
                               <button onClick={() => acceptMatch(idx)}
                                 className="text-[9px] bg-green-600 text-white px-2 py-0.5 rounded font-medium">
-                                Use
+                                Accept
                               </button>
                               <button onClick={() => rejectMatch(idx)}
                                 className="text-[9px] bg-slate-200 text-slate-600 px-2 py-0.5 rounded font-medium">
-                                Ignore
+                                Reject
                               </button>
                             </div>
                           </div>
                         )}
 
-                        {/* No match warning for AI-parsed items */}
-                        {aiParsed && !li.matchedProductId && !li.productId && li.productName && (
-                          <div className="flex items-center gap-1.5 mb-2 text-amber-600">
-                            <AlertCircle className="h-3 w-3 shrink-0" />
-                            <p className="text-[10px]">No match in system — will be added as new name</p>
+                        {/* No match — show SKU input for manual matching */}
+                        {!li.matchedProductId && !li.productId && li.productName && (
+                          <div className="mb-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                            <div className="flex items-center gap-1.5 mb-1.5 text-amber-700">
+                              <AlertCircle className="h-3 w-3 shrink-0" />
+                              <p className="text-[10px] font-medium">No match — enter SKU to match manually</p>
+                            </div>
+                            <div className="flex gap-1.5">
+                              <Input
+                                placeholder="Enter SKU code..."
+                                className="text-xs h-7 flex-1"
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    handleSkuMatch(idx, (e.target as HTMLInputElement).value);
+                                  }
+                                }}
+                                id={`sku-input-${idx}`}
+                              />
+                              <button
+                                onClick={() => {
+                                  const input = document.getElementById(`sku-input-${idx}`) as HTMLInputElement;
+                                  if (input) handleSkuMatch(idx, input.value);
+                                }}
+                                disabled={skuLoading === idx}
+                                className="text-[10px] bg-amber-600 text-white px-2.5 py-1 rounded font-medium shrink-0 disabled:opacity-50">
+                                {skuLoading === idx ? "..." : "Match"}
+                              </button>
+                            </div>
                           </div>
                         )}
 
@@ -609,11 +694,19 @@ export default function NewInboundPage() {
 
             {error && <p className="text-sm text-red-600">{error}</p>}
 
+            {lineItems.length > 0 && !allItemsMatched && (
+              <p className="text-xs text-amber-600 font-medium text-center">
+                {unmatchedCount} item(s) not matched — match all items using SKU before submitting
+              </p>
+            )}
+
             <Button type="button" size="lg" onClick={handleSubmit}
-              disabled={step === "submitting" || !selectedBrand || (!billImageUrl && !billPdfUrl) || !billNo || !billDate || lineItems.length === 0}
-              className="w-full bg-indigo-600 hover:bg-indigo-700">
+              disabled={step === "submitting" || !selectedBrand || (!billImageUrl && !billPdfUrl) || !billNo || !billDate || lineItems.length === 0 || !allItemsMatched}
+              className={`w-full ${allItemsMatched ? "bg-indigo-600 hover:bg-indigo-700" : "bg-slate-400"}`}>
               {step === "submitting" ? (
                 <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Creating...</>
+              ) : !allItemsMatched && lineItems.length > 0 ? (
+                `Match all items first (${unmatchedCount} remaining)`
               ) : (
                 `Create Shipment (${lineItems.length} items)`
               )}

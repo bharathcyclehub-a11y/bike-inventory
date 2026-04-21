@@ -23,6 +23,7 @@ interface InboundShipment {
   createdAt: string;
   brand: { name: string };
   createdBy: { name: string };
+  lineItems: { productName: string; quantity: number; isDelivered: boolean }[];
   _count: { lineItems: number; preBookings: number };
 }
 
@@ -201,11 +202,17 @@ export default function InboundPage() {
                       <Badge variant={badge.variant}>{badge.label}</Badge>
                     </div>
 
+                    {/* Item names */}
+                    <div className="mt-1.5 space-y-0.5">
+                      {s.lineItems.map((li, idx) => (
+                        <p key={idx} className="text-xs text-slate-600">
+                          {li.productName} <span className="text-slate-400">× {li.quantity}</span>
+                          {li.isDelivered && <span className="text-green-500 ml-1">✓</span>}
+                        </p>
+                      ))}
+                    </div>
+
                     <div className="flex items-center gap-3 mt-2">
-                      <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <Package className="h-3 w-3" />
-                        <span>{s.totalItems} items</span>
-                      </div>
                       <div className="flex items-center gap-1 text-xs text-slate-500">
                         <span>Billed: {formatDate(s.billDate)}</span>
                       </div>

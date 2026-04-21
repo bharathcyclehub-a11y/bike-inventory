@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
         include: {
           brand: { select: { name: true } },
           createdBy: { select: { name: true } },
+          lineItems: { select: { productName: true, quantity: true, isDelivered: true } },
           _count: { select: { lineItems: true, preBookings: true } },
         },
         orderBy: { createdAt: "desc" },
