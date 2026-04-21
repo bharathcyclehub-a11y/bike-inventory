@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Save, Eye, Pencil, Trash2, ShieldCheck, RotateCcw } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Eye, Plus, Pencil, Trash2, ShieldCheck, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -10,10 +10,12 @@ interface Feature {
   key: string;
   label: string;
   hasApprove: boolean;
+  hasCreate: boolean;
 }
 
 interface FeaturePermission {
   view: boolean;
+  create: boolean;
   edit: boolean;
   delete: boolean;
   approve: boolean;
@@ -54,7 +56,7 @@ export default function PermissionsPage() {
   }, []);
 
   const toggle = (role: string, featureKey: string, perm: keyof FeaturePermission) => {
-    if (role === "ADMIN") return; // Admin always full
+    if (role === "ADMIN") return;
     setPermissions((prev) => ({
       ...prev,
       [role]: {
@@ -113,7 +115,7 @@ export default function PermissionsPage() {
   };
 
   const getPerm = (role: string, featureKey: string): FeaturePermission => {
-    return permissions[role]?.[featureKey] || { view: false, edit: false, delete: false, approve: false };
+    return permissions[role]?.[featureKey] || { view: false, create: false, edit: false, delete: false, approve: false };
   };
 
   if (loading) {
@@ -132,7 +134,7 @@ export default function PermissionsPage() {
         </Link>
         <div className="flex-1">
           <h1 className="text-lg font-bold text-slate-900">Roles & Permissions</h1>
-          <p className="text-xs text-slate-500">Manage what each role can view, edit, delete, and approve</p>
+          <p className="text-xs text-slate-500">Manage what each role can view, add, edit, delete, and approve</p>
         </div>
         <button onClick={handleReset} className="p-2 text-slate-400 hover:text-slate-600">
           <RotateCcw className="h-4 w-4" />
@@ -175,17 +177,20 @@ export default function PermissionsPage() {
       </div>
 
       {/* Permission legend */}
-      <div className="flex items-center gap-4 mb-3 px-1">
-        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+      <div className="flex items-center gap-3 mb-3 px-1 overflow-x-auto scrollbar-hide">
+        <div className="flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
           <Eye className="h-3 w-3" /> View
         </div>
-        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+        <div className="flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
+          <Plus className="h-3 w-3" /> Add New
+        </div>
+        <div className="flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
           <Pencil className="h-3 w-3" /> Edit
         </div>
-        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+        <div className="flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
           <Trash2 className="h-3 w-3" /> Delete
         </div>
-        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+        <div className="flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
           <ShieldCheck className="h-3 w-3" /> Approve
         </div>
       </div>
@@ -212,6 +217,20 @@ export default function PermissionsPage() {
                     >
                       <Eye className="h-3.5 w-3.5" />
                     </button>
+                    {/* Add New (only if feature supports it) */}
+                    {feature.hasCreate ? (
+                      <button
+                        onClick={() => toggle(selectedRole, feature.key, "create")}
+                        className={`p-1.5 rounded-md transition-colors ${
+                          perm.create ? "bg-purple-100 text-purple-700" : "bg-slate-50 text-slate-300"
+                        }`}
+                        title="Add New"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <div className="p-1.5 w-[26px]" />
+                    )}
                     {/* Edit */}
                     <button
                       onClick={() => toggle(selectedRole, feature.key, "edit")}
@@ -244,7 +263,7 @@ export default function PermissionsPage() {
                         <ShieldCheck className="h-3.5 w-3.5" />
                       </button>
                     ) : (
-                      <div className="p-1.5 w-[26px]" /> // spacer
+                      <div className="p-1.5 w-[26px]" />
                     )}
                   </div>
                 </div>
