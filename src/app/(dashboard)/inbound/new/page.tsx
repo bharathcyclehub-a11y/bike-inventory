@@ -104,8 +104,8 @@ export default function NewInboundPage() {
       const url = await uploadImage(file, path);
       setBillPdfUrl(url);
       setPdfName(file.name);
-    } catch {
-      setError("Failed to upload PDF. Try again.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload PDF. Try again.");
     } finally {
       setUploadingPdf(false);
       if (pdfInputRef.current) pdfInputRef.current.value = "";

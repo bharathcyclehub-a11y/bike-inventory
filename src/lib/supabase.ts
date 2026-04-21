@@ -16,8 +16,8 @@ export async function uploadImage(file: File, path: string): Promise<string> {
   const supabase = getSupabase();
   const { data, error } = await supabase.storage
     .from('product images')
-    .upload(path, file, { cacheControl: '3600', upsert: true });
-  if (error) throw error;
+    .upload(path, file, { cacheControl: '3600' });
+  if (error) throw new Error(`Upload failed: ${error.message}`);
   const { data: urlData } = supabase.storage
     .from('product images')
     .getPublicUrl(data.path);
