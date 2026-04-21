@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Loader2, Save, Eye, Plus, Pencil, Trash2, ShieldCheck, RotateCcw } from "lucide-react";
+import { ArrowLeft, Loader2, Save, Eye, Plus, Pencil, Trash2, ShieldCheck, RotateCcw, CloudDownload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -11,6 +11,7 @@ interface Feature {
   label: string;
   hasApprove: boolean;
   hasCreate: boolean;
+  hasFetch: boolean;
 }
 
 interface FeaturePermission {
@@ -19,6 +20,7 @@ interface FeaturePermission {
   edit: boolean;
   delete: boolean;
   approve: boolean;
+  fetch: boolean;
 }
 
 type RolePermissions = Record<string, Record<string, FeaturePermission>>;
@@ -115,7 +117,7 @@ export default function PermissionsPage() {
   };
 
   const getPerm = (role: string, featureKey: string): FeaturePermission => {
-    return permissions[role]?.[featureKey] || { view: false, create: false, edit: false, delete: false, approve: false };
+    return permissions[role]?.[featureKey] || { view: false, create: false, edit: false, delete: false, approve: false, fetch: false };
   };
 
   if (loading) {
@@ -134,7 +136,7 @@ export default function PermissionsPage() {
         </Link>
         <div className="flex-1">
           <h1 className="text-lg font-bold text-slate-900">Roles & Permissions</h1>
-          <p className="text-xs text-slate-500">Manage what each role can view, add, edit, delete, and approve</p>
+          <p className="text-xs text-slate-500">Manage what each role can view, add, edit, delete, approve, and fetch</p>
         </div>
         <button onClick={handleReset} className="p-2 text-slate-400 hover:text-slate-600">
           <RotateCcw className="h-4 w-4" />
@@ -192,6 +194,9 @@ export default function PermissionsPage() {
         </div>
         <div className="flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
           <ShieldCheck className="h-3 w-3" /> Approve
+        </div>
+        <div className="flex items-center gap-1 text-[10px] text-slate-500 shrink-0">
+          <CloudDownload className="h-3 w-3" /> Fetch
         </div>
       </div>
 
@@ -261,6 +266,20 @@ export default function PermissionsPage() {
                         title="Approve"
                       >
                         <ShieldCheck className="h-3.5 w-3.5" />
+                      </button>
+                    ) : (
+                      <div className="p-1.5 w-[26px]" />
+                    )}
+                    {/* Fetch (only if feature supports it) */}
+                    {feature.hasFetch ? (
+                      <button
+                        onClick={() => toggle(selectedRole, feature.key, "fetch")}
+                        className={`p-1.5 rounded-md transition-colors ${
+                          perm.fetch ? "bg-cyan-100 text-cyan-700" : "bg-slate-50 text-slate-300"
+                        }`}
+                        title="Fetch from Zoho"
+                      >
+                        <CloudDownload className="h-3.5 w-3.5" />
                       </button>
                     ) : (
                       <div className="p-1.5 w-[26px]" />

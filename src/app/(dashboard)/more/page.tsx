@@ -113,7 +113,7 @@ export default function MorePage() {
   const role = (user?.role || "INWARDS_CLERK") as Role;
   const [syncClearing, setSyncClearing] = useState(false);
   const [syncResult, setSyncResult] = useState("");
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set(MENU_GROUPS.map((g) => g.title)));
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const handleClearSync = async () => {
     setSyncClearing(true);
