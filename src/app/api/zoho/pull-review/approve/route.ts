@@ -9,7 +9,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 // POST — approve or reject a pull
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER", "PURCHASE_MANAGER"]);
     const body = await req.json();
     const { pullId, action, entityType, previewIds } = body as {
       pullId: string; action: "approve" | "reject"; entityType?: string; previewIds?: string[];
