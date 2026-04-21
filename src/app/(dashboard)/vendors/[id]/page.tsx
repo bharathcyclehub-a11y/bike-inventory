@@ -36,6 +36,10 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   const [editingTerms, setEditingTerms] = useState(false);
   const [termsValue, setTermsValue] = useState("");
   const [savingTerms, setSavingTerms] = useState(false);
+  const [editingCd, setEditingCd] = useState(false);
+  const [cdDaysValue, setCdDaysValue] = useState("");
+  const [cdPctValue, setCdPctValue] = useState("");
+  const [savingCd, setSavingCd] = useState(false);
 
   const loadVendor = useCallback(() => {
     fetch(`/api/vendors/${id}`)
@@ -324,12 +328,70 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
               <p className="text-sm text-slate-700">{formatCurrency(vendor.creditLimit)}</p>
             </div>
           </div>
-          {(vendor.cdTermsDays || vendor.cdPercentage) && (
-            <div>
-              <p className="text-xs text-slate-500 mb-0.5">Cash Discount</p>
-              <p className="text-sm text-slate-700">{vendor.cdPercentage}% within {vendor.cdTermsDays} days</p>
-            </div>
-          )}
+          <div>
+            <p className="text-xs text-slate-500 mb-0.5">Cash Discount</p>
+            {editingCd ? (
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  value={cdPctValue}
+                  onChange={(e) => setCdPctValue(e.target.value)}
+                  placeholder="%"
+                  className="w-16 px-2 py-1 text-sm border border-slate-300 rounded-md"
+                />
+                <span className="text-xs text-slate-400">% in</span>
+                <input
+                  type="number"
+                  value={cdDaysValue}
+                  onChange={(e) => setCdDaysValue(e.target.value)}
+                  placeholder="days"
+                  className="w-16 px-2 py-1 text-sm border border-slate-300 rounded-md"
+                />
+                <span className="text-xs text-slate-400">days</span>
+                <button
+                  onClick={async () => {
+                    setSavingCd(true);
+                    try {
+                      const res = await fetch(`/api/vendors/${id}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          cdPercentage: parseFloat(cdPctValue) || 0,
+                          cdTermsDays: parseInt(cdDaysValue) || 0,
+                        }),
+                      }).then(r => r.json());
+                      if (res.success) { loadVendor(); setEditingCd(false); }
+                    } catch {} finally { setSavingCd(false); }
+                  }}
+                  disabled={savingCd}
+                  className="p-1 bg-slate-900 text-white rounded-md disabled:opacity-50"
+                >
+                  {savingCd ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                </button>
+                <button onClick={() => setEditingCd(false)} className="text-xs text-slate-500">Cancel</button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                {vendor.cdPercentage && vendor.cdTermsDays ? (
+                  <p className="text-sm text-slate-700">{vendor.cdPercentage}% within {vendor.cdTermsDays} days</p>
+                ) : (
+                  <p className="text-sm text-slate-400">Not set</p>
+                )}
+                {canEditBalance && (
+                  <button
+                    onClick={() => {
+                      setCdPctValue(String(vendor.cdPercentage || ""));
+                      setCdDaysValue(String(vendor.cdTermsDays || ""));
+                      setEditingCd(true);
+                    }}
+                    className="text-xs text-blue-600 font-medium"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
           {vendor.contacts && vendor.contacts.length > 0 && (
             <div>
               <p className="text-xs text-slate-500 mb-1">Contacts</p>
