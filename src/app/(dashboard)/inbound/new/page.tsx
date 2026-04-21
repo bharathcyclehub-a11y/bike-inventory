@@ -43,6 +43,8 @@ export default function NewInboundPage() {
   const [step, setStep] = useState<Step>("brand");
   const [brands, setBrands] = useState<Brand[]>([]);
   const [selectedBrand, setSelectedBrand] = useState("");
+  const [brandSearch, setBrandSearch] = useState("");
+  const [brandDropdownOpen, setBrandDropdownOpen] = useState(false);
   const [billImageUrl, setBillImageUrl] = useState("");
   const [billImageData, setBillImageData] = useState(""); // base64 for AI
   const [billPdfUrl, setBillPdfUrl] = useState("");
@@ -416,17 +418,44 @@ export default function NewInboundPage() {
 
       <div className="space-y-4">
         {/* Step 1: Brand */}
-        <div>
+        <div className="relative">
           <label className="block text-sm font-medium text-slate-700 mb-1">Brand *</label>
-          <select value={selectedBrand} onChange={(e) => setSelectedBrand(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600">
-            <option value="">Select brand...</option>
-            {brands.map((b) => (
-              <option key={b.brandId} value={b.brandId}>
-                {b.brandName} ({b.leadDays} days lead)
-              </option>
-            ))}
-          </select>
+          {selectedBrand ? (
+            <div className="flex items-center gap-2 w-full rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2.5 text-sm">
+              <span className="flex-1 font-medium text-indigo-800">
+                {selectedBrandData?.brandName} ({selectedBrandData?.leadDays} days lead)
+              </span>
+              <button type="button" onClick={() => { setSelectedBrand(""); setBrandSearch(""); setBrandDropdownOpen(true); }}
+                className="text-indigo-400 hover:text-indigo-600 text-xs font-medium">Change</button>
+            </div>
+          ) : (
+            <>
+              <input
+                type="text"
+                placeholder="Search brand..."
+                value={brandSearch}
+                onChange={(e) => { setBrandSearch(e.target.value); setBrandDropdownOpen(true); }}
+                onFocus={() => setBrandDropdownOpen(true)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600"
+              />
+              {brandDropdownOpen && (
+                <div className="absolute z-20 mt-1 w-full max-h-52 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                  {brands
+                    .filter((b) => b.brandName.toLowerCase().includes(brandSearch.toLowerCase()))
+                    .map((b) => (
+                      <button key={b.brandId} type="button"
+                        onClick={() => { setSelectedBrand(b.brandId); setBrandSearch(""); setBrandDropdownOpen(false); }}
+                        className="w-full text-left px-3 py-2 text-sm hover:bg-indigo-50 transition-colors border-b border-slate-50 last:border-0">
+                        {b.brandName} <span className="text-slate-400">({b.leadDays} days lead)</span>
+                      </button>
+                    ))}
+                  {brands.filter((b) => b.brandName.toLowerCase().includes(brandSearch.toLowerCase())).length === 0 && (
+                    <p className="px-3 py-2 text-sm text-slate-400">No brands found</p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {/* Step 2: Photo */}
