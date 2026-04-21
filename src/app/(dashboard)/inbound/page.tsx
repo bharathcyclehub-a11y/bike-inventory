@@ -377,11 +377,11 @@ export default function InboundPage() {
                       <span className="text-xs font-medium text-slate-900">{bill.data.billNumber}</span>
                       <span className="text-xs font-semibold text-slate-700">{formatINR(bill.data.total)}</span>
                     </div>
-                    <p className="text-[10px] text-slate-600">
-                      {bill.data.vendorName}
-                      {bill.data.date && <span className="ml-1.5 text-slate-400">| {new Date(bill.data.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>}
+                    <p className="text-[10px] text-slate-600 truncate">{bill.data.vendorName}</p>
+                    <p className="text-[10px] text-slate-400">
+                      {bill.data.date && new Date(bill.data.date).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}
                       {bill.data.lineItems.length > 0 && (
-                        <span className="ml-1.5 text-slate-400">| {bill.data.lineItems.reduce((s, li) => s + li.quantity, 0)} items</span>
+                        <span className="ml-1.5">{bill.data.lineItems.reduce((s, li) => s + li.quantity, 0)} items ({bill.data.lineItems.length} lines)</span>
                       )}
                     </p>
                   </div>

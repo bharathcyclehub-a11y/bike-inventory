@@ -115,7 +115,7 @@ ${text.slice(0, 50000)}`;
           },
           body: JSON.stringify({
             model: "claude-haiku-4-5-20251001",
-            max_tokens: 8192,
+            max_tokens: 16384,
             messages: [{ role: "user", content: prompt }],
           }),
         });
@@ -155,13 +155,38 @@ ${text.slice(0, 50000)}`;
       const jsonMatch = responseText.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         transactions = JSON.parse(jsonMatch[0]);
+      } else {
+        // Handle truncated JSON — AI ran out of tokens mid-array
+        const arrayStart = responseText.indexOf("[");
+        if (arrayStart !== -1) {
+          let truncated = responseText.slice(arrayStart);
+          // Find last complete object (ends with })
+          const lastBrace = truncated.lastIndexOf("}");
+          if (lastBrace !== -1) {
+            truncated = truncated.slice(0, lastBrace + 1) + "]";
+            transactions = JSON.parse(truncated);
+          }
+        }
       }
     } catch {
-      return Response.json({
-        success: false,
-        error: "AI returned invalid JSON. Try re-uploading or use a different file format.",
-        diagnostics: { step: "json_parse", fileStats, filePreview, aiResponse: responseText.slice(0, 500) },
-      }, { status: 500 });
+      // Second attempt: try to salvage partial JSON
+      try {
+        const arrayStart = responseText.indexOf("[");
+        if (arrayStart !== -1) {
+          let truncated = responseText.slice(arrayStart);
+          const lastBrace = truncated.lastIndexOf("}");
+          if (lastBrace !== -1) {
+            truncated = truncated.slice(0, lastBrace + 1) + "]";
+            transactions = JSON.parse(truncated);
+          }
+        }
+      } catch {
+        return Response.json({
+          success: false,
+          error: "AI returned invalid JSON. Try re-uploading or use a different file format.",
+          diagnostics: { step: "json_parse", fileStats, filePreview, aiResponse: responseText.slice(0, 500) },
+        }, { status: 500 });
+      }
     }
 
     if (transactions.length === 0) {
