@@ -21,6 +21,8 @@ export async function GET(
         name: true,
         email: true,
         role: true,
+        customRoleName: true,
+        permissions: true,
         accessCode: true,
         isActive: true,
         createdAt: true,
@@ -49,12 +51,14 @@ export async function PUT(
     const existing = await prisma.user.findUnique({ where: { id } });
     if (!existing) return errorResponse("User not found", 404);
 
-    const VALID_ROLES = ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"];
+    const VALID_ROLES = ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"];
 
     const updateData: Record<string, unknown> = {};
     if (body.name && typeof body.name === "string") updateData.name = body.name.trim();
     if (body.email && typeof body.email === "string") updateData.email = body.email.trim().toLowerCase();
     if (body.role && VALID_ROLES.includes(body.role)) updateData.role = body.role;
+    if (body.customRoleName !== undefined) updateData.customRoleName = body.customRoleName || null;
+    if (body.permissions !== undefined) updateData.permissions = body.permissions || null;
     if (body.accessCode && typeof body.accessCode === "string") {
       updateData.accessCode = body.accessCode.toUpperCase().trim();
       // Access code IS the login credential — always sync password hash

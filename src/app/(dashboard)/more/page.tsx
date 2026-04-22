@@ -60,6 +60,7 @@ const ROLE_LABELS: Record<Role, string> = {
   ACCOUNTS_MANAGER: "Accounts Manager",
   INWARDS_CLERK: "Inventory & Receiving Lead",
   OUTWARDS_CLERK: "Sales & Dispatch Lead",
+  CUSTOM: "Custom Role",
 };
 
 const MENU_GROUPS: MenuGroup[] = [

@@ -78,9 +78,12 @@ function getTabsForRole(role: Role): TabConfig[] {
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
+    case "CUSTOM":
     default:
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
   }

@@ -118,8 +118,18 @@ export const userSchema = z.object({
     "ACCOUNTS_MANAGER",
     "INWARDS_CLERK",
     "OUTWARDS_CLERK",
+    "CUSTOM",
   ]),
   accessCode: z.string().min(1, "Access code is required"),
+  customRoleName: z.string().optional(),
+  permissions: z.record(z.string(), z.object({
+    view: z.boolean(),
+    create: z.boolean(),
+    edit: z.boolean(),
+    delete: z.boolean(),
+    approve: z.boolean(),
+    fetch: z.boolean(),
+  })).optional(),
 });
 
 export const vendorSchema = z.object({

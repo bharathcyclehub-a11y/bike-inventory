@@ -15,6 +15,7 @@ interface TeamUser {
   name: string;
   email: string;
   role: string;
+  customRoleName: string | null;
   isActive: boolean;
   createdAt: string;
   _count: { transactions: number };
@@ -27,6 +28,7 @@ const ROLE_CONFIG: Record<string, { label: string; icon: typeof Shield; color: "
   ACCOUNTS_MANAGER: { label: "Accounts Manager", icon: UserCog, color: "info" },
   INWARDS_CLERK: { label: "Inventory & Receiving Lead", icon: PackagePlus, color: "success" },
   OUTWARDS_CLERK: { label: "Sales & Dispatch Lead", icon: PackageMinus, color: "default" },
+  CUSTOM: { label: "Custom", icon: UserCog, color: "info" },
 };
 
 export default function TeamPage() {
@@ -112,7 +114,7 @@ export default function TeamPage() {
                         {!m.isActive && <Badge variant="danger" className="text-[9px]">Inactive</Badge>}
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <Badge variant={rc.color} className="text-[9px]">{rc.label}</Badge>
+                        <Badge variant={rc.color} className="text-[9px]">{m.role === "CUSTOM" && m.customRoleName ? m.customRoleName : rc.label}</Badge>
                         <span className="text-[10px] text-slate-400">{m._count.transactions} transactions</span>
                       </div>
                     </div>

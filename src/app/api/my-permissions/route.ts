@@ -63,6 +63,29 @@ export async function GET() {
       return successResponse({ role, permissions: DEFAULT_PERMISSIONS.ADMIN });
     }
 
+    // CUSTOM role — read permissions from user record
+    if (role === "CUSTOM") {
+      const userId = (session.user as { id?: string }).id;
+      if (userId) {
+        const user = await prisma.user.findUnique({ where: { id: userId }, select: { permissions: true, customRoleName: true } });
+        if (user?.permissions) {
+          // User has per-user permissions stored as { featureKey: { view, create, ... } }
+          const userPerms = user.permissions as Record<string, { view: boolean; create: boolean; edit: boolean; delete: boolean; approve: boolean; fetch: boolean }>;
+          const merged: Record<string, { view: boolean; create: boolean; edit: boolean; delete: boolean; approve: boolean; fetch: boolean }> = {};
+          for (const feature of APP_FEATURES) {
+            merged[feature.key] = userPerms[feature.key] || { view: false, create: false, edit: false, delete: false, approve: false, fetch: false };
+          }
+          return successResponse({ role, customRoleName: user.customRoleName, permissions: merged });
+        }
+      }
+      // Fallback: no permissions set for custom user
+      const empty: Record<string, { view: boolean; create: boolean; edit: boolean; delete: boolean; approve: boolean; fetch: boolean }> = {};
+      for (const feature of APP_FEATURES) {
+        empty[feature.key] = { view: false, create: false, edit: false, delete: false, approve: false, fetch: false };
+      }
+      return successResponse({ role, permissions: empty });
+    }
+
     // Read saved permissions from DB
     const config = await prisma.alertConfig.findUnique({ where: { id: "singleton" } });
     const saved = config?.rolePermissions as RolePermissions | null;

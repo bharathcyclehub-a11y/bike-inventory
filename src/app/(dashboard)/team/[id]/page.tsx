@@ -4,7 +4,7 @@ import { use, useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Save, ShieldAlert, Trash2 } from "lucide-react";
+import { ArrowLeft, Save, ShieldAlert, Trash2, Eye, Plus, Pencil, ShieldCheck, CloudDownload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -14,11 +14,35 @@ interface UserDetail {
   name: string;
   email: string;
   role: string;
+  customRoleName: string | null;
+  permissions: Record<string, Perm> | null;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
   _count: { transactions: number; stockCounts: number };
 }
+
+type Perm = { view: boolean; create: boolean; edit: boolean; delete: boolean; approve: boolean; fetch: boolean };
+const emptyPerm = (): Perm => ({ view: false, create: false, edit: false, delete: false, approve: false, fetch: false });
+
+const APP_FEATURES = [
+  { key: "dashboard", label: "Dashboard", hasApprove: false, hasCreate: false, hasFetch: false },
+  { key: "inbound", label: "Inbound", hasApprove: true, hasCreate: true, hasFetch: true },
+  { key: "deliveries", label: "Deliveries", hasApprove: true, hasCreate: true, hasFetch: true },
+  { key: "stock", label: "Stock", hasApprove: false, hasCreate: false, hasFetch: true },
+  { key: "stock_audit", label: "Stock Audit", hasApprove: true, hasCreate: true, hasFetch: false },
+  { key: "transfers", label: "Transfers", hasApprove: true, hasCreate: true, hasFetch: false },
+  { key: "vendors", label: "Vendors", hasApprove: false, hasCreate: true, hasFetch: true },
+  { key: "bills", label: "Bills", hasApprove: true, hasCreate: true, hasFetch: true },
+  { key: "purchase_orders", label: "POs", hasApprove: true, hasCreate: true, hasFetch: false },
+  { key: "expenses", label: "Expenses", hasApprove: true, hasCreate: true, hasFetch: false },
+  { key: "reports", label: "Reports", hasApprove: false, hasCreate: false, hasFetch: false },
+  { key: "team", label: "Team", hasApprove: false, hasCreate: false, hasFetch: false },
+  { key: "barcode", label: "Barcode", hasApprove: false, hasCreate: false, hasFetch: false },
+  { key: "zoho", label: "Zoho Sync", hasApprove: false, hasCreate: false, hasFetch: true },
+  { key: "customers", label: "Customers", hasApprove: false, hasCreate: true, hasFetch: false },
+  { key: "vendor_issues", label: "Vendor Issues", hasApprove: false, hasCreate: true, hasFetch: false },
+];
 
 const ROLES = [
   { value: "ADMIN", label: "Owner / Director" },
@@ -27,6 +51,7 @@ const ROLES = [
   { value: "ACCOUNTS_MANAGER", label: "Accounts Manager" },
   { value: "INWARDS_CLERK", label: "Inventory & Receiving Lead" },
   { value: "OUTWARDS_CLERK", label: "Sales & Dispatch Lead" },
+  { value: "CUSTOM", label: "Custom Role" },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
@@ -52,7 +77,10 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
   const [role, setRole] = useState("");
   const [accessCode, setAccessCode] = useState("");
   const [isActive, setIsActive] = useState(true);
-  const [newPassword, setNewPassword] = useState("");
+  const [customRoleName, setCustomRoleName] = useState("");
+  const [permissions, setPermissions] = useState<Record<string, Perm>>(
+    Object.fromEntries(APP_FEATURES.map((f) => [f.key, emptyPerm()]))
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -70,6 +98,8 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
           setRole(u.role);
           setAccessCode(u.accessCode || "");
           setIsActive(u.isActive);
+          setCustomRoleName(u.customRoleName || "");
+          if (u.permissions) setPermissions(u.permissions);
         }
       })
       .catch(() => {})
@@ -83,6 +113,10 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
     setSuccess("");
     try {
       const body: Record<string, unknown> = { name, email, role, accessCode, isActive };
+      if (role === "CUSTOM") {
+        body.customRoleName = customRoleName;
+        body.permissions = permissions;
+      }
 
       const res = await fetch(`/api/users/${id}`, {
         method: "PUT",
@@ -92,7 +126,7 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
       const data = await res.json();
       if (data.success) {
         setSuccess("Saved successfully");
-        setNewPassword("");
+        // saved
         setTimeout(() => setSuccess(""), 3000);
       } else {
         setError(data.error || "Failed to save");
@@ -188,8 +222,60 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
             </button>
           </div>
 
-          {/* Role Permissions Summary */}
-          {role && ROLE_PERMISSIONS[role] && (
+          {/* Custom Role Builder */}
+          {role === "CUSTOM" && (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Role Name</label>
+                <Input value={customRoleName} onChange={(e) => setCustomRoleName(e.target.value)}
+                  placeholder="e.g. Store Helper, Mechanic" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-700 mb-2">Permissions</p>
+                <div className="flex items-center gap-2 mb-2 px-1 overflow-x-auto">
+                  <span className="flex items-center gap-0.5 text-[9px] text-slate-500 shrink-0"><Eye className="h-2.5 w-2.5" />View</span>
+                  <span className="flex items-center gap-0.5 text-[9px] text-slate-500 shrink-0"><Plus className="h-2.5 w-2.5" />Add</span>
+                  <span className="flex items-center gap-0.5 text-[9px] text-slate-500 shrink-0"><Pencil className="h-2.5 w-2.5" />Edit</span>
+                  <span className="flex items-center gap-0.5 text-[9px] text-slate-500 shrink-0"><Trash2 className="h-2.5 w-2.5" />Del</span>
+                  <span className="flex items-center gap-0.5 text-[9px] text-slate-500 shrink-0"><ShieldCheck className="h-2.5 w-2.5" />Appr</span>
+                  <span className="flex items-center gap-0.5 text-[9px] text-slate-500 shrink-0"><CloudDownload className="h-2.5 w-2.5" />Fetch</span>
+                </div>
+                <div className="space-y-1">
+                  {APP_FEATURES.map((f) => {
+                    const p = permissions[f.key] || emptyPerm();
+                    return (
+                      <div key={f.key} className="flex items-center justify-between bg-white border border-slate-100 rounded-lg p-2">
+                        <p className="text-[11px] font-medium text-slate-800 flex-1 min-w-0 mr-1">{f.label}</p>
+                        <div className="flex items-center gap-0.5 shrink-0">
+                          <button type="button" onClick={() => setPermissions(prev => ({ ...prev, [f.key]: { ...prev[f.key], view: !p.view } }))}
+                            className={`p-1 rounded ${p.view ? "bg-blue-100 text-blue-700" : "bg-slate-50 text-slate-300"}`}><Eye className="h-3 w-3" /></button>
+                          {f.hasCreate ? (
+                            <button type="button" onClick={() => setPermissions(prev => ({ ...prev, [f.key]: { ...prev[f.key], create: !p.create } }))}
+                              className={`p-1 rounded ${p.create ? "bg-purple-100 text-purple-700" : "bg-slate-50 text-slate-300"}`}><Plus className="h-3 w-3" /></button>
+                          ) : <div className="p-1 w-[20px]" />}
+                          <button type="button" onClick={() => setPermissions(prev => ({ ...prev, [f.key]: { ...prev[f.key], edit: !p.edit } }))}
+                            className={`p-1 rounded ${p.edit ? "bg-amber-100 text-amber-700" : "bg-slate-50 text-slate-300"}`}><Pencil className="h-3 w-3" /></button>
+                          <button type="button" onClick={() => setPermissions(prev => ({ ...prev, [f.key]: { ...prev[f.key], delete: !p.delete } }))}
+                            className={`p-1 rounded ${p.delete ? "bg-red-100 text-red-700" : "bg-slate-50 text-slate-300"}`}><Trash2 className="h-3 w-3" /></button>
+                          {f.hasApprove ? (
+                            <button type="button" onClick={() => setPermissions(prev => ({ ...prev, [f.key]: { ...prev[f.key], approve: !p.approve } }))}
+                              className={`p-1 rounded ${p.approve ? "bg-green-100 text-green-700" : "bg-slate-50 text-slate-300"}`}><ShieldCheck className="h-3 w-3" /></button>
+                          ) : <div className="p-1 w-[20px]" />}
+                          {f.hasFetch ? (
+                            <button type="button" onClick={() => setPermissions(prev => ({ ...prev, [f.key]: { ...prev[f.key], fetch: !p.fetch } }))}
+                              className={`p-1 rounded ${p.fetch ? "bg-cyan-100 text-cyan-700" : "bg-slate-50 text-slate-300"}`}><CloudDownload className="h-3 w-3" /></button>
+                          ) : <div className="p-1 w-[20px]" />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Role Permissions Summary (for non-custom roles) */}
+          {role !== "CUSTOM" && role && ROLE_PERMISSIONS[role] && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <p className="text-xs font-semibold text-blue-800 mb-1.5">Permissions for {ROLES.find(r => r.value === role)?.label}</p>
               <ul className="space-y-0.5">
