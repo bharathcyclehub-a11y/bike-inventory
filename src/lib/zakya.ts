@@ -286,6 +286,16 @@ export class ZakyaClient {
         total: number;
         balance: number;
         status: string;
+        payment_made: number;
+        payments?: Array<{
+          payment_id: string;
+          payment_mode: string;
+          amount: number;
+          date: string;
+          description?: string;
+          reference_number?: string;
+          account_name?: string;
+        }>;
         line_items: Array<{
           line_item_id: string;
           item_id: string;

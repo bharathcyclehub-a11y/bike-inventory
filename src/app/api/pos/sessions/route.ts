@@ -76,21 +76,10 @@ export async function POST(req: NextRequest) {
     // Step 1: Fetch all invoices for the date range
     const invoices = await zakya.listAllInvoices(dateFrom, dateTo);
 
-    // Step 2: Fetch all customer payments for the date range (has payment_mode)
-    let payments: Array<{
-      payment_id: string; date: string; amount: number;
-      payment_mode: string; invoice_number: string; customer_name: string;
-    }> = [];
-    let paymentError: string | null = null;
-    try {
-      payments = await zakya.listAllCustomerPayments(dateFrom, dateTo);
-    } catch (err) {
-      paymentError = err instanceof Error ? err.message : String(err);
-    }
-
-    // Step 3: Group invoices by date
+    // Step 2: Group invoices by date
     const sessionsByDate = new Map<string, {
       date: string; total: number; count: number;
+      invoiceIds: string[];
       cashSales: number; cardSales: number; upiSales: number;
       financeSales: number; creditSales: number;
       paymentModes: Record<string, number>;
@@ -100,7 +89,7 @@ export async function POST(req: NextRequest) {
       const date = inv.date;
       if (!sessionsByDate.has(date)) {
         sessionsByDate.set(date, {
-          date, total: 0, count: 0,
+          date, total: 0, count: 0, invoiceIds: [],
           cashSales: 0, cardSales: 0, upiSales: 0, financeSales: 0, creditSales: 0,
           paymentModes: {},
         });
@@ -108,6 +97,7 @@ export async function POST(req: NextRequest) {
       const s = sessionsByDate.get(date)!;
       s.total += inv.total;
       s.count += 1;
+      s.invoiceIds.push(inv.invoice_id);
 
       // Credit sales = invoices with balance remaining
       if (inv.balance > 0) {
@@ -115,42 +105,75 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Step 4: Distribute payment amounts by mode into daily buckets
-    for (const pm of payments) {
-      const date = pm.date;
-      if (!sessionsByDate.has(date)) continue; // payment for a date with no invoices — skip
+    // Step 3: Fetch invoice details to get payment mode breakdown
+    // Each invoice detail has a `payments` array with `payment_mode`
+    let detailsFetched = 0;
+    let detailError: string | null = null;
+    let sampleInvoiceKeys: string[] | null = null;
+    let samplePaymentKeys: string[] | null = null;
 
-      const s = sessionsByDate.get(date)!;
-      const mode = (pm.payment_mode || "").toLowerCase();
-      const amt = pm.amount || 0;
+    try {
+      for (const [, s] of sessionsByDate) {
+        // Fetch up to 60 invoice details per day
+        const idsToFetch = s.invoiceIds.slice(0, 60);
+        for (const invId of idsToFetch) {
+          try {
+            const detail = await zakya.getInvoice(invId);
+            const inv = detail.invoice;
 
-      // Track raw mode names for diagnostics
-      s.paymentModes[pm.payment_mode] = (s.paymentModes[pm.payment_mode] || 0) + amt;
+            // Log first invoice's keys for diagnostics
+            if (!sampleInvoiceKeys) {
+              sampleInvoiceKeys = Object.keys(inv as unknown as Record<string, unknown>);
+            }
 
-      // Classify into buckets
-      if (mode === "cash") {
-        s.cashSales += amt;
-      } else if (mode.includes("upi") || mode.includes("phonepe") || mode.includes("gpay") || mode.includes("google")) {
-        s.upiSales += amt;
-      } else if (mode.includes("bajaj") || mode.includes("finance") || mode.includes("emi")) {
-        s.financeSales += amt;
-      } else if (mode === "creditcard" || mode.includes("card") || mode.includes("mespos") || mode.includes("icici") || mode.includes("hdfc") || mode.includes("bank")) {
-        s.cardSales += amt;
-      } else if (mode === "banktransfer" || mode === "bankremittance") {
-        s.cardSales += amt; // Bank transfers → card bucket
-      } else {
-        s.cardSales += amt; // Unknown → card bucket
+            // Extract payment modes from invoice payments array
+            if (inv.payments && inv.payments.length > 0) {
+              for (const p of inv.payments) {
+                if (!samplePaymentKeys) {
+                  samplePaymentKeys = Object.keys(p as unknown as Record<string, unknown>);
+                }
+                const mode = (p.payment_mode || "").toLowerCase();
+                const amt = p.amount || 0;
+
+                // Track raw mode names
+                s.paymentModes[p.payment_mode || "unknown"] = (s.paymentModes[p.payment_mode || "unknown"] || 0) + amt;
+
+                // Classify into buckets
+                if (mode === "cash") {
+                  s.cashSales += amt;
+                } else if (mode.includes("upi") || mode.includes("phonepe") || mode.includes("gpay") || mode.includes("google")) {
+                  s.upiSales += amt;
+                } else if (mode.includes("bajaj") || mode.includes("finance") || mode.includes("emi")) {
+                  s.financeSales += amt;
+                } else if (mode === "creditcard" || mode.includes("card") || mode.includes("mespos") || mode.includes("icici") || mode.includes("hdfc") || mode.includes("bank")) {
+                  s.cardSales += amt;
+                } else if (mode === "banktransfer" || mode === "bankremittance") {
+                  s.cardSales += amt;
+                } else {
+                  s.cardSales += amt;
+                }
+              }
+            }
+            detailsFetched++;
+            // Rate limit: 150ms between calls
+            await zakya.delay(150);
+          } catch (err) {
+            if (!detailError) detailError = err instanceof Error ? err.message : String(err);
+            // Continue with remaining invoices
+          }
+        }
       }
+    } catch (err) {
+      if (!detailError) detailError = err instanceof Error ? err.message : String(err);
     }
 
-    // Step 5: Create POS sessions in DB
+    // Step 4: Create POS sessions in DB
     const allPaymentModes = new Set<string>();
     for (const [date, s] of sessionsByDate) {
       const zakyaSessionId = `ZAKYA-${date}`;
       const existing = await prisma.posSession.findUnique({ where: { zakyaSessionId } });
       if (existing) { skipped++; continue; }
 
-      // Collect all payment mode names for diagnostics
       Object.keys(s.paymentModes).forEach(m => allPaymentModes.add(m));
 
       await prisma.posSession.create({
@@ -172,7 +195,8 @@ export async function POST(req: NextRequest) {
           rawData: {
             invoiceCount: s.count, total: s.total,
             paymentModes: s.paymentModes,
-            source: payments.length > 0 ? "invoices+payments" : "invoices-only",
+            detailsFetched,
+            source: detailsFetched > 0 ? "invoices+details" : "invoices-only",
           },
         },
       });
@@ -181,11 +205,13 @@ export async function POST(req: NextRequest) {
 
     return successResponse({
       fetched: invoices.length,
-      paymentsFound: payments.length,
+      detailsFetched,
       created, skipped,
-      source: payments.length > 0 ? "invoices+payments" : "invoices-only",
-      paymentError,
+      source: detailsFetched > 0 ? "invoices+details" : "invoices-only",
+      detailError,
       paymentModes: [...allPaymentModes],
+      sampleInvoiceKeys,
+      samplePaymentKeys,
     });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
