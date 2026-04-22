@@ -115,6 +115,19 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return successResponse(updated);
     }
 
+    // Cash In / Cash Out (manual daily recording)
+    if (body.cashIn !== undefined || body.cashOut !== undefined) {
+      const updated = await prisma.dailySettlement.update({
+        where: { id },
+        data: {
+          cashIn: body.cashIn !== undefined ? parseFloat(body.cashIn) : settlement.cashIn,
+          cashOut: body.cashOut !== undefined ? parseFloat(body.cashOut) : settlement.cashOut,
+          cashOutReason: body.cashOutReason ?? settlement.cashOutReason,
+        },
+      });
+      return successResponse(updated);
+    }
+
     return errorResponse("No valid update fields", 400);
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);

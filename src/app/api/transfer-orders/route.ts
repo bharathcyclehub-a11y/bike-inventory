@@ -21,14 +21,18 @@ const createSchema = z.object({
 // GET: List transfer orders
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth();
+    const user = await requireAuth();
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status"); // PENDING, APPROVED, REJECTED, all
 
     const dateFrom = searchParams.get("dateFrom") || undefined;
     const dateTo = searchParams.get("dateTo") || undefined;
 
+    // Non-admin/supervisor users only see their own transfers
+    const canSeeAll = ["ADMIN", "SUPERVISOR"].includes(user.role);
+
     const where = {
+      ...(!canSeeAll && { createdById: user.id }),
       ...(status && status !== "all" && {
         status: status as "PENDING" | "APPROVED" | "REJECTED",
       }),

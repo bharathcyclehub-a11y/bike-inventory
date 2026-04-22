@@ -36,6 +36,7 @@ import {
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { usePermissions } from "@/lib/use-permissions";
 import type { Role } from "@/types";
 
 interface MenuItem {
@@ -43,6 +44,7 @@ interface MenuItem {
   icon: typeof Building2;
   href: string;
   roles: Role[];
+  featureKey?: string; // maps to permission system feature key
   comingSoon?: boolean;
 }
 
@@ -64,48 +66,48 @@ const MENU_GROUPS: MenuGroup[] = [
   {
     title: "Accounts",
     items: [
-      { label: "Accounts Dashboard", icon: IndianRupee, href: "/accounts", roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"] },
-      { label: "Bills & Payments", icon: FileText, href: "/bills", roles: ["ADMIN", "SUPERVISOR"] },
-      { label: "Record Payment", icon: CreditCard, href: "/payments/new", roles: ["ADMIN", "SUPERVISOR"] },
-      { label: "Receivables", icon: HandCoins, href: "/receivables", roles: ["ADMIN", "SUPERVISOR"] },
-      { label: "Expenses", icon: Receipt, href: "/expenses", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "Accounts Dashboard", icon: IndianRupee, href: "/accounts", roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"], featureKey: "bills" },
+      { label: "Bills & Payments", icon: FileText, href: "/bills", roles: ["ADMIN", "SUPERVISOR"], featureKey: "bills" },
+      { label: "Record Payment", icon: CreditCard, href: "/payments/new", roles: ["ADMIN", "SUPERVISOR"], featureKey: "bills" },
+      { label: "Receivables", icon: HandCoins, href: "/receivables", roles: ["ADMIN", "SUPERVISOR"], featureKey: "customers" },
+      { label: "Expenses", icon: Receipt, href: "/expenses", roles: ["ADMIN", "SUPERVISOR"], featureKey: "expenses" },
     ],
   },
   {
     title: "Purchase",
     items: [
-      { label: "Vendors", icon: Building2, href: "/vendors", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"] },
-      { label: "Purchase Orders", icon: ShoppingCart, href: "/purchase-orders", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"] },
-      { label: "Vendor Issues", icon: AlertCircle, href: "/vendor-issues", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"] },
-      { label: "Inbound Tracking", icon: Truck, href: "/inbound", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_CLERK"] },
+      { label: "Vendors", icon: Building2, href: "/vendors", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"], featureKey: "vendors" },
+      { label: "Purchase Orders", icon: ShoppingCart, href: "/purchase-orders", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"], featureKey: "purchase_orders" },
+      { label: "Vendor Issues", icon: AlertCircle, href: "/vendor-issues", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"], featureKey: "vendor_issues" },
+      { label: "Inbound Tracking", icon: Truck, href: "/inbound", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"], featureKey: "inbound" },
     ],
   },
   {
     title: "Operations",
     items: [
-      { label: "Transfers", icon: ArrowRightLeft, href: "/transfers", roles: ["ADMIN", "SUPERVISOR"] },
-      { label: "Stock Audit", icon: ClipboardCheck, href: "/stock-audit", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"] },
-      { label: "Barcode Scanner", icon: QrCode, href: "/scanner", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"] },
-      { label: "Reorder Dashboard", icon: RefreshCw, href: "/reorder", roles: ["ADMIN", "PURCHASE_MANAGER"] },
-      { label: "Deliveries", icon: Truck, href: "/deliveries", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"] },
-      { label: "Pre-Bookings", icon: UserCheck, href: "/prebookings", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "PURCHASE_MANAGER"] },
-      { label: "Second-Hand Cycles", icon: Bike, href: "/second-hand", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER", "INWARDS_CLERK"] },
+      { label: "Transfers", icon: ArrowRightLeft, href: "/transfers", roles: ["ADMIN", "SUPERVISOR"], featureKey: "transfers" },
+      { label: "Stock Audit", icon: ClipboardCheck, href: "/stock-audit", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"], featureKey: "stock_audit" },
+      { label: "Barcode Scanner", icon: QrCode, href: "/scanner", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"], featureKey: "barcode" },
+      { label: "Reorder Dashboard", icon: RefreshCw, href: "/reorder", roles: ["ADMIN", "PURCHASE_MANAGER"], featureKey: "reorder" },
+      { label: "Deliveries", icon: Truck, href: "/deliveries", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"], featureKey: "deliveries" },
+      { label: "Pre-Bookings", icon: UserCheck, href: "/prebookings", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "PURCHASE_MANAGER"], featureKey: "deliveries" },
+      { label: "Second-Hand Cycles", icon: Bike, href: "/second-hand", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER"], featureKey: "second_hand" },
     ],
   },
   {
     title: "Admin",
     items: [
-      { label: "Team Management", icon: Users, href: "/team", roles: ["ADMIN", "SUPERVISOR"] },
-      { label: "Reports", icon: BarChart3, href: "/reports", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "Team Management", icon: Users, href: "/team", roles: ["ADMIN", "SUPERVISOR"], featureKey: "team" },
+      { label: "Reports", icon: BarChart3, href: "/reports", roles: ["ADMIN", "SUPERVISOR"], featureKey: "reports" },
       { label: "Service Revenue", icon: Wrench, href: "/service-revenue", roles: ["ADMIN"] },
-      { label: "AI Insights", icon: Brain, href: "/ai", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"] },
+      { label: "AI Insights", icon: Brain, href: "/ai", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER"], featureKey: "reorder" },
       { label: "Bins & Locations", icon: Warehouse, href: "/more/bins", roles: ["ADMIN"] },
       { label: "Brand Management", icon: Settings, href: "/more/brands", roles: ["ADMIN"] },
       { label: "Brand Lead Times", icon: Clock, href: "/more/brand-lead-times", roles: ["ADMIN"] },
       { label: "Price Correction", icon: IndianRupee, href: "/price-correction", roles: ["ADMIN"] },
-      { label: "WhatsApp Templates", icon: MessageSquare, href: "/more/whatsapp-templates", roles: ["ADMIN"] },
+      { label: "WhatsApp Templates", icon: MessageSquare, href: "/more/whatsapp-templates", roles: ["ADMIN"], featureKey: "whatsapp_templates" },
       { label: "Alert Config", icon: Bell, href: "/more/alerts", roles: ["ADMIN"] },
-      { label: "Zoho Books Sync", icon: Cloud, href: "/more/zoho", roles: ["ADMIN"] },
+      { label: "Zoho Books Sync", icon: Cloud, href: "/more/zoho", roles: ["ADMIN"], featureKey: "zoho" },
     ],
   },
 ];
@@ -114,6 +116,7 @@ export default function MorePage() {
   const { data: session } = useSession();
   const user = session?.user as { name?: string; role?: string; userId?: string } | undefined;
   const role = (user?.role || "INWARDS_CLERK") as Role;
+  const { canView } = usePermissions(role);
   const [syncClearing, setSyncClearing] = useState(false);
   const [syncResult, setSyncResult] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
@@ -163,7 +166,12 @@ export default function MorePage() {
       {/* Grouped Menu */}
       <div className="space-y-2">
         {MENU_GROUPS.map((group) => {
-          const visibleItems = group.items.filter((item) => item.roles.includes(role));
+          const visibleItems = group.items.filter((item) => {
+            if (!item.roles.includes(role)) return false;
+            // For non-admin roles, also check saved permissions
+            if (role !== "ADMIN" && item.featureKey && !canView(item.featureKey)) return false;
+            return true;
+          });
           if (visibleItems.length === 0) return null;
           const isExpanded = expandedGroups.has(group.title);
 

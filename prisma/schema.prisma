@@ -1183,6 +1183,11 @@ model DailySettlement {
   cashVerifiedById  String?
   cashVerifiedBy    User?             @relation("SettlementCashVerifier", fields: [cashVerifiedById], references: [id])
 
+  // Cash drawer — manual daily entry
+  cashIn            Float             @default(0)  // Cash received into drawer
+  cashOut           Float             @default(0)  // Cash taken out (must be linked to expense)
+  cashOutReason     String?           // Reason for cash out
+
   // Bank matching
   matchedAmount     Float             @default(0)
   unmatchedAmount   Float             @default(0)

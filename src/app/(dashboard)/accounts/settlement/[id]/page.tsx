@@ -3,7 +3,7 @@
 import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle, Banknote, CreditCard, Smartphone, Building2, Search, X, FileText, ArrowDownLeft } from "lucide-react";
+import { ArrowLeft, CheckCircle, Banknote, CreditCard, Smartphone, Building2, Search, X, FileText, ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -35,6 +35,9 @@ interface Settlement {
   cashCounted: number | null;
   cashVariance: number | null;
   cashVerifiedAt: string | null;
+  cashIn: number;
+  cashOut: number;
+  cashOutReason: string | null;
   cashVerifiedBy: { name: string } | null;
   notes: string | null;
   sessions: Array<{
@@ -92,10 +95,10 @@ const MODE_ICONS: Record<string, typeof CreditCard> = {
 };
 
 const MODE_LABELS: Record<string, string> = {
-  CARD: "Card / MESPOS",
+  CARD: "ICICI BANK / HDFC",
   UPI: "UPI",
-  FINANCE: "Finance (Bajaj etc.)",
-  CASH_DEPOSIT: "Cash Deposit",
+  FINANCE: "BAJAJ / Finance",
+  CASH_DEPOSIT: "Cash",
   CREDIT: "Credit Sale",
 };
 
@@ -124,6 +127,12 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
   const [editingBreakdown, setEditingBreakdown] = useState(false);
   const [modeInputs, setModeInputs] = useState({ cash: "", card: "", upi: "", finance: "", credit: "" });
   const [savingBreakdown, setSavingBreakdown] = useState(false);
+
+  // Cash In / Out
+  const [cashInInput, setCashInInput] = useState("");
+  const [cashOutInput, setCashOutInput] = useState("");
+  const [cashOutReason, setCashOutReason] = useState("");
+  const [savingCashFlow, setSavingCashFlow] = useState(false);
 
   // Matching
   const [matchingMode, setMatchingMode] = useState<string | null>(null);
@@ -182,6 +191,27 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
       else alert(data.error);
     } catch { alert("Network error"); }
     finally { setSavingBreakdown(false); }
+  };
+
+  const saveCashFlow = async () => {
+    if (!cashOutInput && !cashInInput) return;
+    if (cashOutInput && !cashOutReason.trim()) { alert("Cash out reason is required"); return; }
+    setSavingCashFlow(true);
+    try {
+      const res = await fetch(`/api/pos/settlement/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(cashInInput ? { cashIn: parseFloat(cashInInput) } : {}),
+          ...(cashOutInput ? { cashOut: parseFloat(cashOutInput) } : {}),
+          ...(cashOutReason ? { cashOutReason: cashOutReason.trim() } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (data.success) { setCashInInput(""); setCashOutInput(""); setCashOutReason(""); loadData(); }
+      else alert(data.error);
+    } catch { alert("Network error"); }
+    finally { setSavingCashFlow(false); }
   };
 
   const matchTransaction = async (bankTxnId: string, amount: number) => {
@@ -445,32 +475,88 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
               </Card>
             );
           })()}
-          {/* Individual payments */}
-          <div className="space-y-1">
-            {zohoPayments.slice(0, 20).map((p) => (
-              <Card key={p.payment_id}>
-                <CardContent className="p-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="min-w-0 flex-1 mr-2">
-                      <p className="text-xs font-medium text-slate-900 truncate">{p.customer_name}</p>
-                      <p className="text-[10px] text-slate-400">
-                        {p.payment_mode}{p.reference_number ? ` | ${p.reference_number}` : ""}
-                        {p.account_name ? ` → ${p.account_name}` : ""}
-                      </p>
-                    </div>
-                    <p className="text-xs font-bold text-green-700 shrink-0">{formatCurrency(p.amount)}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-            {zohoPayments.length > 20 && (
-              <p className="text-[10px] text-slate-400 text-center py-1">
-                +{zohoPayments.length - 20} more payments
-              </p>
-            )}
-          </div>
         </div>
       )}
+
+      {/* Cash In / Cash Out */}
+      <div className="mb-4">
+        <h2 className="text-sm font-semibold text-slate-900 mb-2">Cash In / Cash Out</h2>
+        {(settlement.cashIn > 0 || settlement.cashOut > 0) && (
+          <Card className="mb-2 bg-slate-50">
+            <CardContent className="p-3">
+              <div className="flex gap-4">
+                {settlement.cashIn > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <ArrowDownLeft className="h-3.5 w-3.5 text-green-600" />
+                    <div>
+                      <p className="text-[10px] text-slate-500">Cash In</p>
+                      <p className="text-sm font-bold text-green-700">{formatCurrency(settlement.cashIn)}</p>
+                    </div>
+                  </div>
+                )}
+                {settlement.cashOut > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <ArrowUpRight className="h-3.5 w-3.5 text-red-600" />
+                    <div>
+                      <p className="text-[10px] text-slate-500">Cash Out</p>
+                      <p className="text-sm font-bold text-red-700">{formatCurrency(settlement.cashOut)}</p>
+                      {settlement.cashOutReason && (
+                        <p className="text-[10px] text-slate-400">{settlement.cashOutReason}</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        <Card>
+          <CardContent className="p-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <ArrowDownLeft className="h-3.5 w-3.5 text-green-600 shrink-0" />
+              <span className="text-xs text-slate-600 w-14 shrink-0">Cash In</span>
+              <Input
+                type="number"
+                placeholder="0"
+                value={cashInInput}
+                onChange={(e) => setCashInInput(e.target.value)}
+                className="text-sm"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <ArrowUpRight className="h-3.5 w-3.5 text-red-600 shrink-0" />
+              <span className="text-xs text-slate-600 w-14 shrink-0">Cash Out</span>
+              <Input
+                type="number"
+                placeholder="0"
+                value={cashOutInput}
+                onChange={(e) => setCashOutInput(e.target.value)}
+                className="text-sm"
+              />
+            </div>
+            {cashOutInput && parseFloat(cashOutInput) > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-600 w-[70px] shrink-0 pl-5">Reason *</span>
+                <Input
+                  type="text"
+                  placeholder="Expense reason (required)"
+                  value={cashOutReason}
+                  onChange={(e) => setCashOutReason(e.target.value)}
+                  className="text-sm"
+                />
+              </div>
+            )}
+            <Button
+              size="sm"
+              className="bg-slate-800 hover:bg-slate-900 w-full"
+              onClick={saveCashFlow}
+              disabled={savingCashFlow || (!cashInInput && !cashOutInput)}
+            >
+              {savingCashFlow ? "Saving..." : "Save Cash In/Out"}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Cash Verification */}
       <div className="mb-4">

@@ -26,43 +26,50 @@ export function usePermissions(role: string) {
       return;
     }
 
-    // Non-admin: try to load from API (admin-only endpoint), fall back to defaults
-    // Since the GET is admin-only, non-admin users use the default permissions
-    // embedded in the client
-    const defaults: Record<string, Permissions> = {
-      SUPERVISOR: defaultPerms(["deliveries", "inbound", "bills", "vendors", "stock"]),
-      PURCHASE_MANAGER: defaultPerms(["inbound", "vendors", "stock"]),
-      ACCOUNTS_MANAGER: defaultPerms(["bills"]),
-      INWARDS_CLERK: defaultPerms(["stock"]),
-      OUTWARDS_CLERK: defaultPerms([]),
-    };
-
-    const perms = defaults[role] || defaultPerms([]);
-    cachedPermissions = { role, perms };
-    setPermissions(perms);
+    // Fetch saved permissions from API (works for all authenticated users)
+    fetch("/api/my-permissions")
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.success && res.data?.permissions) {
+          const perms = res.data.permissions as Permissions;
+          cachedPermissions = { role, perms };
+          setPermissions(perms);
+        }
+      })
+      .catch(() => {
+        // Fallback to defaults if API fails
+      });
   }, [role]);
+
+  const canView = (feature: string) => {
+    if (role === "ADMIN") return true;
+    return permissions?.[feature]?.view ?? true;
+  };
+
+  const canCreate = (feature: string) => {
+    if (role === "ADMIN") return true;
+    return permissions?.[feature]?.create ?? false;
+  };
+
+  const canEdit = (feature: string) => {
+    if (role === "ADMIN") return true;
+    return permissions?.[feature]?.edit ?? false;
+  };
+
+  const canDelete = (feature: string) => {
+    if (role === "ADMIN") return true;
+    return permissions?.[feature]?.delete ?? false;
+  };
+
+  const canApprove = (feature: string) => {
+    if (role === "ADMIN") return true;
+    return permissions?.[feature]?.approve ?? false;
+  };
 
   const canFetch = (feature: string) => {
     if (role === "ADMIN") return true;
     return permissions?.[feature]?.fetch ?? false;
   };
 
-  return { permissions, canFetch };
-}
-
-function defaultPerms(fetchFeatures: string[]): Permissions {
-  const features = [
-    "dashboard", "inbound", "deliveries", "stock", "stock_audit", "transfers",
-    "vendors", "bills", "purchase_orders", "expenses", "reports", "team",
-    "barcode", "reorder", "second_hand", "zoho", "whatsapp_templates",
-    "customers", "vendor_issues",
-  ];
-  const perms: Permissions = {};
-  for (const f of features) {
-    perms[f] = {
-      view: true, create: false, edit: false, delete: false, approve: false,
-      fetch: fetchFeatures.includes(f),
-    };
-  }
-  return perms;
+  return { permissions, canView, canCreate, canEdit, canDelete, canApprove, canFetch };
 }
