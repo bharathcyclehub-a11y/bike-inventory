@@ -50,6 +50,8 @@ export default function SettlementListPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [fetchDays, setFetchDays] = useState(7);
+  const [customFrom, setCustomFrom] = useState("");
+  const [customTo, setCustomTo] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
 
   // Progress state
@@ -83,8 +85,15 @@ export default function SettlementListPage() {
     setFetchProgress("Connecting to Zakya...");
     setFetchResult(null);
 
-    const dateTo = new Date().toISOString().split("T")[0];
-    const dateFrom = new Date(Date.now() - fetchDays * 86400000).toISOString().split("T")[0];
+    let dateTo: string;
+    let dateFrom: string;
+    if (fetchDays === 0 && customFrom && customTo) {
+      dateFrom = customFrom;
+      dateTo = customTo;
+    } else {
+      dateTo = new Date().toISOString().split("T")[0];
+      dateFrom = new Date(Date.now() - (fetchDays || 1) * 86400000).toISOString().split("T")[0];
+    }
 
     try {
       if (force) setFetchProgress("Clearing old data...");
@@ -211,12 +220,23 @@ export default function SettlementListPage() {
         <div className="flex items-center gap-1 flex-1">
           <select value={fetchDays} onChange={(e) => setFetchDays(Number(e.target.value))}
             className="text-xs border rounded-lg px-2 py-2 bg-white">
+            <option value={1}>1 day</option>
             <option value={3}>3 days</option>
             <option value={7}>7 days</option>
             <option value={14}>14 days</option>
             <option value={30}>30 days</option>
+            <option value={0}>Custom</option>
           </select>
-          <Button size="sm" variant="outline" onClick={() => fetchSessions(false)} disabled={isFetching}>
+          {fetchDays === 0 && (
+            <>
+              <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)}
+                className="text-xs border rounded-lg px-2 py-2 bg-white w-[120px]" />
+              <span className="text-xs text-slate-400">to</span>
+              <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)}
+                className="text-xs border rounded-lg px-2 py-2 bg-white w-[120px]" />
+            </>
+          )}
+          <Button size="sm" variant="outline" onClick={() => fetchSessions(false)} disabled={isFetching || (fetchDays === 0 && (!customFrom || !customTo))}>
             <Download className="h-3.5 w-3.5 mr-1" />
             {isFetching ? "Fetching..." : "Fetch POS"}
           </Button>
