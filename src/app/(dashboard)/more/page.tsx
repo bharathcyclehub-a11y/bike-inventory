@@ -90,7 +90,6 @@ const MENU_GROUPS: MenuGroup[] = [
       { label: "Barcode Scanner", icon: QrCode, href: "/scanner", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"], featureKey: "barcode" },
       { label: "Reorder Dashboard", icon: RefreshCw, href: "/reorder", roles: ["ADMIN", "PURCHASE_MANAGER"], featureKey: "reorder" },
       { label: "Deliveries", icon: Truck, href: "/deliveries", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"], featureKey: "deliveries" },
-      { label: "Pre-Bookings", icon: UserCheck, href: "/prebookings", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "PURCHASE_MANAGER"], featureKey: "deliveries" },
       { label: "Second-Hand Cycles", icon: Bike, href: "/second-hand", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER"], featureKey: "second_hand" },
     ],
   },
