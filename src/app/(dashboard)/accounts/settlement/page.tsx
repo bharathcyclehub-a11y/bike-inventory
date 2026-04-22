@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Download, Plus, CheckCircle, AlertTriangle, Clock, ChevronRight, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Plus, CheckCircle, AlertTriangle, Clock, ChevronRight, Trash2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -62,7 +62,7 @@ export default function SettlementListPage() {
 
   useEffect(() => { loadSettlements(); }, []);
 
-  const fetchSessions = async () => {
+  const fetchSessions = async (force = false) => {
     setFetching(true);
     const dateTo = new Date().toISOString().split("T")[0];
     const dateFrom = new Date(Date.now() - fetchDays * 86400000).toISOString().split("T")[0];
@@ -70,17 +70,17 @@ export default function SettlementListPage() {
       const res = await fetch("/api/pos/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dateFrom, dateTo }),
+        body: JSON.stringify({ dateFrom, dateTo, force }),
       });
       const data = await res.json();
       if (data.success) {
-        const src = data.data.source === "sessions" ? "sessions" : "invoices";
+        const src = data.data.source === "sessions" ? "sessions (with breakdown)" : "invoices (totals only)";
         const created = data.data.created || 0;
+        const apiErr = data.data.sessionApiError;
 
-        // Auto-create settlements for each new session date
+        // Auto-create settlements for each date with sessions
+        let settlementsCreated = 0;
         if (created > 0) {
-          let settlementsCreated = 0;
-          // Get the dates from the fetched range and try creating settlements
           const start = new Date(dateFrom);
           const end = new Date(dateTo);
           for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
@@ -95,10 +95,15 @@ export default function SettlementListPage() {
               if (sData.success) settlementsCreated++;
             } catch { /* skip dates with no sessions */ }
           }
-          alert(`Fetched ${data.data.fetched} ${src}. Created ${created} sessions → ${settlementsCreated} settlement(s).`);
-        } else {
-          alert(`Fetched ${data.data.fetched} ${src}. ${data.data.skipped} already existed.`);
         }
+
+        let msg = `Source: ${src}\n`;
+        msg += created > 0
+          ? `Created ${created} sessions → ${settlementsCreated} settlement(s).`
+          : `${data.data.skipped} already existed.`;
+        if (apiErr) msg += `\n\nSessions API note: ${apiErr}`;
+
+        alert(msg);
         loadSettlements();
       } else {
         alert(data.error || "Failed to fetch sessions");
@@ -189,10 +194,20 @@ export default function SettlementListPage() {
             <option value={14}>14 days</option>
             <option value={30}>30 days</option>
           </select>
-          <Button size="sm" variant="outline" onClick={fetchSessions} disabled={fetching}>
+          <Button size="sm" variant="outline" onClick={() => fetchSessions(false)} disabled={fetching}>
             <Download className="h-3.5 w-3.5 mr-1" />
             {fetching ? "Fetching..." : "Fetch POS"}
           </Button>
+          {isAdmin && (
+            <Button size="sm" variant="outline" onClick={() => {
+              if (confirm("Re-fetch will delete existing sessions & settlements for this period and pull fresh data from Zakya. Continue?")) {
+                fetchSessions(true);
+              }
+            }} disabled={fetching} className="text-orange-600 border-orange-300 hover:bg-orange-50">
+              <RefreshCw className="h-3.5 w-3.5 mr-1" />
+              Re-fetch
+            </Button>
+          )}
         </div>
         <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={createSettlement} disabled={creating}>
           <Plus className="h-3.5 w-3.5 mr-1" />

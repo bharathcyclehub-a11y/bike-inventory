@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
   try {
     await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
     const body = await req.json();
-    const { dateFrom, dateTo } = body as { dateFrom: string; dateTo: string };
+    const { dateFrom, dateTo, force } = body as { dateFrom: string; dateTo: string; force?: boolean };
 
     if (!dateFrom || !dateTo) return errorResponse("dateFrom and dateTo required", 400);
 
@@ -48,14 +48,39 @@ export async function POST(req: NextRequest) {
     const ok = await zakya.init();
     if (!ok) return errorResponse("Zakya POS not connected. Configure in Settings → Zakya.", 400);
 
-    // Try register sessions API first (has payment mode breakdown)
+    // Force mode: delete existing sessions (and unlink from settlements) for this date range
+    if (force) {
+      const startOfRange = new Date(dateFrom);
+      const endOfRange = new Date(dateTo + "T23:59:59Z");
+      const existingSessions = await prisma.posSession.findMany({
+        where: { sessionDate: { gte: startOfRange, lte: endOfRange } },
+        select: { id: true, settlementId: true },
+      });
+      if (existingSessions.length > 0) {
+        // Delete linked settlements first
+        const settlementIds = [...new Set(existingSessions.filter(s => s.settlementId).map(s => s.settlementId!))];
+        for (const sid of settlementIds) {
+          await prisma.settlementMatch.deleteMany({ where: { settlementId: sid } });
+          await prisma.posSession.updateMany({ where: { settlementId: sid }, data: { settlementId: null } });
+          await prisma.dailySettlement.delete({ where: { id: sid } });
+        }
+        await prisma.posSession.deleteMany({
+          where: { id: { in: existingSessions.map(s => s.id) } },
+        });
+      }
+    }
+
     let created = 0;
     let skipped = 0;
     let fetched = 0;
     let usedSessionsApi = false;
+    let sessionApiError: string | null = null;
+    let sessionApiRaw: unknown = null;
 
+    // Try register sessions API first (has payment mode breakdown)
     try {
       const sessionsData = await zakya.listRegisterSessions(dateFrom, dateTo);
+      sessionApiRaw = sessionsData;
       const sessions = sessionsData.register_sessions || sessionsData.registersessions || [];
 
       if (sessions.length > 0) {
@@ -81,11 +106,11 @@ export async function POST(req: NextRequest) {
               else if (mode.includes("BAJAJ") || mode.includes("FINANCE") || mode.includes("EMI")) financeSales += pm.amount;
               else if (mode.includes("CREDIT")) creditSales += pm.amount;
               else if (mode.includes("CARD") || mode.includes("ICICI") || mode.includes("HDFC") || mode.includes("BANK")) cardSales += pm.amount;
-              else cardSales += pm.amount; // default to card
+              else cardSales += pm.amount;
             }
           }
 
-          // Cash drawer details (from raw session data)
+          // Cash drawer details
           const raw = s as Record<string, unknown>;
           const cashIn = parseFloat(String(raw.cash_in || raw.cash_in_amount || 0)) || 0;
           const cashOut = parseFloat(String(raw.cash_out || raw.cash_out_amount || 0)) || 0;
@@ -104,18 +129,9 @@ export async function POST(req: NextRequest) {
               closedAt: s.closed_time ? new Date(s.closed_time) : null,
               registerName: s.register_name || "POS",
               cashierName: s.session_number,
-              cashSales,
-              cardSales,
-              upiSales,
-              financeSales,
-              creditSales,
+              cashSales, cardSales, upiSales, financeSales, creditSales,
               totalSales: s.total_sales,
-              cashIn,
-              cashOut,
-              cashRefunds,
-              expectedCash,
-              countedCash,
-              cashDiscrepancy,
+              cashIn, cashOut, cashRefunds, expectedCash, countedCash, cashDiscrepancy,
               cashInHand: expectedCash || cashSales,
               cashDeposited: 0,
               invoiceCount: s.invoice_count || 0,
@@ -124,12 +140,15 @@ export async function POST(req: NextRequest) {
           });
           created++;
         }
+      } else {
+        sessionApiError = "Register sessions API returned 0 sessions";
       }
     } catch (sessionErr) {
-      console.warn("Register sessions API failed, falling back to invoices:", sessionErr);
+      sessionApiError = sessionErr instanceof Error ? sessionErr.message : String(sessionErr);
+      console.warn("Register sessions API failed:", sessionApiError);
     }
 
-    // Fallback: aggregate from invoices if sessions API not available
+    // Fallback: aggregate from invoices
     if (!usedSessionsApi) {
       const invoices = await zakya.listAllInvoices(dateFrom, dateTo);
       fetched = invoices.length;
@@ -164,7 +183,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return successResponse({ fetched, created, skipped, source: usedSessionsApi ? "sessions" : "invoices" });
+    return successResponse({
+      fetched, created, skipped,
+      source: usedSessionsApi ? "sessions" : "invoices",
+      sessionApiError,
+      sessionApiKeys: sessionApiRaw ? Object.keys(sessionApiRaw as Record<string, unknown>) : null,
+    });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch POS sessions", 500);
