@@ -60,10 +60,9 @@ export default function SettlementListPage() {
     created: number;
     settlements: number;
     skipped: number;
-    error: string | null;
-    apiKeys: string[] | null;
-    sampleSessionKeys: string[] | null;
-    detailSampleKeys: string[] | null;
+    paymentsFound: number;
+    paymentError: string | null;
+    paymentModes: string[];
   } | null>(null);
 
   const loadSettlements = () => {
@@ -104,7 +103,7 @@ export default function SettlementListPage() {
         return;
       }
 
-      const { source, created, skipped, sessionApiError, sessionApiKeys, sampleSessionKeys, detailSampleKeys } = data.data;
+      const { source, created, skipped, paymentsFound, paymentError, paymentModes } = data.data;
 
       // Auto-create settlements
       setFetchStep("creating");
@@ -135,10 +134,9 @@ export default function SettlementListPage() {
         created,
         settlements: settlementsCreated,
         skipped,
-        error: sessionApiError,
-        apiKeys: sessionApiKeys,
-        sampleSessionKeys,
-        detailSampleKeys,
+        paymentsFound: paymentsFound || 0,
+        paymentError: paymentError || null,
+        paymentModes: paymentModes || [],
       });
 
       loadSettlements();
@@ -270,29 +268,19 @@ export default function SettlementListPage() {
                     : `${fetchResult.skipped} sessions already existed`}
                 </p>
                 <p className="text-[10px] text-green-600 mt-0.5">
-                  Source: {fetchResult.source === "sessions" ? "Register Sessions API (with breakdown)" : "Invoices API (totals only)"}
+                  {fetchResult.paymentsFound > 0
+                    ? `${fetchResult.paymentsFound} payments found → breakdown by mode`
+                    : "Invoices only (no payment data)"}
                 </p>
-                {fetchResult.error && (
-                  <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-[10px] text-amber-700">
-                    <p className="font-medium">Sessions API error (fell back to invoices):</p>
-                    <p className="mt-0.5 font-mono">{fetchResult.error}</p>
-                    {fetchResult.apiKeys && (
-                      <p className="mt-0.5 text-amber-500">API response keys: {fetchResult.apiKeys.join(", ")}</p>
-                    )}
-                  </div>
+                {fetchResult.paymentModes.length > 0 && (
+                  <p className="text-[10px] text-blue-600 mt-0.5">
+                    Payment modes: {fetchResult.paymentModes.join(", ")}
+                  </p>
                 )}
-                {fetchResult.source === "sessions" && (
-                  <div className="mt-1.5 p-2 bg-blue-50 border border-blue-200 rounded text-[10px] text-blue-700">
-                    <p className="font-medium">API Diagnostics:</p>
-                    {fetchResult.sampleSessionKeys && (
-                      <p className="mt-0.5">List fields: <span className="font-mono">{fetchResult.sampleSessionKeys.join(", ")}</span></p>
-                    )}
-                    {fetchResult.detailSampleKeys && (
-                      <p className="mt-0.5">Detail fields: <span className="font-mono">{fetchResult.detailSampleKeys.join(", ")}</span></p>
-                    )}
-                    {!fetchResult.detailSampleKeys && (
-                      <p className="mt-0.5 text-amber-600">Detail endpoint returned no data — breakdown may be missing</p>
-                    )}
+                {fetchResult.paymentError && (
+                  <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-[10px] text-amber-700">
+                    <p className="font-medium">Payments API error:</p>
+                    <p className="mt-0.5 font-mono">{fetchResult.paymentError}</p>
                   </div>
                 )}
               </div>

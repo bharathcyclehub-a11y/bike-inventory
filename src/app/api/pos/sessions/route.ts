@@ -72,151 +72,120 @@ export async function POST(req: NextRequest) {
 
     let created = 0;
     let skipped = 0;
-    let fetched = 0;
-    let usedSessionsApi = false;
-    let sessionApiError: string | null = null;
-    let sessionApiRaw: unknown = null;
-    let sampleSessionKeys: string[] | null = null;
-    let detailSampleKeys: string[] | null = null;
 
-    // Try register sessions API first (has payment mode breakdown)
+    // Step 1: Fetch all invoices for the date range
+    const invoices = await zakya.listAllInvoices(dateFrom, dateTo);
+
+    // Step 2: Fetch all customer payments for the date range (has payment_mode)
+    let payments: Array<{
+      payment_id: string; date: string; amount: number;
+      payment_mode: string; invoice_number: string; customer_name: string;
+    }> = [];
+    let paymentError: string | null = null;
     try {
-      const sessionsData = await zakya.listRegisterSessions(dateFrom, dateTo);
-      sessionApiRaw = sessionsData;
-      const sessions = sessionsData.register_sessions || sessionsData.registersessions || [];
-
-      if (sessions.length > 0) {
-        usedSessionsApi = true;
-        fetched = sessions.length;
-
-        // Log what fields the LIST endpoint returns (first session)
-        sampleSessionKeys = Object.keys(sessions[0] as Record<string, unknown>);
-
-        for (const s of sessions) {
-          const existing = await prisma.posSession.findUnique({ where: { zakyaSessionId: s.session_id } });
-          if (existing) { skipped++; continue; }
-
-          // Fetch individual session detail for payment breakdown
-          let detail: Record<string, unknown> = s as Record<string, unknown>;
-          try {
-            const detailData = await zakya.getRegisterSession(s.session_id);
-            const detailSession = detailData.register_session || detailData.registersession;
-            if (detailSession) {
-              detail = detailSession as Record<string, unknown>;
-              if (!detailSampleKeys) detailSampleKeys = Object.keys(detail);
-            }
-            // Small delay to avoid rate limiting
-            await zakya.delay(200);
-          } catch {
-            // If detail fetch fails, use list data
-          }
-
-          // Parse payment modes — check detail first, then list data
-          let cashSales = parseFloat(String(detail.cash_sales || s.cash_sales || 0)) || 0;
-          let cardSales = parseFloat(String(detail.card_sales || s.card_sales || 0)) || 0;
-          let upiSales = 0;
-          let financeSales = 0;
-          let creditSales = 0;
-
-          // Try payment_modes array from detail or list
-          const paymentModes = (detail.payment_modes || detail.payment_summary || s.payment_modes) as Array<{ payment_mode: string; amount: number }> | undefined;
-          if (paymentModes && Array.isArray(paymentModes)) {
-            // Reset to avoid double-counting
-            cashSales = 0; cardSales = 0;
-            for (const pm of paymentModes) {
-              const mode = (pm.payment_mode || "").toUpperCase();
-              const amt = parseFloat(String(pm.amount || 0)) || 0;
-              if (mode.includes("CASH")) cashSales += amt;
-              else if (mode.includes("UPI") || mode.includes("PHONEPE") || mode.includes("GPAY") || mode.includes("GOOGLE")) upiSales += amt;
-              else if (mode.includes("BAJAJ") || mode.includes("FINANCE") || mode.includes("EMI")) financeSales += amt;
-              else if (mode.includes("CREDIT")) creditSales += amt;
-              else if (mode.includes("CARD") || mode.includes("ICICI") || mode.includes("HDFC") || mode.includes("BANK") || mode.includes("MESPOS")) cardSales += amt;
-              else cardSales += amt; // Default unknown modes to card
-            }
-          }
-
-          // Cash drawer details — prefer detail endpoint data
-          const cashIn = parseFloat(String(detail.cash_in || detail.cash_in_amount || 0)) || 0;
-          const cashOut = parseFloat(String(detail.cash_out || detail.cash_out_amount || 0)) || 0;
-          const cashRefunds = parseFloat(String(detail.cash_refunds || detail.refund_amount || detail.cash_refund || 0)) || 0;
-          const expectedCash = parseFloat(String(detail.expected_cash || detail.expected_cash_amount || detail.expected_cash_in_drawer || s.expected_cash || 0)) || 0;
-          const countedCash = detail.counted_cash !== undefined && detail.counted_cash !== null
-            ? parseFloat(String(detail.counted_cash))
-            : (detail.amount_counted_at_end !== undefined ? parseFloat(String(detail.amount_counted_at_end))
-            : (detail.closing_balance !== undefined ? parseFloat(String(detail.closing_balance)) : null));
-          const cashDiscrepancy = parseFloat(String(detail.discrepancy || detail.cash_discrepancy || detail.cash_difference || 0)) || 0;
-
-          const totalSales = parseFloat(String(detail.total_sales || s.total_sales || 0)) || 0;
-          const sessionDate = s.opened_time ? new Date(s.opened_time) : new Date(dateFrom);
-          await prisma.posSession.create({
-            data: {
-              zakyaSessionId: s.session_id,
-              sessionDate,
-              openedAt: s.opened_time ? new Date(s.opened_time) : sessionDate,
-              closedAt: s.closed_time ? new Date(s.closed_time) : null,
-              registerName: s.register_name || "POS",
-              cashierName: s.session_number,
-              cashSales, cardSales, upiSales, financeSales, creditSales,
-              totalSales,
-              cashIn, cashOut, cashRefunds, expectedCash, countedCash, cashDiscrepancy,
-              cashInHand: expectedCash || cashSales,
-              cashDeposited: 0,
-              invoiceCount: parseFloat(String(detail.invoice_count || s.invoice_count || 0)) || 0,
-              rawData: JSON.parse(JSON.stringify(detail)),
-            },
-          });
-          created++;
-        }
-      } else {
-        sessionApiError = "Register sessions API returned 0 sessions";
-      }
-    } catch (sessionErr) {
-      sessionApiError = sessionErr instanceof Error ? sessionErr.message : String(sessionErr);
-      console.warn("Register sessions API failed:", sessionApiError);
+      payments = await zakya.listAllCustomerPayments(dateFrom, dateTo);
+    } catch (err) {
+      paymentError = err instanceof Error ? err.message : String(err);
     }
 
-    // Fallback: aggregate from invoices
-    if (!usedSessionsApi) {
-      const invoices = await zakya.listAllInvoices(dateFrom, dateTo);
-      fetched = invoices.length;
+    // Step 3: Group invoices by date
+    const sessionsByDate = new Map<string, {
+      date: string; total: number; count: number;
+      cashSales: number; cardSales: number; upiSales: number;
+      financeSales: number; creditSales: number;
+      paymentModes: Record<string, number>;
+    }>();
 
-      const sessionsByDate = new Map<string, { date: string; total: number; count: number }>();
-      for (const inv of invoices) {
-        const date = inv.date;
-        if (!sessionsByDate.has(date)) sessionsByDate.set(date, { date, total: 0, count: 0 });
-        const s = sessionsByDate.get(date)!;
-        s.total += inv.total;
-        s.count += 1;
-      }
-
-      for (const [date, s] of sessionsByDate) {
-        const zakyaSessionId = `ZAKYA-${date}`;
-        const existing = await prisma.posSession.findUnique({ where: { zakyaSessionId } });
-        if (existing) { skipped++; continue; }
-
-        await prisma.posSession.create({
-          data: {
-            zakyaSessionId,
-            sessionDate: new Date(date),
-            openedAt: new Date(date + "T09:00:00"),
-            closedAt: new Date(date + "T21:00:00"),
-            registerName: "Zakya POS",
-            totalSales: s.total,
-            invoiceCount: s.count,
-            rawData: { invoiceCount: s.count, total: s.total, source: "invoice-fallback" },
-          },
+    for (const inv of invoices) {
+      const date = inv.date;
+      if (!sessionsByDate.has(date)) {
+        sessionsByDate.set(date, {
+          date, total: 0, count: 0,
+          cashSales: 0, cardSales: 0, upiSales: 0, financeSales: 0, creditSales: 0,
+          paymentModes: {},
         });
-        created++;
       }
+      const s = sessionsByDate.get(date)!;
+      s.total += inv.total;
+      s.count += 1;
+
+      // Credit sales = invoices with balance remaining
+      if (inv.balance > 0) {
+        s.creditSales += inv.balance;
+      }
+    }
+
+    // Step 4: Distribute payment amounts by mode into daily buckets
+    for (const pm of payments) {
+      const date = pm.date;
+      if (!sessionsByDate.has(date)) continue; // payment for a date with no invoices — skip
+
+      const s = sessionsByDate.get(date)!;
+      const mode = (pm.payment_mode || "").toLowerCase();
+      const amt = pm.amount || 0;
+
+      // Track raw mode names for diagnostics
+      s.paymentModes[pm.payment_mode] = (s.paymentModes[pm.payment_mode] || 0) + amt;
+
+      // Classify into buckets
+      if (mode === "cash") {
+        s.cashSales += amt;
+      } else if (mode.includes("upi") || mode.includes("phonepe") || mode.includes("gpay") || mode.includes("google")) {
+        s.upiSales += amt;
+      } else if (mode.includes("bajaj") || mode.includes("finance") || mode.includes("emi")) {
+        s.financeSales += amt;
+      } else if (mode === "creditcard" || mode.includes("card") || mode.includes("mespos") || mode.includes("icici") || mode.includes("hdfc") || mode.includes("bank")) {
+        s.cardSales += amt;
+      } else if (mode === "banktransfer" || mode === "bankremittance") {
+        s.cardSales += amt; // Bank transfers → card bucket
+      } else {
+        s.cardSales += amt; // Unknown → card bucket
+      }
+    }
+
+    // Step 5: Create POS sessions in DB
+    const allPaymentModes = new Set<string>();
+    for (const [date, s] of sessionsByDate) {
+      const zakyaSessionId = `ZAKYA-${date}`;
+      const existing = await prisma.posSession.findUnique({ where: { zakyaSessionId } });
+      if (existing) { skipped++; continue; }
+
+      // Collect all payment mode names for diagnostics
+      Object.keys(s.paymentModes).forEach(m => allPaymentModes.add(m));
+
+      await prisma.posSession.create({
+        data: {
+          zakyaSessionId,
+          sessionDate: new Date(date),
+          openedAt: new Date(date + "T09:00:00"),
+          closedAt: new Date(date + "T21:00:00"),
+          registerName: "Zakya POS",
+          cashSales: s.cashSales,
+          cardSales: s.cardSales,
+          upiSales: s.upiSales,
+          financeSales: s.financeSales,
+          creditSales: s.creditSales,
+          totalSales: s.total,
+          cashInHand: s.cashSales,
+          cashDeposited: 0,
+          invoiceCount: s.count,
+          rawData: {
+            invoiceCount: s.count, total: s.total,
+            paymentModes: s.paymentModes,
+            source: payments.length > 0 ? "invoices+payments" : "invoices-only",
+          },
+        },
+      });
+      created++;
     }
 
     return successResponse({
-      fetched, created, skipped,
-      source: usedSessionsApi ? "sessions" : "invoices",
-      sessionApiError,
-      sessionApiKeys: sessionApiRaw ? Object.keys(sessionApiRaw as Record<string, unknown>) : null,
-      sampleSessionKeys,
-      detailSampleKeys,
+      fetched: invoices.length,
+      paymentsFound: payments.length,
+      created, skipped,
+      source: payments.length > 0 ? "invoices+payments" : "invoices-only",
+      paymentError,
+      paymentModes: [...allPaymentModes],
     });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
