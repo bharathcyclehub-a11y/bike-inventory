@@ -1,5 +1,4 @@
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
 
 import { NextRequest } from "next/server";
 import { successResponse, errorResponse } from "@/lib/api-utils";
@@ -61,29 +60,36 @@ export async function GET() {
   }
 }
 
-// POST — Sync all item categories from Zoho (one-time bulk update)
+// POST — Sync categories from Zoho, ONE PAGE at a time (200 items per call)
+// Frontend calls this in a loop: page=1, page=2, ... until hasMore=false
 export async function POST(req: NextRequest) {
   try {
     await requireAuth(["ADMIN"]);
     const body = await req.json().catch(() => ({}));
     const dryRun = body.dryRun === true;
+    const page = Number(body.page) || 1;
 
-    // Pull ALL items from Zoho (no stock filter, no date filter)
+    // Pull ONE page of items from Zoho (200 items)
     const inventory = new ZohoInventoryClient();
     const invReady = await inventory.init();
 
-    let zohoItems: Array<{ item_id: string; sku: string; name: string; category_name?: string }> = [];
+    let items: Array<{ item_id: string; sku: string; name: string; category_name?: string }> = [];
+    let hasMore = false;
 
     if (invReady) {
-      zohoItems = await inventory.listAllItems();
+      const data = await inventory.listItems(page);
+      items = data.items || [];
+      hasMore = data.page_context?.has_more_page || false;
     } else {
       const zoho = new ZohoClient();
       const booksReady = await zoho.init();
       if (!booksReady) return errorResponse("No Zoho source connected", 400);
-      zohoItems = await zoho.listAllItems();
+      const data = await zoho.listItems(page);
+      items = data.items || [];
+      hasMore = data.page_context?.has_more_page || false;
     }
 
-    // Build category cache
+    // Build category cache for this batch
     const categoryCache: Record<string, string> = {};
     async function getOrCreateCategory(name: string): Promise<string> {
       if (!categoryCache[name]) {
@@ -95,7 +101,9 @@ export async function POST(req: NextRequest) {
     }
 
     const stats = {
-      totalZohoItems: zohoItems.length,
+      page,
+      itemsInPage: items.length,
+      hasMore,
       matched: 0,
       updated: 0,
       noCategory: 0,
@@ -103,10 +111,8 @@ export async function POST(req: NextRequest) {
       categoryDistribution: {} as Record<string, number>,
     };
 
-    for (const item of zohoItems) {
+    for (const item of items) {
       const catName = (item.category_name || "").trim();
-
-      // Track distribution
       const displayCat = catName || "(none)";
       stats.categoryDistribution[displayCat] = (stats.categoryDistribution[displayCat] || 0) + 1;
 
@@ -143,7 +149,6 @@ export async function POST(req: NextRequest) {
     return successResponse({
       dryRun,
       ...stats,
-      categoriesCreated: Object.keys(categoryCache),
     });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);

@@ -169,44 +169,64 @@ export default function StockPage() {
   const [bulkCategoryId, setBulkCategoryId] = useState("");
   const [categories, setCategories] = useState<CategoryItem[]>([]);
 
-  // Zoho category sync
+  // Zoho category sync (paginated — 200 items per request)
   const [classifyStep, setClassifyStep] = useState<"idle" | "loading" | "preview" | "applying">("idle");
   const [classifyError, setClassifyError] = useState("");
+  const [classifyProgress, setClassifyProgress] = useState("");
   const [classifyPreview, setClassifyPreview] = useState<{
     totalZohoItems: number; matched: number; updated: number; noCategory: number; notFound: number;
     categoryDistribution: Record<string, number>;
   } | null>(null);
 
+  async function runPagedSync(dryRun: boolean) {
+    const totals = { totalZohoItems: 0, matched: 0, updated: 0, noCategory: 0, notFound: 0, categoryDistribution: {} as Record<string, number> };
+    let currentPage = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      setClassifyProgress(`${dryRun ? "Scanning" : "Syncing"} page ${currentPage} (${totals.totalZohoItems} items so far)...`);
+      const res = await fetch("/api/zoho/test-items", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun, page: currentPage }),
+      });
+      if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Failed");
+
+      const d = data.data;
+      totals.totalZohoItems += d.itemsInPage;
+      totals.matched += d.matched;
+      totals.updated += d.updated;
+      totals.noCategory += d.noCategory;
+      totals.notFound += d.notFound;
+      for (const [cat, count] of Object.entries(d.categoryDistribution)) {
+        totals.categoryDistribution[cat] = (totals.categoryDistribution[cat] || 0) + (count as number);
+      }
+      hasMore = d.hasMore;
+      currentPage++;
+    }
+    return totals;
+  }
+
   async function handleZohoCategorySync(apply: boolean) {
     setClassifyError("");
+    setClassifyProgress("");
     if (apply) {
       setClassifyStep("applying");
       try {
-        const res = await fetch("/api/zoho/test-items", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dryRun: false }),
-        });
-        if (!res.ok) { setClassifyError(`Server error: ${res.status} ${res.statusText}`); setClassifyStep("idle"); setClassifyPreview(null); return; }
-        const data = await res.json();
-        if (data.success) {
-          setBulkMessage(`Synced categories: ${data.data.updated} items updated across ${data.data.categoriesCreated?.length || 0} categories`);
-          fetchProducts(1);
-          fetch("/api/categories").then(r => r.json()).then(r => { if (r.success) setCategories(r.data); });
-        } else { setClassifyError(data.error || "Sync failed"); }
+        const totals = await runPagedSync(false);
+        setBulkMessage(`Synced categories: ${totals.updated} items updated across ${Object.keys(totals.categoryDistribution).length} categories`);
+        fetchProducts(1);
+        fetch("/api/categories").then(r => r.json()).then(r => { if (r.success) setCategories(r.data); });
       } catch (e) { setClassifyError(e instanceof Error ? e.message : "Network error"); }
       setClassifyStep("idle");
       setClassifyPreview(null);
     } else {
       setClassifyStep("loading");
       try {
-        const res = await fetch("/api/zoho/test-items", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dryRun: true }),
-        });
-        if (!res.ok) { setClassifyError(`Server error: ${res.status} ${res.statusText}`); setClassifyStep("idle"); return; }
-        const data = await res.json();
-        if (data.success) { setClassifyPreview(data.data); setClassifyStep("preview"); }
-        else { setClassifyError(data.error || "Failed to load preview"); setClassifyStep("idle"); }
+        const totals = await runPagedSync(true);
+        setClassifyPreview(totals);
+        setClassifyStep("preview");
       } catch (e) { setClassifyError(e instanceof Error ? e.message : "Network error"); setClassifyStep("idle"); }
     }
   }
@@ -521,12 +541,11 @@ export default function StockPage() {
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
           <div className="flex items-center gap-2 mb-2">
             <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
-            <span className="text-xs font-medium text-purple-800">Pulling all items from Zoho to preview categories...</span>
+            <span className="text-xs font-medium text-purple-800">{classifyProgress || "Connecting to Zoho..."}</span>
           </div>
           <div className="w-full bg-purple-200 rounded-full h-1.5">
             <div className="bg-purple-600 h-1.5 rounded-full animate-pulse" style={{ width: "60%" }} />
           </div>
-          <p className="text-[10px] text-purple-500 mt-1">This may take 30-60 seconds for 5000+ items</p>
         </div>
       )}
 
@@ -564,12 +583,11 @@ export default function StockPage() {
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
           <div className="flex items-center gap-2 mb-2">
             <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
-            <span className="text-xs font-medium text-purple-800">Applying category sync to all items...</span>
+            <span className="text-xs font-medium text-purple-800">{classifyProgress || "Applying categories..."}</span>
           </div>
           <div className="w-full bg-purple-200 rounded-full h-1.5">
             <div className="bg-purple-600 h-1.5 rounded-full animate-pulse" style={{ width: "75%" }} />
           </div>
-          <p className="text-[10px] text-purple-500 mt-1">This may take 1-2 minutes for 5000+ items</p>
         </div>
       )}
 
