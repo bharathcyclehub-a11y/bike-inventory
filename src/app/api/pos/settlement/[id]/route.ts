@@ -4,6 +4,7 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError, getServerSession } from "@/lib/auth-helpers";
+import { ZohoClient } from "@/lib/zoho";
 
 // GET — Settlement detail with sessions and matches
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -43,7 +44,25 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       take: 50,
     });
 
-    return successResponse({ settlement, bankTxns });
+    // Fetch customer payments from Zoho Books for this date
+    let zohoPayments: Array<{
+      payment_id: string; date: string; amount: number;
+      payment_mode: string; customer_name: string; reference_number: string;
+      account_name: string;
+    }> = [];
+    try {
+      const zoho = new ZohoClient();
+      const ok = await zoho.init();
+      if (ok) {
+        const dateStr = settlement.date.toISOString().split("T")[0];
+        const data = await zoho.listCustomerPayments(1, dateStr, dateStr);
+        zohoPayments = data.customerpayments || [];
+      }
+    } catch {
+      // Non-critical — page works without payments
+    }
+
+    return successResponse({ settlement, bankTxns, zohoPayments });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed", 500);

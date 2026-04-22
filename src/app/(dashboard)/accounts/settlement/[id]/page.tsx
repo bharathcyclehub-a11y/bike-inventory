@@ -3,7 +3,7 @@
 import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle, Banknote, CreditCard, Smartphone, Building2, Search, X, FileText } from "lucide-react";
+import { ArrowLeft, CheckCircle, Banknote, CreditCard, Smartphone, Building2, Search, X, FileText, ArrowDownLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -69,6 +69,16 @@ interface BankTxn {
   matchStatus: string;
 }
 
+interface ZohoPayment {
+  payment_id: string;
+  date: string;
+  amount: number;
+  payment_mode: string;
+  customer_name: string;
+  reference_number: string;
+  account_name: string;
+}
+
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
 }
@@ -105,6 +115,7 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
 
   const [settlement, setSettlement] = useState<Settlement | null>(null);
   const [bankTxns, setBankTxns] = useState<BankTxn[]>([]);
+  const [zohoPayments, setZohoPayments] = useState<ZohoPayment[]>([]);
   const [loading, setLoading] = useState(true);
   const [cashInput, setCashInput] = useState("");
   const [verifying, setVerifying] = useState(false);
@@ -127,6 +138,7 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
         if (res.success) {
           setSettlement(res.data.settlement);
           setBankTxns(res.data.bankTxns);
+          setZohoPayments(res.data.zohoPayments || []);
         }
       })
       .catch(() => {})
@@ -397,6 +409,68 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
           </div>
         )}
       </div>
+
+      {/* Payments Received (from Zoho Books) */}
+      {zohoPayments.length > 0 && (
+        <div className="mb-4">
+          <h2 className="text-sm font-semibold text-slate-900 mb-2">
+            <ArrowDownLeft className="h-3.5 w-3.5 inline mr-1 text-green-600" />
+            Payments Received ({zohoPayments.length})
+          </h2>
+          {/* Summary by mode */}
+          {(() => {
+            const byMode: Record<string, { count: number; total: number }> = {};
+            for (const p of zohoPayments) {
+              const mode = p.payment_mode || "Other";
+              if (!byMode[mode]) byMode[mode] = { count: 0, total: 0 };
+              byMode[mode].count++;
+              byMode[mode].total += p.amount;
+            }
+            return (
+              <Card className="mb-2 bg-green-50 border-green-200">
+                <CardContent className="p-3">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    {Object.entries(byMode).map(([mode, data]) => (
+                      <div key={mode} className="text-xs">
+                        <span className="text-slate-600">{mode}</span>
+                        <span className="font-bold text-slate-900 ml-1">{formatCurrency(data.total)}</span>
+                        <span className="text-slate-400 ml-0.5">({data.count})</span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-green-600 mt-1">
+                    Total: {formatCurrency(zohoPayments.reduce((s, p) => s + p.amount, 0))}
+                  </p>
+                </CardContent>
+              </Card>
+            );
+          })()}
+          {/* Individual payments */}
+          <div className="space-y-1">
+            {zohoPayments.slice(0, 20).map((p) => (
+              <Card key={p.payment_id}>
+                <CardContent className="p-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="min-w-0 flex-1 mr-2">
+                      <p className="text-xs font-medium text-slate-900 truncate">{p.customer_name}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {p.payment_mode}{p.reference_number ? ` | ${p.reference_number}` : ""}
+                        {p.account_name ? ` → ${p.account_name}` : ""}
+                      </p>
+                    </div>
+                    <p className="text-xs font-bold text-green-700 shrink-0">{formatCurrency(p.amount)}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+            {zohoPayments.length > 20 && (
+              <p className="text-[10px] text-slate-400 text-center py-1">
+                +{zohoPayments.length - 20} more payments
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Cash Verification */}
       <div className="mb-4">
