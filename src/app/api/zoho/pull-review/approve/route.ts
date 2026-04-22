@@ -63,10 +63,30 @@ export async function POST(req: NextRequest) {
     // ─── APPROVE: write to real tables ───
     const results = { contacts: 0, items: 0, bills: 0, invoices: 0, errors: [] as string[] };
 
-    // Default category/brand for new items
-    let defaultCategory = await prisma.category.findFirst({ where: { name: "General" } });
-    if (!defaultCategory) {
-      defaultCategory = await prisma.category.create({ data: { name: "General", description: "General items" } });
+    // Resolve categories: try Zoho's category_name → auto-classify by name → fallback to General
+    const categoryCache: Record<string, string> = {};
+    async function resolveCategory(name: string, zohoCategoryName?: string): Promise<string> {
+      // 1. Use Zoho category if it maps to our 3 categories
+      const zohoName = (zohoCategoryName || "").trim();
+      if (zohoName && ["Bicycles", "Spares", "Accessories"].includes(zohoName)) {
+        if (!categoryCache[zohoName]) {
+          let cat = await prisma.category.findFirst({ where: { name: zohoName } });
+          if (!cat) cat = await prisma.category.create({ data: { name: zohoName, description: `${zohoName} category` } });
+          categoryCache[zohoName] = cat.id;
+        }
+        return categoryCache[zohoName];
+      }
+      // 2. Auto-classify by product name
+      const n = name.toLowerCase();
+      const isBicycle = /\b\d{2,2}(\.\d)?["']?\s*(t\b|ss\b|ms\b|fs\b|sp\b)/i.test(name) || /\b(bicycle|cycle|e-bicycle|e-bike|ebike)\b/i.test(name) || /\b(MTB|mountain.bike|road.bike|hybrid|fat.bike|cruiser)\b/i.test(name) || /\b(geared|non.geared|single.speed|7.speed|21.speed|shimano.*speed)\b/i.test(name);
+      const isAccessory = /\b(helmet|lock|pump|light|bell|bottle|cage|mirror|stand|carrier|basket|mudguard|fender|glove|jersey|shorts|bag|pannier|horn|hooter|tool.kit|repair.kit|training.wheel)\b/i.test(name);
+      const catName = isBicycle ? "Bicycles" : isAccessory ? "Accessories" : "Spares";
+      if (!categoryCache[catName]) {
+        let cat = await prisma.category.findFirst({ where: { name: catName } });
+        if (!cat) cat = await prisma.category.create({ data: { name: catName, description: `${catName} category` } });
+        categoryCache[catName] = cat.id;
+      }
+      return categoryCache[catName];
     }
     let defaultBrand = await prisma.brand.findFirst({ where: { name: "Imported" } });
     if (!defaultBrand) {
@@ -121,11 +141,13 @@ export async function POST(req: NextRequest) {
             : /\btube|tyre|tire|brake|chain|spoke|pedal|gear|rim|handle|seat|mudguard|bell|lock|pump|light|carrier|stand|fork|derailleur|shifter|cassette|crank\b/.test(pName) ? "SPARE_PART"
             : "ACCESSORY";
 
+          const itemCategoryId = await resolveCategory(String(d.name), String(d.categoryName || ""));
+
           await prisma.product.create({
             data: {
               sku,
               name: String(d.name),
-              categoryId: defaultCategory.id,
+              categoryId: itemCategoryId,
               brandId: itemBrandId,
               type: autoType,
               costPrice: Number(d.costPrice || 0),

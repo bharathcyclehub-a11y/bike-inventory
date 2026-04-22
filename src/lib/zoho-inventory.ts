@@ -24,6 +24,9 @@ export interface ZohoInventoryItem {
   stock_on_hand?: number;
   product_type?: string;
   item_type?: string;
+  category_name?: string;
+  category_id?: string;
+  group_name?: string;
 }
 
 export class ZohoInventoryClient {

@@ -130,6 +130,7 @@ export async function POST(req: NextRequest) {
                   stockOnHand: Number(item.stock_on_hand || 0),
                   productType: String(item.product_type || item.item_type || ""),
                   brand: zohoBrand,
+                  categoryName: String(item.category_name || ""),
                 },
               },
             });
@@ -182,6 +183,7 @@ export async function POST(req: NextRequest) {
                     stockOnHand: Number(zohoItem.stock_on_hand || 0),
                     productType: String(zohoItem.product_type || zohoItem.item_type || ""),
                     brand: zohoBrand,
+                    categoryName: String(item.category_name || ""),
                   },
                 },
               });
