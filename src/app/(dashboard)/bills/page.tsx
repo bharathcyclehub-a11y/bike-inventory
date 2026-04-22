@@ -494,6 +494,31 @@ export default function BillsPage() {
               <p className="text-sm text-slate-400">No bills found</p>
             </div>
           )}
+
+          {/* Totals */}
+          {bills.length > 0 && (
+            <Card className="bg-slate-50 mt-3">
+              <CardContent className="p-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-500">{bills.length} bill{bills.length !== 1 ? "s" : ""}</span>
+                  <div className="flex gap-4">
+                    <div className="text-right">
+                      <p className="text-[10px] text-slate-400">Total</p>
+                      <p className="text-sm font-bold text-slate-900">{formatCurrency(bills.reduce((s, b) => s + b.amount, 0))}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] text-slate-400">Paid</p>
+                      <p className="text-sm font-bold text-green-600">{formatCurrency(bills.reduce((s, b) => s + b.paidAmount, 0))}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] text-slate-400">Balance</p>
+                      <p className="text-sm font-bold text-red-600">{formatCurrency(bills.reduce((s, b) => s + (b.amount - b.paidAmount), 0))}</p>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
     </div>

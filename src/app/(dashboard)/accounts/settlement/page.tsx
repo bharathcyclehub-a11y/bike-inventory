@@ -75,7 +75,30 @@ export default function SettlementListPage() {
       const data = await res.json();
       if (data.success) {
         const src = data.data.source === "sessions" ? "sessions" : "invoices";
-        alert(`Fetched ${data.data.fetched} ${src}. Created ${data.data.created} sessions, ${data.data.skipped} already existed.`);
+        const created = data.data.created || 0;
+
+        // Auto-create settlements for each new session date
+        if (created > 0) {
+          let settlementsCreated = 0;
+          // Get the dates from the fetched range and try creating settlements
+          const start = new Date(dateFrom);
+          const end = new Date(dateTo);
+          for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+            const ds = d.toISOString().split("T")[0];
+            try {
+              const sRes = await fetch("/api/pos/settlement", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ date: ds }),
+              });
+              const sData = await sRes.json();
+              if (sData.success) settlementsCreated++;
+            } catch { /* skip dates with no sessions */ }
+          }
+          alert(`Fetched ${data.data.fetched} ${src}. Created ${created} sessions → ${settlementsCreated} settlement(s).`);
+        } else {
+          alert(`Fetched ${data.data.fetched} ${src}. ${data.data.skipped} already existed.`);
+        }
         loadSettlements();
       } else {
         alert(data.error || "Failed to fetch sessions");
