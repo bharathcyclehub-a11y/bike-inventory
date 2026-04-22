@@ -82,15 +82,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     // Update POS mode breakdowns (manual entry when Zakya doesn't provide breakdown)
-    if (body.totalCash !== undefined || body.totalCard !== undefined || body.totalUpi !== undefined || body.totalFinance !== undefined) {
+    if (body.totalCash !== undefined || body.totalCard !== undefined || body.totalUpi !== undefined || body.totalFinance !== undefined || body.totalCredit !== undefined) {
       const totalCash = body.totalCash ?? settlement.totalCash;
       const totalCard = body.totalCard ?? settlement.totalCard;
       const totalUpi = body.totalUpi ?? settlement.totalUpi;
       const totalFinance = body.totalFinance ?? settlement.totalFinance;
+      const totalCredit = body.totalCredit ?? settlement.totalCredit;
 
       const updated = await prisma.dailySettlement.update({
         where: { id },
-        data: { totalCash, totalCard, totalUpi, totalFinance, notes: body.notes ?? settlement.notes },
+        data: { totalCash, totalCard, totalUpi, totalFinance, totalCredit, notes: body.notes ?? settlement.notes },
       });
       return successResponse(updated);
     }

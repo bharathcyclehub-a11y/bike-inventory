@@ -71,6 +71,7 @@ export async function POST(req: NextRequest) {
           let cardSales = s.card_sales || 0;
           let upiSales = 0;
           let financeSales = 0;
+          let creditSales = 0;
 
           if (s.payment_modes) {
             for (const pm of s.payment_modes) {
@@ -78,11 +79,21 @@ export async function POST(req: NextRequest) {
               if (mode.includes("CASH")) cashSales = pm.amount;
               else if (mode.includes("UPI") || mode.includes("PHONEPE") || mode.includes("GPAY")) upiSales += pm.amount;
               else if (mode.includes("BAJAJ") || mode.includes("FINANCE") || mode.includes("EMI")) financeSales += pm.amount;
+              else if (mode.includes("CREDIT")) creditSales += pm.amount;
               else if (mode.includes("CARD") || mode.includes("ICICI") || mode.includes("HDFC") || mode.includes("BANK")) cardSales += pm.amount;
-              else if (mode.includes("CREDIT")) { /* Credit sale — skip from payment modes */ }
               else cardSales += pm.amount; // default to card
             }
           }
+
+          // Cash drawer details (from raw session data)
+          const raw = s as Record<string, unknown>;
+          const cashIn = parseFloat(String(raw.cash_in || raw.cash_in_amount || 0)) || 0;
+          const cashOut = parseFloat(String(raw.cash_out || raw.cash_out_amount || 0)) || 0;
+          const cashRefunds = parseFloat(String(raw.cash_refunds || raw.refund_amount || 0)) || 0;
+          const expectedCash = parseFloat(String(raw.expected_cash || raw.expected_cash_amount || s.expected_cash || 0)) || 0;
+          const countedCash = raw.counted_cash !== undefined && raw.counted_cash !== null
+            ? parseFloat(String(raw.counted_cash)) : (raw.amount_counted_at_end !== undefined ? parseFloat(String(raw.amount_counted_at_end)) : null);
+          const cashDiscrepancy = parseFloat(String(raw.discrepancy || raw.cash_discrepancy || 0)) || 0;
 
           const sessionDate = s.opened_time ? new Date(s.opened_time) : new Date(dateFrom);
           await prisma.posSession.create({
@@ -97,8 +108,15 @@ export async function POST(req: NextRequest) {
               cardSales,
               upiSales,
               financeSales,
+              creditSales,
               totalSales: s.total_sales,
-              cashInHand: s.expected_cash || cashSales,
+              cashIn,
+              cashOut,
+              cashRefunds,
+              expectedCash,
+              countedCash,
+              cashDiscrepancy,
+              cashInHand: expectedCash || cashSales,
               cashDeposited: 0,
               invoiceCount: s.invoice_count || 0,
               rawData: JSON.parse(JSON.stringify(s)),

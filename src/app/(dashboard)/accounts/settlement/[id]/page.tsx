@@ -3,7 +3,7 @@
 import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle, Banknote, CreditCard, Smartphone, Building2, Search, X } from "lucide-react";
+import { ArrowLeft, CheckCircle, Banknote, CreditCard, Smartphone, Building2, Search, X, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,7 @@ interface Settlement {
   totalCard: number;
   totalUpi: number;
   totalFinance: number;
+  totalCredit: number;
   grandTotal: number;
   matchedAmount: number;
   unmatchedAmount: number;
@@ -45,6 +46,13 @@ interface Settlement {
     cardSales: number;
     upiSales: number;
     financeSales: number;
+    creditSales: number;
+    cashIn: number;
+    cashOut: number;
+    cashRefunds: number;
+    expectedCash: number;
+    countedCash: number | null;
+    cashDiscrepancy: number;
     invoiceCount: number;
     registerName: string | null;
     cashierName: string | null;
@@ -70,6 +78,7 @@ const MODE_ICONS: Record<string, typeof CreditCard> = {
   UPI: Smartphone,
   FINANCE: Building2,
   CASH_DEPOSIT: Banknote,
+  CREDIT: FileText,
 };
 
 const MODE_LABELS: Record<string, string> = {
@@ -77,6 +86,7 @@ const MODE_LABELS: Record<string, string> = {
   UPI: "UPI",
   FINANCE: "Finance (Bajaj etc.)",
   CASH_DEPOSIT: "Cash Deposit",
+  CREDIT: "Credit Sale",
 };
 
 const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }> = {
@@ -101,7 +111,7 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
 
   // Mode breakdown edit
   const [editingBreakdown, setEditingBreakdown] = useState(false);
-  const [modeInputs, setModeInputs] = useState({ cash: "", card: "", upi: "", finance: "" });
+  const [modeInputs, setModeInputs] = useState({ cash: "", card: "", upi: "", finance: "", credit: "" });
   const [savingBreakdown, setSavingBreakdown] = useState(false);
 
   // Matching
@@ -152,6 +162,7 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
           totalCard: parseFloat(modeInputs.card) || 0,
           totalUpi: parseFloat(modeInputs.upi) || 0,
           totalFinance: parseFloat(modeInputs.finance) || 0,
+          totalCredit: parseFloat(modeInputs.credit) || 0,
         }),
       });
       const data = await res.json();
@@ -207,6 +218,7 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
     { key: "UPI", amount: settlement.totalUpi },
     { key: "FINANCE", amount: settlement.totalFinance },
     { key: "CASH_DEPOSIT", amount: settlement.totalCash },
+    { key: "CREDIT", amount: settlement.totalCredit },
   ];
 
   const filteredTxns = bankTxns.filter((t) => {
@@ -259,6 +271,7 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
                 card: String(settlement.totalCard || ""),
                 upi: String(settlement.totalUpi || ""),
                 finance: String(settlement.totalFinance || ""),
+                credit: String(settlement.totalCredit || ""),
               });
               setEditingBreakdown(true);
             }} className="text-xs text-blue-600">Edit</button>
@@ -273,6 +286,7 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
                 { label: "Card", key: "card" },
                 { label: "UPI", key: "upi" },
                 { label: "Finance", key: "finance" },
+                { label: "Credit Sale", key: "credit" },
               ].map((m) => (
                 <div key={m.key} className="flex items-center gap-2">
                   <span className="text-xs text-slate-600 w-16">{m.label}</span>
@@ -446,11 +460,25 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
                     <p className="text-sm font-bold text-slate-900">{formatCurrency(s.totalSales)}</p>
                   </div>
                   {hasBreakdown && (
-                    <div className="flex gap-3 text-[10px] text-slate-500 mt-1 pt-1 border-t border-slate-100">
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-slate-500 mt-1 pt-1 border-t border-slate-100">
                       {s.cashSales > 0 && <span>Cash: {formatCurrency(s.cashSales)}</span>}
                       {s.cardSales > 0 && <span>Card: {formatCurrency(s.cardSales)}</span>}
                       {s.upiSales > 0 && <span>UPI: {formatCurrency(s.upiSales)}</span>}
                       {s.financeSales > 0 && <span>Finance: {formatCurrency(s.financeSales)}</span>}
+                      {s.creditSales > 0 && <span>Credit: {formatCurrency(s.creditSales)}</span>}
+                    </div>
+                  )}
+                  {(s.expectedCash > 0 || s.cashOut > 0 || s.cashIn > 0) && (
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-slate-400 mt-0.5">
+                      {s.expectedCash > 0 && <span>Expected cash: {formatCurrency(s.expectedCash)}</span>}
+                      {s.countedCash !== null && <span>Counted: {formatCurrency(s.countedCash)}</span>}
+                      {s.cashIn > 0 && <span>Cash in: {formatCurrency(s.cashIn)}</span>}
+                      {s.cashOut > 0 && <span>Cash out: {formatCurrency(s.cashOut)}</span>}
+                      {s.cashDiscrepancy !== 0 && (
+                        <span className={s.cashDiscrepancy > 0 ? "text-green-600" : "text-red-600"}>
+                          Disc: {s.cashDiscrepancy > 0 ? "+" : ""}{formatCurrency(s.cashDiscrepancy)}
+                        </span>
+                      )}
                     </div>
                   )}
                 </CardContent>

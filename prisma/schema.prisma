@@ -1137,7 +1137,16 @@ model PosSession {
   financeSales      Float     @default(0)  // Bajaj EMI etc.
   totalSales        Float     @default(0)
 
-  // Cash management
+  // Cash drawer
+  cashIn            Float     @default(0)  // Cash received (non-sales)
+  cashOut           Float     @default(0)  // Cash withdrawn from drawer
+  cashRefunds       Float     @default(0)
+  expectedCash      Float     @default(0)  // Expected cash at session end
+  countedCash       Float?                 // Actual cash counted at close
+  cashDiscrepancy   Float     @default(0)  // countedCash - expectedCash
+
+  // Credit & other
+  creditSales       Float     @default(0)  // Credit sale / unpaid invoices
   cashInHand        Float     @default(0)  // Opening + cash sales - cash out
   cashDeposited     Float     @default(0)  // Amount deposited to bank
 
@@ -1164,6 +1173,7 @@ model DailySettlement {
   totalCard         Float             @default(0)
   totalUpi          Float             @default(0)
   totalFinance      Float             @default(0)
+  totalCredit       Float             @default(0)  // Credit sales
   grandTotal        Float             @default(0)
 
   // Cash verification

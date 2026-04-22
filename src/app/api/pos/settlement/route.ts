@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
     const totalCard = sessions.reduce((s, p) => s + p.cardSales, 0);
     const totalUpi = sessions.reduce((s, p) => s + p.upiSales, 0);
     const totalFinance = sessions.reduce((s, p) => s + p.financeSales, 0);
+    const totalCredit = sessions.reduce((s, p) => s + p.creditSales, 0);
     const grandTotal = sessions.reduce((s, p) => s + p.totalSales, 0);
 
     const settlement = await prisma.$transaction(async (tx) => {
@@ -78,6 +79,7 @@ export async function POST(req: NextRequest) {
           totalCard,
           totalUpi,
           totalFinance,
+          totalCredit,
           grandTotal,
           unmatchedAmount: grandTotal,
         },
