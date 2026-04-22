@@ -41,6 +41,7 @@ export async function generateBarcodePng(
 }
 
 export function generateSerialCode(sku: string, sequence: number): string {
+  if (sequence > 99999) throw new Error(`Serial sequence overflow for SKU ${sku}: ${sequence}`);
   const padded = String(sequence).padStart(4, "0");
   return `${sku}-${padded}`;
 }

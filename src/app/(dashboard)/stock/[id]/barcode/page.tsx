@@ -37,26 +37,28 @@ export default function BarcodePage({ params }: { params: Promise<{ id: string }
           }
         }
       })
-      .catch(() => {})
+      .catch(() => { setProductName("Error loading serials"); })
       .finally(() => setLoading(false));
   }, [id]);
 
   useEffect(() => {
     if (serials.length === 0) return;
     async function generateBarcodes() {
-      const images: Record<string, string> = {};
-      for (const serial of serials) {
-        try {
+      const results = await Promise.allSettled(
+        serials.map(async (serial) => {
           const res = await fetch("/api/barcode", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ text: serial.serialCode, type: barcodeType }),
           });
-          if (res.ok) {
-            const data = await res.json();
-            images[serial.id] = data.image;
-          }
-        } catch { /* fallback to text */ }
+          if (!res.ok) throw new Error("Failed");
+          const data = await res.json();
+          return { id: serial.id, image: data.image as string };
+        })
+      );
+      const images: Record<string, string> = {};
+      for (const r of results) {
+        if (r.status === "fulfilled") images[r.value.id] = r.value.image;
       }
       setBarcodeImages(images);
     }

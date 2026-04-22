@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { ArrowLeft, Search, QrCode, Camera, X, Package } from "lucide-react";
+import { ArrowLeft, Search, QrCode, Camera, X, Package, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -40,59 +40,96 @@ export default function ScannerPage() {
   const [products, setProducts] = useState<ProductResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState("");
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const [lastScanned, setLastScanned] = useState("");
+  const scannerRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const html5ScannerRef = useRef<any>(null);
 
-  useEffect(() => {
-    return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-      }
-    };
-  }, []);
-
-  const handleSearch = async (code: string) => {
+  const handleSearch = useCallback(async (code: string) => {
     if (code.length < 2) return;
     setLoading(true);
     setSearched(true);
+    setSearchError("");
     try {
       const res = await fetch(`/api/serials/search?code=${encodeURIComponent(code)}`);
       const data = await res.json();
       if (data.success) {
         setSerials(data.data.serials || []);
         setProducts(data.data.products || []);
+      } else {
+        setSearchError(data.error || "Search failed");
       }
     } catch {
-      // handle silently
+      setSearchError("Network error — check your connection");
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  const stopCamera = useCallback(async () => {
+    if (html5ScannerRef.current) {
+      try {
+        await html5ScannerRef.current.stop();
+      } catch { /* already stopped */ }
+      html5ScannerRef.current = null;
+    }
+    setCameraActive(false);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (html5ScannerRef.current) {
+        html5ScannerRef.current.stop().catch(() => {});
+      }
+    };
+  }, []);
 
   const startCamera = async () => {
     try {
       setCameraError("");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
       setCameraActive(true);
-    } catch {
-      setCameraError("Camera access denied. Please allow camera permissions.");
-    }
-  };
 
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
+      // Dynamic import to avoid SSR issues
+      const { Html5Qrcode } = await import("html5-qrcode");
+
+      // Wait for DOM element to be ready
+      await new Promise((r) => setTimeout(r, 100));
+
+      const scannerId = "barcode-scanner-region";
+      const scanner = new Html5Qrcode(scannerId);
+      html5ScannerRef.current = scanner;
+
+      await scanner.start(
+        { facingMode: "environment" },
+        {
+          fps: 10,
+          qrbox: { width: 250, height: 120 },
+          aspectRatio: 1.5,
+        },
+        (decodedText) => {
+          // Barcode successfully decoded
+          setLastScanned(decodedText);
+          setSearch(decodedText);
+          handleSearch(decodedText);
+          // Brief vibration feedback if available
+          if (navigator.vibrate) navigator.vibrate(100);
+        },
+        () => {
+          // Scanning in progress — no match yet (expected, not an error)
+        }
+      );
+    } catch (err) {
+      setCameraActive(false);
+      if (err instanceof Error && err.message.includes("NotAllowed")) {
+        setCameraError("Camera access denied. Please allow camera permissions in your browser settings.");
+      } else {
+        setCameraError("Camera could not be started. Make sure no other app is using the camera.");
+      }
     }
-    setCameraActive(false);
   };
 
   const totalResults = serials.length + products.length;
@@ -106,28 +143,34 @@ export default function ScannerPage() {
 
       {/* Camera View */}
       {cameraActive ? (
-        <div className="relative mb-4 rounded-xl overflow-hidden bg-black">
-          <video ref={videoRef} autoPlay playsInline className="w-full h-48 object-cover" />
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="w-48 h-24 border-2 border-white/60 rounded-lg" />
-          </div>
-          <button onClick={stopCamera} className="absolute top-2 right-2 bg-black/50 text-white p-1.5 rounded-full">
+        <div className="relative mb-4">
+          <div id="barcode-scanner-region" ref={scannerRef} className="rounded-xl overflow-hidden" />
+          <button onClick={stopCamera} className="absolute top-2 right-2 z-10 bg-black/50 text-white p-1.5 rounded-full">
             <X className="h-4 w-4" />
           </button>
-          <p className="absolute bottom-2 left-0 right-0 text-center text-xs text-white/80">
-            Position barcode inside the frame
-          </p>
+          {lastScanned && (
+            <div className="flex items-center gap-2 mt-2 bg-green-50 border border-green-200 rounded-lg p-2.5">
+              <CheckCircle2 className="h-4 w-4 text-green-600 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium text-green-800">Scanned</p>
+                <p className="text-xs font-mono text-green-700 truncate">{lastScanned}</p>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <button onClick={startCamera}
           className="w-full flex items-center justify-center gap-2 bg-slate-100 rounded-xl py-6 mb-4 hover:bg-slate-200 transition-colors">
           <Camera className="h-6 w-6 text-slate-500" />
-          <span className="text-sm font-medium text-slate-600">Tap to open camera</span>
+          <span className="text-sm font-medium text-slate-600">Tap to scan barcode</span>
         </button>
       )}
 
       {cameraError && (
-        <p className="text-xs text-red-600 text-center mb-3">{cameraError}</p>
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3">
+          <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
+          <p className="text-xs text-red-600">{cameraError}</p>
+        </div>
       )}
 
       {/* Search */}
@@ -145,6 +188,15 @@ export default function ScannerPage() {
           Search
         </button>
       </div>
+
+      {/* Search Error */}
+      {searchError && (
+        <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">
+          <AlertCircle className="h-4 w-4 text-amber-500 shrink-0" />
+          <p className="text-xs text-amber-700">{searchError}</p>
+          <button onClick={() => setSearchError("")} className="text-amber-500 ml-auto text-xs underline">dismiss</button>
+        </div>
+      )}
 
       {/* Results */}
       {loading ? (
@@ -228,7 +280,7 @@ export default function ScannerPage() {
       ) : (
         <div className="text-center py-8">
           <Package className="h-10 w-10 text-slate-300 mx-auto mb-2" />
-          <p className="text-sm text-slate-500">Search by serial code, SKU, or product name</p>
+          <p className="text-sm text-slate-500">Scan a barcode or search manually</p>
           <p className="text-xs text-slate-400 mt-1">Find stock, check location, and view pricing</p>
         </div>
       )}
