@@ -533,9 +533,9 @@ export default function DeliveriesPage() {
               <button onClick={() => setFetchStep("pickDate")}
                 disabled={fetchStep === "fetching" || fetchStep === "importing" || fetchStep === "pickDate"}
                 className="flex items-center gap-1 bg-slate-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
-                title="Fetch invoices from Zoho">
+                title="Fetch deliveries from Zoho">
                 {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-                Fetch
+                Fetch Deliveries
               </button>
             </>
           )}
@@ -545,7 +545,7 @@ export default function DeliveriesPage() {
       {/* Fetch Date Picker */}
       {fetchStep === "pickDate" && (
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
-          <p className="text-xs font-medium text-slate-700 mb-2">Fetch invoices created in Zoho within:</p>
+          <p className="text-xs font-medium text-slate-700 mb-2">Fetch deliveries created in Zoho within:</p>
           <div className="flex flex-wrap gap-2 mb-3">
             {[
               { label: "3 days", value: 3 },

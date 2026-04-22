@@ -273,7 +273,7 @@ export default function InboundPage() {
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
             >
               {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-              {fetchStep === "fetching" ? "Fetching..." : "Fetch Bills"}
+              {fetchStep === "fetching" ? "Fetching..." : "Fetch Inbound"}
             </button>
           )}
         </div>
@@ -282,7 +282,7 @@ export default function InboundPage() {
       {/* Fetch Date Picker */}
       {fetchStep === "pickDate" && (
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
-          <p className="text-xs font-medium text-slate-700 mb-2">Fetch bills created in Zoho within:</p>
+          <p className="text-xs font-medium text-slate-700 mb-2">Fetch inbound bills from Zoho within:</p>
           <div className="flex flex-wrap gap-2 mb-3">
             {[
               { label: "3 days", value: 3 },
@@ -512,7 +512,7 @@ export default function InboundPage() {
           {canFetchBills && (
             <button onClick={() => setFetchStep("pickDate")}
               className="mt-3 px-4 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium">
-              Fetch Bills from Zoho
+              Fetch Inbound from Zoho
             </button>
           )}
         </div>

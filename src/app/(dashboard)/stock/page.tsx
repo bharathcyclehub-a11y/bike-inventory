@@ -419,7 +419,7 @@ export default function StockPage() {
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
             >
               {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-              {fetchStep === "fetching" ? "Fetching..." : "Fetch Items"}
+              {fetchStep === "fetching" ? "Fetching..." : "Fetch Stock"}
             </button>
           )}
           {canBulkEdit && !selectMode && (
@@ -456,7 +456,7 @@ export default function StockPage() {
       {/* Fetch Date Picker */}
       {fetchStep === "pickDate" && (
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
-          <p className="text-xs font-medium text-slate-700 mb-2">Fetch items created in Zoho within:</p>
+          <p className="text-xs font-medium text-slate-700 mb-2">Fetch stock items from Zoho within:</p>
           <div className="flex flex-wrap gap-2 mb-3">
             {[
               { label: "3 days", value: 3 },
