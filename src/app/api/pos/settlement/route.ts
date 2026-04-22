@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
       orderBy: { date: "desc" },
       take: 30,
       include: {
-        sessions: { select: { id: true, totalSales: true, invoiceCount: true } },
+        sessions: { select: { id: true, totalSales: true, invoiceCount: true, zakyaSessionId: true, cashierName: true } },
         cashVerifiedBy: { select: { name: true } },
         _count: { select: { matches: true } },
       },

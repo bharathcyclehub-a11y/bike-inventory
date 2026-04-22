@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Download, Plus, CheckCircle, AlertTriangle, Clock, ChevronRight, Trash2, RefreshCw } from "lucide-react";
+import { ArrowLeft, Download, Plus, Clock, ChevronRight, Trash2, RefreshCw, Loader2, AlertTriangle, CheckCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +21,7 @@ interface Settlement {
   unmatchedAmount: number;
   cashCounted: number | null;
   cashVariance: number | null;
-  sessions: Array<{ id: string; totalSales: number; invoiceCount: number }>;
+  sessions: Array<{ id: string; totalSales: number; invoiceCount: number; zakyaSessionId: string; cashierName: string | null }>;
   cashVerifiedBy: { name: string } | null;
   _count: { matches: number };
 }
@@ -38,18 +38,31 @@ const STATUS_STYLES: Record<string, { bg: string; text: string; label: string }>
   DISCREPANCY: { bg: "bg-red-100", text: "text-red-700", label: "Discrepancy" },
 };
 
+type FetchStep = "idle" | "connecting" | "fetching" | "creating" | "done" | "error";
+
 export default function SettlementListPage() {
   const { data: session, status: sessionStatus } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
   const canAccess = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
-
   const isAdmin = role === "ADMIN";
+
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [loading, setLoading] = useState(true);
-  const [fetching, setFetching] = useState(false);
   const [creating, setCreating] = useState(false);
   const [fetchDays, setFetchDays] = useState(7);
   const [deleting, setDeleting] = useState<string | null>(null);
+
+  // Progress state
+  const [fetchStep, setFetchStep] = useState<FetchStep>("idle");
+  const [fetchProgress, setFetchProgress] = useState("");
+  const [fetchResult, setFetchResult] = useState<{
+    source: string;
+    created: number;
+    settlements: number;
+    skipped: number;
+    error: string | null;
+    apiKeys: string[] | null;
+  } | null>(null);
 
   const loadSettlements = () => {
     setLoading(true);
@@ -63,55 +76,71 @@ export default function SettlementListPage() {
   useEffect(() => { loadSettlements(); }, []);
 
   const fetchSessions = async (force = false) => {
-    setFetching(true);
+    setFetchStep("connecting");
+    setFetchProgress("Connecting to Zakya...");
+    setFetchResult(null);
+
     const dateTo = new Date().toISOString().split("T")[0];
     const dateFrom = new Date(Date.now() - fetchDays * 86400000).toISOString().split("T")[0];
+
     try {
+      if (force) setFetchProgress("Clearing old data...");
+
+      setFetchStep("fetching");
+      setFetchProgress(`Fetching POS data (${dateFrom} to ${dateTo})...`);
+
       const res = await fetch("/api/pos/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dateFrom, dateTo, force }),
       });
       const data = await res.json();
-      if (data.success) {
-        const src = data.data.source === "sessions" ? "sessions (with breakdown)" : "invoices (totals only)";
-        const created = data.data.created || 0;
-        const apiErr = data.data.sessionApiError;
 
-        // Auto-create settlements for each date with sessions
-        let settlementsCreated = 0;
-        if (created > 0) {
-          const start = new Date(dateFrom);
-          const end = new Date(dateTo);
-          for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-            const ds = d.toISOString().split("T")[0];
-            try {
-              const sRes = await fetch("/api/pos/settlement", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ date: ds }),
-              });
-              const sData = await sRes.json();
-              if (sData.success) settlementsCreated++;
-            } catch { /* skip dates with no sessions */ }
-          }
-        }
-
-        let msg = `Source: ${src}\n`;
-        msg += created > 0
-          ? `Created ${created} sessions → ${settlementsCreated} settlement(s).`
-          : `${data.data.skipped} already existed.`;
-        if (apiErr) msg += `\n\nSessions API note: ${apiErr}`;
-
-        alert(msg);
-        loadSettlements();
-      } else {
-        alert(data.error || "Failed to fetch sessions");
+      if (!data.success) {
+        setFetchStep("error");
+        setFetchProgress(data.error || "Failed to fetch sessions");
+        return;
       }
-    } catch {
-      alert("Network error");
-    } finally {
-      setFetching(false);
+
+      const { source, created, skipped, sessionApiError, sessionApiKeys } = data.data;
+
+      // Auto-create settlements
+      setFetchStep("creating");
+      setFetchProgress("Creating settlements...");
+
+      let settlementsCreated = 0;
+      if (created > 0) {
+        const start = new Date(dateFrom);
+        const end = new Date(dateTo);
+        for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+          const ds = d.toISOString().split("T")[0];
+          try {
+            const sRes = await fetch("/api/pos/settlement", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ date: ds }),
+            });
+            const sData = await sRes.json();
+            if (sData.success) settlementsCreated++;
+          } catch { /* skip */ }
+        }
+      }
+
+      setFetchStep("done");
+      setFetchProgress("");
+      setFetchResult({
+        source,
+        created,
+        settlements: settlementsCreated,
+        skipped,
+        error: sessionApiError,
+        apiKeys: sessionApiKeys,
+      });
+
+      loadSettlements();
+    } catch (err) {
+      setFetchStep("error");
+      setFetchProgress(err instanceof Error ? err.message : "Network error");
     }
   };
 
@@ -126,22 +155,16 @@ export default function SettlementListPage() {
         body: JSON.stringify({ date: dateStr }),
       });
       const data = await res.json();
-      if (data.success) {
-        loadSettlements();
-      } else {
-        alert(data.error || "Failed to create settlement");
-      }
-    } catch {
-      alert("Network error");
-    } finally {
-      setCreating(false);
-    }
+      if (data.success) loadSettlements();
+      else alert(data.error || "Failed to create settlement");
+    } catch { alert("Network error"); }
+    finally { setCreating(false); }
   };
 
   const deleteSettlement = async (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!confirm("Delete this settlement? Sessions will be unlinked (not deleted) and can be re-used.")) return;
+    if (!confirm("Delete this settlement? Sessions will be unlinked and can be re-used.")) return;
     setDeleting(id);
     try {
       const res = await fetch("/api/pos/settlement", {
@@ -156,6 +179,8 @@ export default function SettlementListPage() {
     finally { setDeleting(null); }
   };
 
+  const isFetching = fetchStep === "connecting" || fetchStep === "fetching" || fetchStep === "creating";
+
   if (sessionStatus === "loading") {
     return (
       <div className="flex items-center justify-center py-12">
@@ -165,45 +190,36 @@ export default function SettlementListPage() {
   }
 
   if (!canAccess) {
-    return (
-      <div className="text-center py-12">
-        <p className="text-sm font-medium text-red-600">Access Denied</p>
-      </div>
-    );
+    return <div className="text-center py-12"><p className="text-sm font-medium text-red-600">Access Denied</p></div>;
   }
 
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
-        <Link href="/accounts">
-          <ArrowLeft className="h-5 w-5 text-slate-500" />
-        </Link>
+        <Link href="/accounts"><ArrowLeft className="h-5 w-5 text-slate-500" /></Link>
         <h1 className="text-lg font-bold text-slate-900 flex-1">Daily Settlement</h1>
       </div>
 
       {/* Actions */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-3">
         <div className="flex items-center gap-1 flex-1">
-          <select
-            value={fetchDays}
-            onChange={(e) => setFetchDays(Number(e.target.value))}
-            className="text-xs border rounded-lg px-2 py-2 bg-white"
-          >
+          <select value={fetchDays} onChange={(e) => setFetchDays(Number(e.target.value))}
+            className="text-xs border rounded-lg px-2 py-2 bg-white">
             <option value={3}>3 days</option>
             <option value={7}>7 days</option>
             <option value={14}>14 days</option>
             <option value={30}>30 days</option>
           </select>
-          <Button size="sm" variant="outline" onClick={() => fetchSessions(false)} disabled={fetching}>
+          <Button size="sm" variant="outline" onClick={() => fetchSessions(false)} disabled={isFetching}>
             <Download className="h-3.5 w-3.5 mr-1" />
-            {fetching ? "Fetching..." : "Fetch POS"}
+            {isFetching ? "Fetching..." : "Fetch POS"}
           </Button>
           {isAdmin && (
             <Button size="sm" variant="outline" onClick={() => {
-              if (confirm("Re-fetch will delete existing sessions & settlements for this period and pull fresh data from Zakya. Continue?")) {
+              if (confirm("Re-fetch will delete existing sessions & settlements for this period and pull fresh from Zakya. Continue?")) {
                 fetchSessions(true);
               }
-            }} disabled={fetching} className="text-orange-600 border-orange-300 hover:bg-orange-50">
+            }} disabled={isFetching} className="text-orange-600 border-orange-300 hover:bg-orange-50">
               <RefreshCw className="h-3.5 w-3.5 mr-1" />
               Re-fetch
             </Button>
@@ -211,9 +227,82 @@ export default function SettlementListPage() {
         </div>
         <Button size="sm" className="bg-blue-600 hover:bg-blue-700" onClick={createSettlement} disabled={creating}>
           <Plus className="h-3.5 w-3.5 mr-1" />
-          {creating ? "Creating..." : "New Settlement"}
+          {creating ? "..." : "New"}
         </Button>
       </div>
+
+      {/* Progress Bar */}
+      {isFetching && (
+        <Card className="mb-3 border-blue-200 bg-blue-50">
+          <CardContent className="p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-600 shrink-0" />
+              <span className="text-xs font-medium text-blue-700">{fetchProgress}</span>
+            </div>
+            <div className="w-full bg-blue-200 rounded-full h-1.5">
+              <div className="bg-blue-600 h-1.5 rounded-full transition-all duration-500" style={{
+                width: fetchStep === "connecting" ? "20%" : fetchStep === "fetching" ? "60%" : "90%"
+              }} />
+            </div>
+            <div className="flex justify-between mt-1">
+              <span className={`text-[10px] ${fetchStep === "connecting" ? "text-blue-700 font-medium" : "text-blue-400"}`}>Connect</span>
+              <span className={`text-[10px] ${fetchStep === "fetching" ? "text-blue-700 font-medium" : "text-blue-400"}`}>Fetch</span>
+              <span className={`text-[10px] ${fetchStep === "creating" ? "text-blue-700 font-medium" : "text-blue-400"}`}>Create</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Success Result */}
+      {fetchStep === "done" && fetchResult && (
+        <Card className="mb-3 border-green-200 bg-green-50">
+          <CardContent className="p-3">
+            <div className="flex items-start gap-2">
+              <CheckCircle className="h-4 w-4 text-green-600 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-xs font-medium text-green-800">
+                  {fetchResult.created > 0
+                    ? `Created ${fetchResult.created} sessions → ${fetchResult.settlements} settlement(s)`
+                    : `${fetchResult.skipped} sessions already existed`}
+                </p>
+                <p className="text-[10px] text-green-600 mt-0.5">
+                  Source: {fetchResult.source === "sessions" ? "Register Sessions API (with breakdown)" : "Invoices API (totals only)"}
+                </p>
+                {fetchResult.error && (
+                  <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-[10px] text-amber-700">
+                    <p className="font-medium">Sessions API error (fell back to invoices):</p>
+                    <p className="mt-0.5 font-mono">{fetchResult.error}</p>
+                    {fetchResult.apiKeys && (
+                      <p className="mt-0.5 text-amber-500">API response keys: {fetchResult.apiKeys.join(", ")}</p>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button onClick={() => { setFetchStep("idle"); setFetchResult(null); }} className="text-[10px] text-green-500 underline shrink-0">
+                dismiss
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Error Result */}
+      {fetchStep === "error" && (
+        <Card className="mb-3 border-red-200 bg-red-50">
+          <CardContent className="p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-xs font-medium text-red-800">Fetch failed</p>
+                <p className="text-[10px] text-red-600 mt-0.5 font-mono break-all">{fetchProgress}</p>
+              </div>
+              <button onClick={() => { setFetchStep("idle"); setFetchProgress(""); }} className="text-[10px] text-red-500 underline shrink-0">
+                dismiss
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -223,13 +312,17 @@ export default function SettlementListPage() {
         <div className="text-center py-12">
           <Clock className="h-8 w-8 text-slate-300 mx-auto mb-2" />
           <p className="text-sm text-slate-400">No settlements yet</p>
-          <p className="text-xs text-slate-400 mt-1">Fetch POS sessions first, then create a settlement</p>
+          <p className="text-xs text-slate-400 mt-1">Fetch POS sessions first</p>
         </div>
       ) : (
         <div className="space-y-2">
           {settlements.map((s) => {
             const st = STATUS_STYLES[s.status] || STATUS_STYLES.PENDING;
             const invoiceCount = s.sessions.reduce((sum, p) => sum + p.invoiceCount, 0);
+            // Show session IDs (e.g. SE1-728)
+            const sessionIds = s.sessions
+              .map(p => p.cashierName || p.zakyaSessionId)
+              .filter(Boolean);
             return (
               <Link key={s.id} href={`/accounts/settlement/${s.id}`}>
                 <Card className="mb-2 hover:border-slate-300 transition-colors">
@@ -246,6 +339,11 @@ export default function SettlementListPage() {
                           {invoiceCount} invoices | {s.sessions.length} session{s.sessions.length !== 1 ? "s" : ""}
                           {s._count.matches > 0 && ` | ${s._count.matches} matched`}
                         </p>
+                        {sessionIds.length > 0 && (
+                          <p className="text-[10px] text-slate-400 mt-0.5">
+                            {sessionIds.join(", ")}
+                          </p>
+                        )}
                         {s.cashVariance !== null && s.cashVariance !== 0 && (
                           <p className={`text-[10px] mt-0.5 ${s.cashVariance > 0 ? "text-green-600" : "text-red-600"}`}>
                             Cash variance: {s.cashVariance > 0 ? "+" : ""}{formatCurrency(s.cashVariance)}
@@ -260,11 +358,8 @@ export default function SettlementListPage() {
                           )}
                         </div>
                         {isAdmin && (
-                          <button
-                            onClick={(e) => deleteSettlement(s.id, e)}
-                            disabled={deleting === s.id}
-                            className="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
-                          >
+                          <button onClick={(e) => deleteSettlement(s.id, e)} disabled={deleting === s.id}
+                            className="p-1.5 rounded-lg hover:bg-red-50 transition-colors">
                             <Trash2 className={`h-3.5 w-3.5 ${deleting === s.id ? "text-slate-300" : "text-red-400 hover:text-red-600"}`} />
                           </button>
                         )}
