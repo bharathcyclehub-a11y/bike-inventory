@@ -79,6 +79,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const [actionLoading, setActionLoading] = useState(false);
   const [itemLoading, setItemLoading] = useState<string | null>(null);
   const [putawayLoading, setPutawayLoading] = useState(false);
+  const [successMsg, setSuccessMsg] = useState<{ shipmentNo: string; deliveredCount: number } | null>(null);
 
   // Per-item bin selections: lineItemId → array of binIds (one per unit)
   const [binSelections, setBinSelections] = useState<Record<string, string[]>>({});
@@ -161,6 +162,10 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       if (res.success) {
         setBinSelections({});
         await refreshShipment();
+        if (status === "DELIVERED") {
+          const totalDelivered = shipment?.lineItems.length || 0;
+          setSuccessMsg({ shipmentNo: shipment?.shipmentNo || "", deliveredCount: totalDelivered });
+        }
       }
     } catch { /* */ }
     finally { setActionLoading(false); }
@@ -452,6 +457,47 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
               {putawayLoading ? "Saving..." : `Save Bin Assignment (${putawayReady})`}
             </Button>
           )}
+        </div>
+      )}
+
+      {/* Success message after delivery */}
+      {successMsg && (
+        <div className="bg-green-50 border border-green-300 rounded-xl p-4 mb-3 text-center">
+          <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />
+          <p className="text-sm font-bold text-green-800">Inward Completed Successfully!</p>
+          <p className="text-lg font-bold text-green-900 mt-1">{successMsg.shipmentNo}</p>
+          <p className="text-xs text-green-600 mt-1">{successMsg.deliveredCount} items received &amp; stock updated</p>
+          <p className="text-[10px] text-slate-400 mt-2">Take a screenshot of this for your records</p>
+          <button onClick={() => setSuccessMsg(null)}
+            className="mt-3 px-4 py-1.5 rounded-lg text-xs font-medium bg-green-600 text-white hover:bg-green-700">
+            OK
+          </button>
+        </div>
+      )}
+
+      {/* Select All — apply one bin to ALL undelivered items */}
+      {canDeliver && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && bins.length > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3">
+          <p className="text-xs font-medium text-blue-800 mb-1.5">Apply same bin to all items</p>
+          <select
+            onChange={(e) => {
+              if (!e.target.value) return;
+              const binId = e.target.value;
+              const undelivered = shipment.lineItems.filter((li) => !li.isDelivered);
+              const newSelections = { ...binSelections };
+              for (const li of undelivered) {
+                newSelections[li.id] = new Array(li.quantity).fill(binId);
+              }
+              setBinSelections(newSelections);
+              e.target.value = "";
+            }}
+            className="w-full text-xs border border-blue-200 rounded-lg px-2 py-1.5 bg-white text-slate-700"
+          >
+            <option value="">Select bin for all items...</option>
+            {bins.map((b) => (
+              <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
+            ))}
+          </select>
         </div>
       )}
 
