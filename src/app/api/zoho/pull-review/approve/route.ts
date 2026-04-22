@@ -233,25 +233,13 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
-          // Resolve brand from vendor (find most-used brand for this vendor, or create from vendor name)
-          let shipmentBrandId: string;
-          const vendorShipments = await prisma.inboundShipment.findMany({
-            where: { lineItems: { some: { product: { is: { NOT: undefined } } } } },
-            select: { brandId: true },
-            orderBy: { createdAt: "desc" },
-            take: 1,
-          });
-          if (vendorShipments.length > 0) {
-            shipmentBrandId = vendorShipments[0].brandId;
-          } else {
-            // Find or create brand from vendor name
-            const vendorName = String(d.vendorName).trim();
-            let brand = await prisma.brand.findFirst({ where: { name: { equals: vendorName, mode: "insensitive" } } });
-            if (!brand) {
-              brand = await prisma.brand.create({ data: { name: vendorName } });
-            }
-            shipmentBrandId = brand.id;
+          // Resolve brand from vendor name (find or create)
+          const vendorName = String(d.vendorName).trim();
+          let shipmentBrand = await prisma.brand.findFirst({ where: { name: { equals: vendorName, mode: "insensitive" } } });
+          if (!shipmentBrand) {
+            shipmentBrand = await prisma.brand.create({ data: { name: vendorName } });
           }
+          const shipmentBrandId = shipmentBrand.id;
 
           // Look up brand lead time for expected delivery date
           const brandLeadTime = await prisma.brandLeadTime.findUnique({ where: { brandId: shipmentBrandId } });
