@@ -334,7 +334,31 @@ export async function POST(req: NextRequest) {
 
           results.bills++;
         } else if (preview.entityType === "invoice") {
-          const lineItems = (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];
+          let lineItems = (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];
+          let salesPerson = String(d.salesPerson || "");
+
+          // Fetch invoice detail from Zoho for line items + salesperson
+          if ((lineItems.length === 0 || !salesPerson) && preview.zohoId) {
+            try {
+              const { ZohoClient } = await import("@/lib/zoho");
+              const zoho = new ZohoClient();
+              if (await zoho.init()) {
+                const detail = await zoho.getInvoice(preview.zohoId);
+                const inv = detail.invoice;
+                if (inv) {
+                  if (lineItems.length === 0 && inv.line_items?.length) {
+                    lineItems = inv.line_items.map((li) => ({
+                      name: li.name, sku: li.sku || "", quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
+                    }));
+                  }
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  if (!salesPerson) salesPerson = (inv as any).salesperson_name || "";
+                }
+              }
+            } catch (e) {
+              results.errors.push(`Invoice ${d.invoiceNumber}: failed to fetch details — ${e instanceof Error ? e.message : "Unknown"}`);
+            }
+          }
 
           // Dedup
           const exists = await prisma.delivery.findFirst({ where: { invoiceNo: String(d.invoiceNumber) } });
@@ -348,7 +372,7 @@ export async function POST(req: NextRequest) {
               invoiceAmount: Number(d.total || 0),
               customerName: String(d.customerName),
               customerPhone: String(d.phone || "") || null,
-              salesPerson: String(d.salesPerson || "") || null,
+              salesPerson: salesPerson || null,
               status: "PENDING",
               lineItems: lineItems.length > 0 ? lineItems : undefined,
             },

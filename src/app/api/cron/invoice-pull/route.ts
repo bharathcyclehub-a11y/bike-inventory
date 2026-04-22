@@ -79,8 +79,9 @@ export async function GET(req: NextRequest) {
       if (exists) continue;
 
       try {
-        // Get line items
+        // Get line items + salesperson from invoice detail
         let lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }> = [];
+        let salesPerson: string | null = null;
         try {
           const detail = await zohoClient.getInvoice(inv.invoice_id);
           lineItems = (detail.invoice?.line_items || []).map((li) => ({
@@ -90,6 +91,8 @@ export async function GET(req: NextRequest) {
             rate: li.rate || 0,
             itemTotal: li.item_total || 0,
           }));
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          salesPerson = (detail.invoice as any)?.salesperson_name || null;
         } catch { /* use empty line items */ }
 
         await prisma.delivery.create({
@@ -100,7 +103,7 @@ export async function GET(req: NextRequest) {
             invoiceAmount: inv.total || 0,
             customerName: inv.customer_name || "Unknown",
             customerPhone: inv.phone || null,
-            salesPerson: null,
+            salesPerson,
             status: "PENDING",
             lineItems: lineItems.length > 0 ? lineItems : undefined,
           },

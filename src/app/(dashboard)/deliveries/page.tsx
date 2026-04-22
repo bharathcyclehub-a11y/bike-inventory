@@ -131,6 +131,10 @@ export default function DeliveriesPage() {
   const [editingDateId, setEditingDateId] = useState<string | null>(null);
   const [editDate, setEditDate] = useState("");
 
+  // Backfill salesPerson + lineItems from Zoho
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillMsg, setBackfillMsg] = useState("");
+
   const fetchData = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams();
@@ -497,11 +501,46 @@ export default function DeliveriesPage() {
 
   const isPhone = /^\d{10,}$/.test(invoiceSearch.trim());
 
+  const handleBackfill = async () => {
+    setBackfilling(true);
+    setBackfillMsg("Starting backfill...");
+    let totalUpdated = 0;
+    let page = 1;
+    try {
+      while (true) {
+        const res = await fetch("/api/deliveries/backfill", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ page, batchSize: 10 }),
+        });
+        const data = await res.json();
+        if (!res.ok) { setBackfillMsg(`Error: ${data.error || "Failed"}`); break; }
+        totalUpdated += data.data?.updated || 0;
+        const remaining = data.data?.remaining || 0;
+        setBackfillMsg(`Updated ${totalUpdated} deliveries (${remaining} remaining)...`);
+        if (remaining <= 0 || (data.data?.batch || 0) === 0) {
+          setBackfillMsg(`Done! Updated ${totalUpdated} deliveries with product & salesperson info.`);
+          fetchData();
+          break;
+        }
+        page++;
+      }
+    } catch { setBackfillMsg("Network error"); }
+    setBackfilling(false);
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Deliveries</h1>
         <div className="flex items-center gap-1">
+          {isAdmin && (
+            <button onClick={handleBackfill} disabled={backfilling}
+              className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50">
+              {backfilling ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
+              {backfilling ? "..." : "Backfill"}
+            </button>
+          )}
           {isAdmin && deliveries.length > 0 && (
             <button onClick={handleBulkDelete} disabled={bulkDeleting}
               className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-50">
@@ -541,6 +580,12 @@ export default function DeliveriesPage() {
           )}
         </div>
       </div>
+
+      {backfillMsg && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 mb-2 text-xs text-purple-700">
+          {backfillMsg}
+        </div>
+      )}
 
       {/* Fetch Date Picker */}
       {fetchStep === "pickDate" && (
