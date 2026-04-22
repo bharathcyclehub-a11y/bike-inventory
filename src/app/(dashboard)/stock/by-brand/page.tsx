@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { ArrowLeft, ChevronDown, ChevronRight, Search, AlertTriangle, Package, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +38,9 @@ interface BrandStock {
 type SortKey = "name" | "value" | "count" | "stock";
 
 export default function BrandStockPage() {
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string } | undefined)?.role;
+  const isAdmin = role === "ADMIN";
   const [brands, setBrands] = useState<BrandStock[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -134,7 +138,7 @@ export default function BrandStockPage() {
       <div className="flex gap-1.5 mb-3 overflow-x-auto scrollbar-hide pb-1">
         {([
           { key: "name", label: "Name A-Z" },
-          { key: "value", label: "Highest Value" },
+          ...(isAdmin ? [{ key: "value" as SortKey, label: "Highest Value" }] : []),
           { key: "count", label: "Most Products" },
           { key: "stock", label: "Most Stock" },
         ] as { key: SortKey; label: string }[]).map((s) => (
@@ -193,11 +197,13 @@ export default function BrandStockPage() {
                         {brand.productCount} products | {brand.totalStock.toLocaleString("en-IN")} units
                       </p>
                     </div>
-                    <div className="text-right shrink-0 mr-1">
-                      <p className="text-sm font-bold text-slate-700">
-                        {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(brand.totalValue)}
-                      </p>
-                    </div>
+                    {isAdmin && (
+                      <div className="text-right shrink-0 mr-1">
+                        <p className="text-sm font-bold text-slate-700">
+                          {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(brand.totalValue)}
+                        </p>
+                      </div>
+                    )}
                     {isExpanded ? (
                       <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
                     ) : (
