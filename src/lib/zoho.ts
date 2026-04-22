@@ -388,6 +388,44 @@ export class ZohoClient {
     }>("GET", `/invoices/${invoiceId}`);
   }
 
+  // ---- Customer Payments (for POS payment mode breakdown) ----
+
+  async listCustomerPayments(page = 1, dateFrom?: string, dateTo?: string) {
+    const dateParam = dateFrom ? `&date_start=${dateFrom}` : "";
+    const dateEndParam = dateTo ? `&date_end=${dateTo}` : "";
+    return this.apiCall<{
+      customerpayments: Array<{
+        payment_id: string;
+        payment_number: string;
+        invoice_numbers: string;
+        date: string;
+        amount: number;
+        payment_mode: string;
+        reference_number: string;
+        customer_name: string;
+        account_name: string;
+      }>;
+      page_context?: { has_more_page: boolean };
+    }>("GET", `/customerpayments?page=${page}&per_page=200${dateParam}${dateEndParam}`);
+  }
+
+  async listAllCustomerPayments(dateFrom?: string, dateTo?: string) {
+    const all: Array<{
+      payment_id: string; payment_number: string; invoice_numbers: string;
+      date: string; amount: number; payment_mode: string;
+      reference_number: string; customer_name: string; account_name: string;
+    }> = [];
+    let page = 1;
+    while (true) {
+      const data = await this.listCustomerPayments(page, dateFrom, dateTo);
+      all.push(...(data.customerpayments || []));
+      if (!data.page_context?.has_more_page) break;
+      page++;
+      await this.delay(300);
+    }
+    return all;
+  }
+
   // ---- Organizations ----
 
   async getOrganizations() {

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 import { ZakyaClient } from "@/lib/zakya";
+import { ZohoClient } from "@/lib/zoho";
 
 // GET — List POS sessions (from DB)
 export async function GET(req: NextRequest) {
@@ -73,13 +74,48 @@ export async function POST(req: NextRequest) {
     let created = 0;
     let skipped = 0;
 
-    // Step 1: Fetch all invoices for the date range
+    // Step 1: Fetch invoices from Zakya for totals
     const invoices = await zakya.listAllInvoices(dateFrom, dateTo);
 
-    // Step 2: Group invoices by date
+    // Step 2: Fetch customer payments from Zoho Books for payment mode breakdown
+    let payments: Array<{
+      payment_id: string; date: string; amount: number;
+      payment_mode: string; customer_name: string; account_name: string;
+    }> = [];
+    let paymentSource: string = "none";
+    let paymentError: string | null = null;
+
+    // Try Zoho Books first (separate OAuth, has customer payments)
+    const zoho = new ZohoClient();
+    const zohoOk = await zoho.init();
+    if (zohoOk) {
+      try {
+        payments = await zoho.listAllCustomerPayments(dateFrom, dateTo);
+        paymentSource = "zoho-books";
+      } catch (err) {
+        paymentError = `Zoho Books: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    } else {
+      paymentError = "Zoho Books not connected";
+    }
+
+    // Fallback: try Zakya customer payments if Books failed
+    if (payments.length === 0 && !paymentError?.includes("not connected")) {
+      try {
+        const zakyaPayments = await zakya.listAllCustomerPayments(dateFrom, dateTo);
+        if (zakyaPayments.length > 0) {
+          payments = zakyaPayments;
+          paymentSource = "zakya";
+          paymentError = null;
+        }
+      } catch {
+        // Zakya payments not authorized — already know this, skip
+      }
+    }
+
+    // Step 3: Group invoices by date
     const sessionsByDate = new Map<string, {
       date: string; total: number; count: number;
-      invoiceIds: string[];
       cashSales: number; cardSales: number; upiSales: number;
       financeSales: number; creditSales: number;
       paymentModes: Record<string, number>;
@@ -89,7 +125,7 @@ export async function POST(req: NextRequest) {
       const date = inv.date;
       if (!sessionsByDate.has(date)) {
         sessionsByDate.set(date, {
-          date, total: 0, count: 0, invoiceIds: [],
+          date, total: 0, count: 0,
           cashSales: 0, cardSales: 0, upiSales: 0, financeSales: 0, creditSales: 0,
           paymentModes: {},
         });
@@ -97,77 +133,38 @@ export async function POST(req: NextRequest) {
       const s = sessionsByDate.get(date)!;
       s.total += inv.total;
       s.count += 1;
-      s.invoiceIds.push(inv.invoice_id);
+      if (inv.balance > 0) s.creditSales += inv.balance;
+    }
 
-      // Credit sales = invoices with balance remaining
-      if (inv.balance > 0) {
-        s.creditSales += inv.balance;
+    // Step 4: Distribute payment amounts by mode into daily buckets
+    for (const pm of payments) {
+      const date = pm.date;
+      if (!sessionsByDate.has(date)) continue;
+
+      const s = sessionsByDate.get(date)!;
+      const mode = (pm.payment_mode || "").toLowerCase();
+      const amt = pm.amount || 0;
+
+      // Track raw mode names for diagnostics
+      s.paymentModes[pm.payment_mode || "unknown"] = (s.paymentModes[pm.payment_mode || "unknown"] || 0) + amt;
+
+      // Classify into buckets
+      if (mode === "cash") {
+        s.cashSales += amt;
+      } else if (mode.includes("upi") || mode.includes("phonepe") || mode.includes("gpay") || mode.includes("google")) {
+        s.upiSales += amt;
+      } else if (mode.includes("bajaj") || mode.includes("finance") || mode.includes("emi")) {
+        s.financeSales += amt;
+      } else if (mode === "creditcard" || mode.includes("card") || mode.includes("mespos") || mode.includes("icici") || mode.includes("hdfc") || mode.includes("bank")) {
+        s.cardSales += amt;
+      } else if (mode === "banktransfer" || mode === "bankremittance") {
+        s.cardSales += amt;
+      } else {
+        s.cardSales += amt;
       }
     }
 
-    // Step 3: Fetch invoice details to get payment mode breakdown
-    // Each invoice detail has a `payments` array with `payment_mode`
-    let detailsFetched = 0;
-    let detailError: string | null = null;
-    let sampleInvoiceKeys: string[] | null = null;
-    let samplePaymentKeys: string[] | null = null;
-
-    try {
-      for (const [, s] of sessionsByDate) {
-        // Fetch up to 60 invoice details per day
-        const idsToFetch = s.invoiceIds.slice(0, 60);
-        for (const invId of idsToFetch) {
-          try {
-            const detail = await zakya.getInvoice(invId);
-            const inv = detail.invoice;
-
-            // Log first invoice's keys for diagnostics
-            if (!sampleInvoiceKeys) {
-              sampleInvoiceKeys = Object.keys(inv as unknown as Record<string, unknown>);
-            }
-
-            // Extract payment modes from invoice payments array
-            if (inv.payments && inv.payments.length > 0) {
-              for (const p of inv.payments) {
-                if (!samplePaymentKeys) {
-                  samplePaymentKeys = Object.keys(p as unknown as Record<string, unknown>);
-                }
-                const mode = (p.payment_mode || "").toLowerCase();
-                const amt = p.amount || 0;
-
-                // Track raw mode names
-                s.paymentModes[p.payment_mode || "unknown"] = (s.paymentModes[p.payment_mode || "unknown"] || 0) + amt;
-
-                // Classify into buckets
-                if (mode === "cash") {
-                  s.cashSales += amt;
-                } else if (mode.includes("upi") || mode.includes("phonepe") || mode.includes("gpay") || mode.includes("google")) {
-                  s.upiSales += amt;
-                } else if (mode.includes("bajaj") || mode.includes("finance") || mode.includes("emi")) {
-                  s.financeSales += amt;
-                } else if (mode === "creditcard" || mode.includes("card") || mode.includes("mespos") || mode.includes("icici") || mode.includes("hdfc") || mode.includes("bank")) {
-                  s.cardSales += amt;
-                } else if (mode === "banktransfer" || mode === "bankremittance") {
-                  s.cardSales += amt;
-                } else {
-                  s.cardSales += amt;
-                }
-              }
-            }
-            detailsFetched++;
-            // Rate limit: 150ms between calls
-            await zakya.delay(150);
-          } catch (err) {
-            if (!detailError) detailError = err instanceof Error ? err.message : String(err);
-            // Continue with remaining invoices
-          }
-        }
-      }
-    } catch (err) {
-      if (!detailError) detailError = err instanceof Error ? err.message : String(err);
-    }
-
-    // Step 4: Create POS sessions in DB
+    // Step 5: Create POS sessions in DB
     const allPaymentModes = new Set<string>();
     for (const [date, s] of sessionsByDate) {
       const zakyaSessionId = `ZAKYA-${date}`;
@@ -195,8 +192,7 @@ export async function POST(req: NextRequest) {
           rawData: {
             invoiceCount: s.count, total: s.total,
             paymentModes: s.paymentModes,
-            detailsFetched,
-            source: detailsFetched > 0 ? "invoices+details" : "invoices-only",
+            source: paymentSource,
           },
         },
       });
@@ -205,13 +201,11 @@ export async function POST(req: NextRequest) {
 
     return successResponse({
       fetched: invoices.length,
-      detailsFetched,
+      paymentsFound: payments.length,
       created, skipped,
-      source: detailsFetched > 0 ? "invoices+details" : "invoices-only",
-      detailError,
+      source: payments.length > 0 ? paymentSource : "invoices-only",
+      paymentError,
       paymentModes: [...allPaymentModes],
-      sampleInvoiceKeys,
-      samplePaymentKeys,
     });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);

@@ -62,11 +62,9 @@ export default function SettlementListPage() {
     created: number;
     settlements: number;
     skipped: number;
-    detailsFetched: number;
-    detailError: string | null;
+    paymentsFound: number;
+    paymentError: string | null;
     paymentModes: string[];
-    sampleInvoiceKeys: string[] | null;
-    samplePaymentKeys: string[] | null;
   } | null>(null);
 
   const loadSettlements = () => {
@@ -114,7 +112,7 @@ export default function SettlementListPage() {
         return;
       }
 
-      const { source, created, skipped, detailsFetched, detailError, paymentModes, sampleInvoiceKeys, samplePaymentKeys } = data.data;
+      const { source, created, skipped, paymentsFound, paymentError, paymentModes } = data.data;
 
       // Auto-create settlements
       setFetchStep("creating");
@@ -145,11 +143,9 @@ export default function SettlementListPage() {
         created,
         settlements: settlementsCreated,
         skipped,
-        detailsFetched: detailsFetched || 0,
-        detailError: detailError || null,
+        paymentsFound: paymentsFound || 0,
+        paymentError: paymentError || null,
         paymentModes: paymentModes || [],
-        sampleInvoiceKeys: sampleInvoiceKeys || null,
-        samplePaymentKeys: samplePaymentKeys || null,
       });
 
       loadSettlements();
@@ -292,29 +288,18 @@ export default function SettlementListPage() {
                     : `${fetchResult.skipped} sessions already existed`}
                 </p>
                 <p className="text-[10px] text-green-600 mt-0.5">
-                  {fetchResult.detailsFetched > 0
-                    ? `${fetchResult.detailsFetched} invoice details fetched → breakdown by payment mode`
-                    : "Invoice list only (no detail fetched)"}
+                  Source: {fetchResult.source === "zoho-books" ? "Zoho Books (payments)" : fetchResult.source === "zakya" ? "Zakya (payments)" : "Invoices only"}
+                  {fetchResult.paymentsFound > 0 && ` — ${fetchResult.paymentsFound} payments found`}
                 </p>
                 {fetchResult.paymentModes.length > 0 && (
                   <p className="text-[10px] text-blue-600 mt-0.5">
-                    Payment modes found: {fetchResult.paymentModes.join(", ")}
+                    Payment modes: {fetchResult.paymentModes.join(", ")}
                   </p>
                 )}
-                {fetchResult.samplePaymentKeys && (
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    Payment fields: {fetchResult.samplePaymentKeys.join(", ")}
-                  </p>
-                )}
-                {fetchResult.detailsFetched > 0 && fetchResult.paymentModes.length === 0 && (
-                  <p className="text-[10px] text-amber-600 mt-0.5">
-                    No payments array in invoice details — Zakya may not expose payment modes
-                  </p>
-                )}
-                {fetchResult.detailError && (
+                {fetchResult.paymentError && (
                   <div className="mt-1.5 p-2 bg-amber-50 border border-amber-200 rounded text-[10px] text-amber-700">
-                    <p className="font-medium">Invoice detail error:</p>
-                    <p className="mt-0.5 font-mono">{fetchResult.detailError}</p>
+                    <p className="font-medium">Payment API note:</p>
+                    <p className="mt-0.5 font-mono">{fetchResult.paymentError}</p>
                   </div>
                 )}
               </div>
