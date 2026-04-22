@@ -55,9 +55,12 @@ export async function PUT(
     if (body.name && typeof body.name === "string") updateData.name = body.name.trim();
     if (body.email && typeof body.email === "string") updateData.email = body.email.trim().toLowerCase();
     if (body.role && VALID_ROLES.includes(body.role)) updateData.role = body.role;
-    if (body.accessCode && typeof body.accessCode === "string") updateData.accessCode = body.accessCode.toUpperCase().trim();
+    if (body.accessCode && typeof body.accessCode === "string") {
+      updateData.accessCode = body.accessCode.toUpperCase().trim();
+      // Access code IS the login credential — always sync password hash
+      updateData.password = await bcrypt.hash(body.accessCode.toUpperCase().trim(), 10);
+    }
     if (body.isActive !== undefined && typeof body.isActive === "boolean") updateData.isActive = body.isActive;
-    if (body.password && typeof body.password === "string" && body.password.length >= 6) updateData.password = await bcrypt.hash(body.password, 10);
 
     // Check uniqueness if email or accessCode changed
     if (body.email && body.email !== existing.email) {

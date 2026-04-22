@@ -67,7 +67,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const hashedPassword = await bcrypt.hash(data.password, 10);
+    // Access code IS the login credential — hash it as the password
+    const hashedPassword = await bcrypt.hash(data.accessCode.toUpperCase(), 10);
 
     const user = await prisma.user.create({
       data: {

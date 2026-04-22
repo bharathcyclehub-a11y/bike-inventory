@@ -83,7 +83,6 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
     setSuccess("");
     try {
       const body: Record<string, unknown> = { name, email, role, accessCode, isActive };
-      if (newPassword) body.password = newPassword;
 
       const res = await fetch(`/api/users/${id}`, {
         method: "PUT",
@@ -187,11 +186,6 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isActive ? "bg-green-500" : "bg-slate-300"}`}>
               <span className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${isActive ? "translate-x-6" : "translate-x-1"}`} />
             </button>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">New Password</label>
-            <Input type="password" placeholder="Leave blank to keep current" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
           </div>
 
           {/* Role Permissions Summary */}
