@@ -47,7 +47,7 @@ export async function requireAuth(roles?: Role[]) {
     throw new AuthError("Account is inactive", 403);
   }
 
-  if (roles && roles.length > 0 && !roles.includes(user.role) && user.role !== "CUSTOM") {
+  if (roles && roles.length > 0 && !roles.includes(user.role)) {
     throw new AuthError("Insufficient permissions", 403);
   }
 
