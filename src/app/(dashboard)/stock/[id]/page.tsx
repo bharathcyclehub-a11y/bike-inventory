@@ -4,6 +4,7 @@ import { use, useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { ArrowLeft, QrCode, MapPin, Tag, Package, IndianRupee, Pencil, Save, X, Power } from "lucide-react";
+import { LabelPrintButton } from "@/components/label-print";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -193,6 +194,13 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             <Pencil className="h-4 w-4 text-slate-500" />
           </button>
         )}
+        <LabelPrintButton product={{
+          name: product.name,
+          sku: product.sku,
+          mrp: product.mrp,
+          sellingPrice: product.sellingPrice,
+          brand: product.brand?.name,
+        }} />
       </div>
 
       {editing && (
