@@ -67,15 +67,12 @@ interface PerItemGroup {
 }
 
 type StockView = "list" | "per-item";
-type QuickFilter = "ALL" | "IN_STOCK" | "NO_STOCK" | "BICYCLES" | "SPARES" | "ACCESSORIES" | "LOW_STOCK" | "INACTIVE";
+type QuickFilter = "ALL" | "IN_STOCK" | "NO_STOCK" | "LOW_STOCK" | "INACTIVE";
 
 const QUICK_CHIPS: { key: QuickFilter; label: string }[] = [
   { key: "ALL", label: "All" },
   { key: "IN_STOCK", label: "In Stock" },
   { key: "NO_STOCK", label: "No Stock" },
-  { key: "BICYCLES", label: "Bicycles" },
-  { key: "SPARES", label: "Spares" },
-  { key: "ACCESSORIES", label: "Accessories" },
   { key: "LOW_STOCK", label: "Low Stock" },
   { key: "INACTIVE", label: "Inactive" },
 ];
@@ -124,6 +121,7 @@ export default function StockPage() {
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("ALL");
   const [showFilters, setShowFilters] = useState(false);
   const [selectedBrand, setSelectedBrand] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("");
   const [selectedSize, setSelectedSize] = useState("");
   const [selectedBin, setSelectedBin] = useState("");
   const [brands, setBrands] = useState<BrandItem[]>([]);
@@ -171,22 +169,24 @@ export default function StockPage() {
   const [bulkCategoryId, setBulkCategoryId] = useState("");
   const [categories, setCategories] = useState<CategoryItem[]>([]);
 
-  // Auto-classify
+  // Zoho category sync
   const [classifyStep, setClassifyStep] = useState<"idle" | "preview" | "applying">("idle");
-  const [classifyPreview, setClassifyPreview] = useState<{ totalProducts: number; currentlyInGeneral: number; classification: Record<string, { count: number; samples: string[] }> } | null>(null);
+  const [classifyPreview, setClassifyPreview] = useState<{
+    totalZohoItems: number; matched: number; updated: number; noCategory: number; notFound: number;
+    categoryDistribution: Record<string, number>;
+  } | null>(null);
 
-  async function handleAutoClassify(apply: boolean) {
+  async function handleZohoCategorySync(apply: boolean) {
     if (apply) {
       setClassifyStep("applying");
       try {
-        const res = await fetch("/api/products/auto-classify", {
+        const res = await fetch("/api/zoho/test-items", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dryRun: false }),
         }).then(r => r.json());
         if (res.success) {
-          setBulkMessage(`Auto-classified: ${res.data.breakdown.Bicycles} bicycles, ${res.data.breakdown.Spares} spares, ${res.data.breakdown.Accessories} accessories`);
+          setBulkMessage(`Synced categories: ${res.data.updated} items updated across ${res.data.categoriesCreated?.length || 0} categories`);
           fetchProducts(1);
-          // Refresh categories
           fetch("/api/categories").then(r => r.json()).then(r => { if (r.success) setCategories(r.data); });
         } else { setBulkMessage(res.error || "Failed"); }
       } catch { setBulkMessage("Network error"); }
@@ -195,7 +195,10 @@ export default function StockPage() {
     } else {
       setClassifyStep("preview");
       try {
-        const res = await fetch("/api/products/auto-classify").then(r => r.json());
+        const res = await fetch("/api/zoho/test-items", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dryRun: true }),
+        }).then(r => r.json());
         if (res.success) setClassifyPreview(res.data);
         else { setBulkMessage(res.error || "Failed"); setClassifyStep("idle"); }
       } catch { setBulkMessage("Network error"); setClassifyStep("idle"); }
@@ -362,23 +365,21 @@ export default function StockPage() {
     }).catch(() => {});
   }, []);
 
-  const activeFilterCount = [selectedBrand, selectedSize, selectedBin].filter(Boolean).length;
+  const activeFilterCount = [selectedBrand, selectedCategory, selectedSize, selectedBin].filter(Boolean).length;
 
   const buildParams = useCallback((pageNum: number) => {
     const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(pageNum), sortBy: "currentStock", sortOrder: "desc" });
     if (debouncedSearch) params.set("search", debouncedSearch);
-    if (quickFilter === "BICYCLES") { params.set("type", "BICYCLE"); params.set("status", "ACTIVE"); }
-    else if (quickFilter === "SPARES") { params.set("type", "SPARE_PART"); params.set("status", "ACTIVE"); }
-    else if (quickFilter === "ACCESSORIES") { params.set("type", "ACCESSORY"); params.set("status", "ACTIVE"); }
-    else if (quickFilter === "INACTIVE") { params.set("status", "INACTIVE"); }
+    if (quickFilter === "INACTIVE") { params.set("status", "INACTIVE"); }
     else if (quickFilter === "IN_STOCK") { params.set("status", "ACTIVE"); params.set("minStock", "1"); }
     else if (quickFilter === "NO_STOCK") { params.set("status", "ACTIVE"); params.set("maxStock", "0"); }
     else if (quickFilter === "ALL" || quickFilter === "LOW_STOCK") { params.set("status", "ACTIVE"); }
     if (selectedBrand) params.set("brandId", selectedBrand);
+    if (selectedCategory) params.set("categoryId", selectedCategory);
     if (selectedSize) params.set("size", selectedSize);
     if (selectedBin) params.set("binId", selectedBin);
     return params;
-  }, [debouncedSearch, quickFilter, selectedBrand, selectedSize, selectedBin]);
+  }, [debouncedSearch, quickFilter, selectedBrand, selectedCategory, selectedSize, selectedBin]);
 
   const fetchProducts = useCallback((pageNum: number, append = false, silent = false) => {
     if (!silent) { if (append) setLoadingMore(true); else setLoading(true); }
@@ -426,6 +427,7 @@ export default function StockPage() {
 
   function clearFilters() {
     setSelectedBrand("");
+    setSelectedCategory("");
     setSelectedSize("");
     setSelectedBin("");
   }
@@ -438,8 +440,8 @@ export default function StockPage() {
 
   const secondsAgo = Math.round((Date.now() - lastUpdated.getTime()) / 1000);
 
-  // Show size filter only when filtering bicycles
-  const showSizeFilter = quickFilter === "BICYCLES" || quickFilter === "ALL";
+  // Show size filter always
+  const showSizeFilter = true;
 
   return (
     <div>
@@ -469,10 +471,10 @@ export default function StockPage() {
           )}
           {userRole === "ADMIN" && !selectMode && classifyStep === "idle" && (
             <button
-              onClick={() => handleAutoClassify(false)}
+              onClick={() => handleZohoCategorySync(false)}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200"
             >
-              <SlidersHorizontal className="h-3.5 w-3.5" /> Classify
+              <SlidersHorizontal className="h-3.5 w-3.5" /> Sync Categories
             </button>
           )}
           {selectMode && (
@@ -498,28 +500,28 @@ export default function StockPage() {
         </div>
       )}
 
-      {/* Auto-Classify Preview */}
+      {/* Zoho Category Sync Preview */}
       {classifyStep === "preview" && classifyPreview && (
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
           <p className="text-xs font-semibold text-purple-800 mb-2">
-            Auto-Classification Preview — {classifyPreview.totalProducts} products ({classifyPreview.currentlyInGeneral} in &quot;General&quot;)
+            Zoho Category Sync — {classifyPreview.totalZohoItems} items in Zoho, {classifyPreview.matched} matched in app
           </p>
-          <div className="space-y-1.5 mb-3">
-            {Object.entries(classifyPreview.classification).map(([cat, data]) => (
-              <div key={cat}>
-                <p className="text-xs text-slate-700">
-                  <span className="font-medium">{cat}:</span> {data.count} items
-                </p>
-                <p className="text-[10px] text-slate-400 truncate">
-                  e.g. {data.samples.slice(0, 3).join(", ")}
-                </p>
-              </div>
+          <div className="grid grid-cols-2 gap-1.5 mb-3 max-h-40 overflow-y-auto">
+            {Object.entries(classifyPreview.categoryDistribution)
+              .sort(([, a], [, b]) => b - a)
+              .map(([cat, count]) => (
+              <p key={cat} className="text-xs text-slate-700">
+                <span className="font-medium">{cat}:</span> {count}
+              </p>
             ))}
           </div>
+          <p className="text-[10px] text-slate-500 mb-2">
+            {classifyPreview.noCategory} items have no category in Zoho &bull; {classifyPreview.notFound} not found in app
+          </p>
           <div className="flex gap-2">
-            <button onClick={() => handleAutoClassify(true)}
-              className="px-4 py-1.5 bg-purple-700 text-white rounded-lg text-xs font-medium disabled:opacity-50">
-              Apply Classification
+            <button onClick={() => handleZohoCategorySync(true)}
+              className="px-4 py-1.5 bg-purple-700 text-white rounded-lg text-xs font-medium">
+              Apply Sync
             </button>
             <button onClick={() => { setClassifyStep("idle"); setClassifyPreview(null); }}
               className="px-3 py-1.5 border border-purple-300 text-purple-700 rounded-lg text-xs">
@@ -531,7 +533,7 @@ export default function StockPage() {
       {classifyStep === "applying" && (
         <div className="flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-lg p-2.5 mb-2">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-600" />
-          <span className="text-xs text-purple-700 font-medium">Classifying products...</span>
+          <span className="text-xs text-purple-700 font-medium">Syncing categories from Zoho...</span>
         </div>
       )}
 
@@ -755,6 +757,20 @@ export default function StockPage() {
         <Card className="mb-3 border-slate-200">
           <CardContent className="p-3 space-y-2.5">
             <div className="grid grid-cols-2 gap-2.5">
+              <div>
+                <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Category</label>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="mt-0.5 flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                >
+                  <option value="">All Categories ({categories.length})</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name} ({c._count.products})</option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Brand</label>
                 <select

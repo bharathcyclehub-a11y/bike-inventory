@@ -25,24 +25,13 @@ export async function POST() {
     let failed = 0;
     const errors: string[] = [];
 
-    // Category resolution: Zoho category_name → auto-classify by name → Spares fallback
+    // Mirror Zoho categories — use exact category_name from Zoho, fallback to "Uncategorized"
     const categoryCache: Record<string, string> = {};
-    async function resolveCategory(name: string, zohoCategoryName?: string): Promise<string> {
-      const zohoName = (zohoCategoryName || "").trim();
-      if (zohoName && ["Bicycles", "Spares", "Accessories"].includes(zohoName)) {
-        if (!categoryCache[zohoName]) {
-          let cat = await prisma.category.findFirst({ where: { name: zohoName } });
-          if (!cat) cat = await prisma.category.create({ data: { name: zohoName, description: `${zohoName} category` } });
-          categoryCache[zohoName] = cat.id;
-        }
-        return categoryCache[zohoName];
-      }
-      const isBicycle = /\b\d{2,2}(\.\d)?["']?\s*(t\b|ss\b|ms\b|fs\b|sp\b)/i.test(name) || /\b(bicycle|cycle|e-bicycle|e-bike|ebike)\b/i.test(name) || /\b(MTB|mountain.bike|road.bike|hybrid|fat.bike|cruiser)\b/i.test(name) || /\b(geared|non.geared|single.speed|7.speed|21.speed|shimano.*speed)\b/i.test(name);
-      const isAccessory = /\b(helmet|lock|pump|light|bell|bottle|cage|mirror|stand|carrier|basket|mudguard|fender|glove|jersey|shorts|bag|pannier|horn|hooter|tool.kit|repair.kit|training.wheel)\b/i.test(name);
-      const catName = isBicycle ? "Bicycles" : isAccessory ? "Accessories" : "Spares";
+    async function resolveCategory(zohoCategoryName?: string): Promise<string> {
+      const catName = (zohoCategoryName || "").trim() || "Uncategorized";
       if (!categoryCache[catName]) {
         let cat = await prisma.category.findFirst({ where: { name: catName } });
-        if (!cat) cat = await prisma.category.create({ data: { name: catName, description: `${catName} category` } });
+        if (!cat) cat = await prisma.category.create({ data: { name: catName, description: `Zoho category: ${catName}` } });
         categoryCache[catName] = cat.id;
       }
       return categoryCache[catName];
@@ -87,7 +76,7 @@ export async function POST() {
         if (zohoType.includes("bicycle") || zohoType.includes("cycle")) productType = "BICYCLE";
         else if (zohoType.includes("accessory")) productType = "ACCESSORY";
 
-        const itemCategoryId = await resolveCategory(item.name, item.category_name || "");
+        const itemCategoryId = await resolveCategory(item.category_name || "");
 
         await prisma.product.create({
           data: {
