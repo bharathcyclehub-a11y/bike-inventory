@@ -531,9 +531,9 @@ export default function DeliveriesPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-2">
         <h1 className="text-lg font-bold text-slate-900">Deliveries</h1>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           {isAdmin && (
             <button onClick={handleBackfill} disabled={backfilling}
               className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50">
@@ -549,37 +549,41 @@ export default function DeliveriesPage() {
             </button>
           )}
           {canFetchInvoices && (
-            <>
-              <div className="relative">
-                <input
-                  type="text"
-                  placeholder="Invoice / Phone..."
-                  value={invoiceSearch}
-                  onChange={(e) => setInvoiceSearch(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleQuickSearch()}
-                  className="w-28 px-2 py-1.5 text-xs border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400 pr-6"
-                />
-                {isPhone && (
-                  <Phone className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-green-500" />
-                )}
-              </div>
-              <button onClick={handleQuickSearch}
-                disabled={searchStep === "searching" || searchStep === "importing"}
-                className="flex items-center gap-1 bg-slate-900 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50">
-                {searchStep === "searching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
-                Search
-              </button>
-              <button onClick={() => setFetchStep("pickDate")}
-                disabled={fetchStep === "fetching" || fetchStep === "importing" || fetchStep === "pickDate"}
-                className="flex items-center gap-1 bg-slate-700 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
-                title="Fetch deliveries from Zoho">
-                {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-                Fetch Deliveries
-              </button>
-            </>
+            <button onClick={() => setFetchStep("pickDate")}
+              disabled={fetchStep === "fetching" || fetchStep === "importing" || fetchStep === "pickDate"}
+              className="flex items-center gap-1 bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+              title="Fetch deliveries from Zoho">
+              {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
+              Fetch
+            </button>
           )}
         </div>
       </div>
+
+      {/* Zoho Quick Search */}
+      {canFetchInvoices && (
+        <div className="flex gap-1.5 mb-2">
+          <div className="relative flex-1">
+            <input
+              type="text"
+              placeholder="Invoice / Phone..."
+              value={invoiceSearch}
+              onChange={(e) => setInvoiceSearch(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleQuickSearch()}
+              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400 pr-8"
+            />
+            {isPhone && (
+              <Phone className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-green-500" />
+            )}
+          </div>
+          <button onClick={handleQuickSearch}
+            disabled={searchStep === "searching" || searchStep === "importing"}
+            className="flex items-center gap-1 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0">
+            {searchStep === "searching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+            Search
+          </button>
+        </div>
+      )}
 
       {backfillMsg && (
         <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 mb-2 text-xs text-purple-700">
@@ -676,10 +680,6 @@ export default function DeliveriesPage() {
             {f.label}{f.count !== undefined && f.count > 0 ? ` (${f.count})` : ""}
           </button>
         ))}
-      </div>
-
-      {/* Outstation Filter */}
-      <div className="flex gap-1.5 mb-2">
         <button onClick={() => setShowOutstation(!showOutstation)}
           className={`shrink-0 px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors ${
             showOutstation ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"
@@ -867,7 +867,7 @@ export default function DeliveriesPage() {
           <p className="text-sm text-slate-400">No deliveries found</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-2.5">
           {deliveries.map((d) => {
             const cfg = STATUS_CONFIG[d.status] || STATUS_CONFIG.PENDING;
             const items = d.lineItems || [];
@@ -875,7 +875,7 @@ export default function DeliveriesPage() {
             const aging = isPending ? getAging(d.invoiceDate) : null;
             return (
               <Card key={d.id} className={aging ? AGING_COLORS[aging.level] : ""}>
-                <CardContent className="p-3">
+                <CardContent className="p-3.5">
                   <div className="flex items-start justify-between mb-1.5">
                     <div className="flex-1 min-w-0 mr-2">
                       <Link href={`/deliveries/${d.id}`}>

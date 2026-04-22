@@ -472,11 +472,11 @@ export default function StockPage() {
   return (
     <div>
       {/* Header */}
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-2">
         <h1 className="text-lg font-bold text-slate-900">
           {selectMode ? `${selectedIds.size} selected` : "Stock"}
         </h1>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {canFetchItems && !selectMode && fetchStep !== "pickDate" && (
             <button
               onClick={() => setFetchStep("pickDate")}
@@ -493,16 +493,6 @@ export default function StockPage() {
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-100 text-slate-600 hover:bg-slate-200"
             >
               <CheckSquare className="h-3.5 w-3.5" /> Select
-            </button>
-          )}
-          {userRole === "ADMIN" && !selectMode && (classifyStep === "idle" || classifyStep === "loading") && (
-            <button
-              onClick={() => handleZohoCategorySync(false)}
-              disabled={classifyStep === "loading"}
-              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50"
-            >
-              {classifyStep === "loading" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <SlidersHorizontal className="h-3.5 w-3.5" />}
-              {classifyStep === "loading" ? "Loading..." : "Sync Categories"}
             </button>
           )}
           {selectMode && (
@@ -923,8 +913,8 @@ export default function StockPage() {
             const badge = getStockBadge(p);
             const isSelected = selectedIds.has(p.id);
             const content = (
-              <Card className={`transition-colors mb-2 ${selectMode && isSelected ? "border-blue-400 bg-blue-50/30" : "hover:border-slate-300"}`}>
-                <CardContent className="p-3">
+              <Card className={`transition-colors mb-1.5 ${selectMode && isSelected ? "border-blue-400 bg-blue-50/30" : "hover:border-slate-300"}`}>
+                <CardContent className="p-3.5">
                   <div className="flex items-start justify-between">
                     {selectMode && (
                       <div className="mr-2.5 pt-0.5 shrink-0">
