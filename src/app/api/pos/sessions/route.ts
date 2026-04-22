@@ -76,6 +76,8 @@ export async function POST(req: NextRequest) {
     let usedSessionsApi = false;
     let sessionApiError: string | null = null;
     let sessionApiRaw: unknown = null;
+    let sampleSessionKeys: string[] | null = null;
+    let detailSampleKeys: string[] | null = null;
 
     // Try register sessions API first (has payment mode breakdown)
     try {
@@ -87,39 +89,64 @@ export async function POST(req: NextRequest) {
         usedSessionsApi = true;
         fetched = sessions.length;
 
+        // Log what fields the LIST endpoint returns (first session)
+        sampleSessionKeys = Object.keys(sessions[0] as Record<string, unknown>);
+
         for (const s of sessions) {
           const existing = await prisma.posSession.findUnique({ where: { zakyaSessionId: s.session_id } });
           if (existing) { skipped++; continue; }
 
-          // Parse payment modes from session data
-          let cashSales = s.cash_sales || 0;
-          let cardSales = s.card_sales || 0;
+          // Fetch individual session detail for payment breakdown
+          let detail: Record<string, unknown> = s as Record<string, unknown>;
+          try {
+            const detailData = await zakya.getRegisterSession(s.session_id);
+            const detailSession = detailData.register_session || detailData.registersession;
+            if (detailSession) {
+              detail = detailSession as Record<string, unknown>;
+              if (!detailSampleKeys) detailSampleKeys = Object.keys(detail);
+            }
+            // Small delay to avoid rate limiting
+            await zakya.delay(200);
+          } catch {
+            // If detail fetch fails, use list data
+          }
+
+          // Parse payment modes — check detail first, then list data
+          let cashSales = parseFloat(String(detail.cash_sales || s.cash_sales || 0)) || 0;
+          let cardSales = parseFloat(String(detail.card_sales || s.card_sales || 0)) || 0;
           let upiSales = 0;
           let financeSales = 0;
           let creditSales = 0;
 
-          if (s.payment_modes) {
-            for (const pm of s.payment_modes) {
-              const mode = pm.payment_mode.toUpperCase();
-              if (mode.includes("CASH")) cashSales = pm.amount;
-              else if (mode.includes("UPI") || mode.includes("PHONEPE") || mode.includes("GPAY")) upiSales += pm.amount;
-              else if (mode.includes("BAJAJ") || mode.includes("FINANCE") || mode.includes("EMI")) financeSales += pm.amount;
-              else if (mode.includes("CREDIT")) creditSales += pm.amount;
-              else if (mode.includes("CARD") || mode.includes("ICICI") || mode.includes("HDFC") || mode.includes("BANK")) cardSales += pm.amount;
-              else cardSales += pm.amount;
+          // Try payment_modes array from detail or list
+          const paymentModes = (detail.payment_modes || detail.payment_summary || s.payment_modes) as Array<{ payment_mode: string; amount: number }> | undefined;
+          if (paymentModes && Array.isArray(paymentModes)) {
+            // Reset to avoid double-counting
+            cashSales = 0; cardSales = 0;
+            for (const pm of paymentModes) {
+              const mode = (pm.payment_mode || "").toUpperCase();
+              const amt = parseFloat(String(pm.amount || 0)) || 0;
+              if (mode.includes("CASH")) cashSales += amt;
+              else if (mode.includes("UPI") || mode.includes("PHONEPE") || mode.includes("GPAY") || mode.includes("GOOGLE")) upiSales += amt;
+              else if (mode.includes("BAJAJ") || mode.includes("FINANCE") || mode.includes("EMI")) financeSales += amt;
+              else if (mode.includes("CREDIT")) creditSales += amt;
+              else if (mode.includes("CARD") || mode.includes("ICICI") || mode.includes("HDFC") || mode.includes("BANK") || mode.includes("MESPOS")) cardSales += amt;
+              else cardSales += amt; // Default unknown modes to card
             }
           }
 
-          // Cash drawer details
-          const raw = s as Record<string, unknown>;
-          const cashIn = parseFloat(String(raw.cash_in || raw.cash_in_amount || 0)) || 0;
-          const cashOut = parseFloat(String(raw.cash_out || raw.cash_out_amount || 0)) || 0;
-          const cashRefunds = parseFloat(String(raw.cash_refunds || raw.refund_amount || 0)) || 0;
-          const expectedCash = parseFloat(String(raw.expected_cash || raw.expected_cash_amount || s.expected_cash || 0)) || 0;
-          const countedCash = raw.counted_cash !== undefined && raw.counted_cash !== null
-            ? parseFloat(String(raw.counted_cash)) : (raw.amount_counted_at_end !== undefined ? parseFloat(String(raw.amount_counted_at_end)) : null);
-          const cashDiscrepancy = parseFloat(String(raw.discrepancy || raw.cash_discrepancy || 0)) || 0;
+          // Cash drawer details — prefer detail endpoint data
+          const cashIn = parseFloat(String(detail.cash_in || detail.cash_in_amount || 0)) || 0;
+          const cashOut = parseFloat(String(detail.cash_out || detail.cash_out_amount || 0)) || 0;
+          const cashRefunds = parseFloat(String(detail.cash_refunds || detail.refund_amount || detail.cash_refund || 0)) || 0;
+          const expectedCash = parseFloat(String(detail.expected_cash || detail.expected_cash_amount || detail.expected_cash_in_drawer || s.expected_cash || 0)) || 0;
+          const countedCash = detail.counted_cash !== undefined && detail.counted_cash !== null
+            ? parseFloat(String(detail.counted_cash))
+            : (detail.amount_counted_at_end !== undefined ? parseFloat(String(detail.amount_counted_at_end))
+            : (detail.closing_balance !== undefined ? parseFloat(String(detail.closing_balance)) : null));
+          const cashDiscrepancy = parseFloat(String(detail.discrepancy || detail.cash_discrepancy || detail.cash_difference || 0)) || 0;
 
+          const totalSales = parseFloat(String(detail.total_sales || s.total_sales || 0)) || 0;
           const sessionDate = s.opened_time ? new Date(s.opened_time) : new Date(dateFrom);
           await prisma.posSession.create({
             data: {
@@ -130,12 +157,12 @@ export async function POST(req: NextRequest) {
               registerName: s.register_name || "POS",
               cashierName: s.session_number,
               cashSales, cardSales, upiSales, financeSales, creditSales,
-              totalSales: s.total_sales,
+              totalSales,
               cashIn, cashOut, cashRefunds, expectedCash, countedCash, cashDiscrepancy,
               cashInHand: expectedCash || cashSales,
               cashDeposited: 0,
-              invoiceCount: s.invoice_count || 0,
-              rawData: JSON.parse(JSON.stringify(s)),
+              invoiceCount: parseFloat(String(detail.invoice_count || s.invoice_count || 0)) || 0,
+              rawData: JSON.parse(JSON.stringify(detail)),
             },
           });
           created++;
@@ -188,6 +215,8 @@ export async function POST(req: NextRequest) {
       source: usedSessionsApi ? "sessions" : "invoices",
       sessionApiError,
       sessionApiKeys: sessionApiRaw ? Object.keys(sessionApiRaw as Record<string, unknown>) : null,
+      sampleSessionKeys,
+      detailSampleKeys,
     });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);

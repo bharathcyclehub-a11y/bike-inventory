@@ -62,6 +62,8 @@ export default function SettlementListPage() {
     skipped: number;
     error: string | null;
     apiKeys: string[] | null;
+    sampleSessionKeys: string[] | null;
+    detailSampleKeys: string[] | null;
   } | null>(null);
 
   const loadSettlements = () => {
@@ -102,7 +104,7 @@ export default function SettlementListPage() {
         return;
       }
 
-      const { source, created, skipped, sessionApiError, sessionApiKeys } = data.data;
+      const { source, created, skipped, sessionApiError, sessionApiKeys, sampleSessionKeys, detailSampleKeys } = data.data;
 
       // Auto-create settlements
       setFetchStep("creating");
@@ -135,6 +137,8 @@ export default function SettlementListPage() {
         skipped,
         error: sessionApiError,
         apiKeys: sessionApiKeys,
+        sampleSessionKeys,
+        detailSampleKeys,
       });
 
       loadSettlements();
@@ -274,6 +278,20 @@ export default function SettlementListPage() {
                     <p className="mt-0.5 font-mono">{fetchResult.error}</p>
                     {fetchResult.apiKeys && (
                       <p className="mt-0.5 text-amber-500">API response keys: {fetchResult.apiKeys.join(", ")}</p>
+                    )}
+                  </div>
+                )}
+                {fetchResult.source === "sessions" && (
+                  <div className="mt-1.5 p-2 bg-blue-50 border border-blue-200 rounded text-[10px] text-blue-700">
+                    <p className="font-medium">API Diagnostics:</p>
+                    {fetchResult.sampleSessionKeys && (
+                      <p className="mt-0.5">List fields: <span className="font-mono">{fetchResult.sampleSessionKeys.join(", ")}</span></p>
+                    )}
+                    {fetchResult.detailSampleKeys && (
+                      <p className="mt-0.5">Detail fields: <span className="font-mono">{fetchResult.detailSampleKeys.join(", ")}</span></p>
+                    )}
+                    {!fetchResult.detailSampleKeys && (
+                      <p className="mt-0.5 text-amber-600">Detail endpoint returned no data — breakdown may be missing</p>
                     )}
                   </div>
                 )}
