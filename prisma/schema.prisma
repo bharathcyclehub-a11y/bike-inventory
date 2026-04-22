@@ -172,8 +172,10 @@ model User {
   createdSecondHand SecondHandCycle[]   @relation("SecondHandCreatedBy")
 
   // Inbound shipments
-  createdInboundShipments  InboundShipment[] @relation("InboundCreatedBy")
+  createdInboundShipments   InboundShipment[] @relation("InboundCreatedBy")
+  approvedInboundShipments  InboundShipment[] @relation("InboundApprovedBy")
   deliveredInboundShipments InboundShipment[] @relation("InboundDeliveredBy")
+  putawayInboundShipments   InboundShipment[] @relation("InboundPutawayBy")
 
   // Pre-bookings
   createdPreBookings PreBooking[] @relation("PreBookingCreatedBy")
@@ -1060,9 +1062,15 @@ model InboundShipment {
   status                InboundShipmentStatus @default(IN_TRANSIT)
   totalAmount           Float
   totalItems            Int
+  approvedAt            DateTime?
+  approvedById          String?
+  approvedBy            User?                 @relation("InboundApprovedBy", fields: [approvedById], references: [id])
   deliveredAt           DateTime?
   deliveredById         String?
   deliveredBy           User?                 @relation("InboundDeliveredBy", fields: [deliveredById], references: [id])
+  putawayAt             DateTime?
+  putawayById           String?
+  putawayBy             User?                 @relation("InboundPutawayBy", fields: [putawayById], references: [id])
   notes                 String?
   createdById           String
   createdBy             User                  @relation("InboundCreatedBy", fields: [createdById], references: [id])

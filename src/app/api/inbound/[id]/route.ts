@@ -19,7 +19,9 @@ export async function GET(
       include: {
         brand: { select: { name: true } },
         createdBy: { select: { name: true } },
+        approvedBy: { select: { name: true } },
         deliveredBy: { select: { name: true } },
+        putawayBy: { select: { name: true } },
         lineItems: {
           include: {
             product: { select: { name: true, sku: true } },

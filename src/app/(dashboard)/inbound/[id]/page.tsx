@@ -4,7 +4,7 @@ import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Phone, CheckCircle2, Calendar, Truck, MapPin, RotateCcw, Save, Trash2 } from "lucide-react";
+import { ArrowLeft, Loader2, Phone, CheckCircle2, Calendar, Truck, MapPin, RotateCcw, Save, Trash2, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -47,11 +47,14 @@ interface Shipment {
   status: string;
   totalAmount: number;
   totalItems: number;
+  approvedAt: string | null;
+  approvedBy: { name: string } | null;
   deliveredAt: string | null;
   notes: string | null;
   brand: { name: string };
   createdBy: { name: string };
   deliveredBy: { name: string } | null;
+  putawayBy: { name: string } | null;
   createdAt: string;
   lineItems: LineItem[];
   preBookings: { id: string; customerName: string; customerPhone: string | null; status: string; productName: string }[];
@@ -72,6 +75,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const role = (session?.user as { role?: string })?.role || "";
   const isAdmin = role === "ADMIN";
   const canDeliver = ["ADMIN", "SUPERVISOR", "INWARDS_CLERK"].includes(role);
+  const canApprove = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
 
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [bins, setBins] = useState<Bin[]>([]);
@@ -79,6 +83,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const [actionLoading, setActionLoading] = useState(false);
   const [itemLoading, setItemLoading] = useState<string | null>(null);
   const [putawayLoading, setPutawayLoading] = useState(false);
+  const [approveLoading, setApproveLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<{ shipmentNo: string; deliveredCount: number } | null>(null);
 
   // Per-item bin selections: lineItemId → array of binIds (one per unit)
@@ -130,6 +135,18 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       if (binId) groups[binId] = (groups[binId] || 0) + 1;
     }
     return Object.entries(groups).map(([binId, qty]) => ({ binId, qty }));
+  };
+
+  const isApproved = !!shipment?.approvedAt || isAdmin;
+
+  const handleApprove = async () => {
+    setApproveLoading(true);
+    try {
+      const res = await fetch(`/api/inbound/${id}/approve`, { method: "POST" }).then((r) => r.json());
+      if (res.success) await refreshShipment();
+      else alert(res.error || "Approval failed");
+    } catch { /* */ }
+    finally { setApproveLoading(false); }
   };
 
   const handleMarkDelivered = async (status: string) => {
@@ -405,11 +422,47 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
             <span className="text-xs text-slate-500">Created by</span>
             <span className="text-xs text-slate-700">{shipment.createdBy.name} on {formatDate(shipment.createdAt)}</span>
           </div>
+          {shipment.approvedBy && (
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-slate-500">Approved by</span>
+              <span className="text-xs text-green-700 font-medium">{shipment.approvedBy.name} on {formatDate(shipment.approvedAt!)}</span>
+            </div>
+          )}
+          {shipment.deliveredBy && (
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-slate-500">Delivered by</span>
+              <span className="text-xs text-slate-700">{shipment.deliveredBy.name}</span>
+            </div>
+          )}
+          {shipment.putawayBy && (
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-slate-500">Putaway by</span>
+              <span className="text-xs text-slate-700">{shipment.putawayBy.name}</span>
+            </div>
+          )}
         </CardContent>
       </Card>
 
+      {/* Approval Gate */}
+      {!isApproved && shipment.status !== "DELIVERED" && (
+        <div className="mb-3">
+          {canApprove ? (
+            <Button onClick={handleApprove} disabled={approveLoading}
+              className="w-full bg-indigo-600 hover:bg-indigo-700" size="lg">
+              <ShieldCheck className="h-4 w-4 mr-2" /> {approveLoading ? "Approving..." : "Approve Inward"}
+            </Button>
+          ) : (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
+              <ShieldCheck className="h-5 w-5 text-amber-500 mx-auto mb-1" />
+              <p className="text-xs font-medium text-amber-800">Awaiting Approval</p>
+              <p className="text-[10px] text-amber-600 mt-0.5">Supervisor or Accounts Manager must approve before delivery</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Mark Delivered */}
-      {canDeliver && shipment.status === "IN_TRANSIT" && (
+      {canDeliver && isApproved && shipment.status === "IN_TRANSIT" && (
         <div className="flex gap-2 mb-3">
           <Button onClick={() => handleMarkDelivered("DELIVERED")} disabled={actionLoading}
             className="flex-1 bg-green-600 hover:bg-green-700" size="lg">
@@ -423,7 +476,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* Partial delivery actions */}
-      {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && (
+      {canDeliver && isApproved && shipment.status === "PARTIALLY_DELIVERED" && (
         <div className="space-y-2 mb-3">
           <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-2 text-center">
             Select bin for each unit, then mark as delivered. Or mark all at once.
@@ -444,7 +497,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* Post-delivery Putaway */}
-      {canDeliver && needsBinCount > 0 && shipment.status === "DELIVERED" && (
+      {canDeliver && isApproved && needsBinCount > 0 && shipment.status === "DELIVERED" && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3">
           <p className="text-xs text-amber-800 font-medium mb-1 flex items-center gap-1.5">
             <MapPin className="h-3.5 w-3.5" /> {needsBinCount} item{needsBinCount > 1 ? "s" : ""} need bin assignment
@@ -476,7 +529,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* Select All — apply one bin to ALL undelivered items */}
-      {canDeliver && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && bins.length > 0 && (
+      {canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && bins.length > 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3">
           <p className="text-xs font-medium text-blue-800 mb-1.5">Apply same bin to all items</p>
           <select

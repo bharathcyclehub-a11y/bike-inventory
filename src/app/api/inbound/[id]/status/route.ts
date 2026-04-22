@@ -35,6 +35,11 @@ export async function PUT(
     if (!existing) return errorResponse("Not found", 404);
     if (existing.status === "DELIVERED") return errorResponse("Already delivered", 400);
 
+    // Approval gate: non-admin users need supervisor/accounts manager approval before delivery
+    if (status !== "IN_TRANSIT" && !existing.approvedAt && user.role !== "ADMIN") {
+      return errorResponse("Shipment must be approved by Supervisor or Accounts Manager before delivery", 403);
+    }
+
     // Revert to IN_TRANSIT (only from PARTIALLY_DELIVERED, admin/supervisor only)
     if (status === "IN_TRANSIT") {
       if (existing.status !== "PARTIALLY_DELIVERED") {

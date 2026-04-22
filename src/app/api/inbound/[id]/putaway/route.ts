@@ -11,7 +11,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK"]);
     const { id } = await params;
     const body = await req.json();
     const items: Array<{ lineItemId: string; binId: string }> = body.items || [];
@@ -44,6 +44,14 @@ export async function POST(
         });
       }
       updated++;
+    }
+
+    // Record putaway user on shipment if not already set
+    if (updated > 0) {
+      await prisma.inboundShipment.update({
+        where: { id, putawayById: null },
+        data: { putawayAt: new Date(), putawayById: user.id },
+      }).catch(() => {}); // ignore if already set
     }
 
     return successResponse({ updated });
