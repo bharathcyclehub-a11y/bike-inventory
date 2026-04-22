@@ -156,6 +156,7 @@ export class ZohoClient {
         purchase_rate?: number; rate?: number;
         tax_percentage?: number; hsn_or_sac?: string;
         stock_on_hand?: number; product_type?: string; item_type?: string;
+        category_name?: string; category_id?: string; group_name?: string;
       }>;
       page_context?: { has_more_page: boolean };
     }>("GET", `/items?page=${page}&per_page=200${statusParam}${modifiedParam}`);
@@ -168,6 +169,7 @@ export class ZohoClient {
       purchase_rate?: number; rate?: number;
       tax_percentage?: number; hsn_or_sac?: string;
       stock_on_hand?: number; product_type?: string; item_type?: string;
+      category_name?: string; category_id?: string; group_name?: string;
     }> = [];
     let page = 1;
     while (true) {

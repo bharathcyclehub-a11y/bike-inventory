@@ -10,10 +10,11 @@ export async function POST(req: NextRequest) {
   try {
     await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
     const body = await req.json();
-    const { productIds, brandId, status } = body as {
+    const { productIds, brandId, status, categoryId } = body as {
       productIds: string[];
       brandId?: string;
       status?: "ACTIVE" | "INACTIVE";
+      categoryId?: string;
     };
 
     if (!productIds || productIds.length === 0) {
@@ -22,8 +23,8 @@ export async function POST(req: NextRequest) {
     if (productIds.length > 500) {
       return errorResponse("Maximum 500 products per batch", 400);
     }
-    if (!brandId && !status) {
-      return errorResponse("Nothing to update — provide brandId or status", 400);
+    if (!brandId && !status && !categoryId) {
+      return errorResponse("Nothing to update — provide brandId, status, or categoryId", 400);
     }
 
     // Validate brand exists if provided
@@ -32,9 +33,16 @@ export async function POST(req: NextRequest) {
       if (!brand) return errorResponse("Brand not found", 404);
     }
 
+    // Validate category exists if provided
+    if (categoryId) {
+      const cat = await prisma.category.findUnique({ where: { id: categoryId } });
+      if (!cat) return errorResponse("Category not found", 404);
+    }
+
     const updateData: Record<string, unknown> = {};
     if (brandId) updateData.brandId = brandId;
     if (status) updateData.status = status;
+    if (categoryId) updateData.categoryId = categoryId;
 
     const result = await prisma.product.updateMany({
       where: { id: { in: productIds } },

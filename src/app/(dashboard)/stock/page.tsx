@@ -41,6 +41,7 @@ interface ProductItem {
 
 interface BrandItem { id: string; name: string; _count: { products: number }; }
 interface BinItem { id: string; code: string; name: string; location: string; _count: { products: number }; }
+interface CategoryItem { id: string; name: string; _count: { products: number }; }
 
 interface PerItemBin {
   binId: string | null;
@@ -164,9 +165,42 @@ export default function StockPage() {
   // Bulk select mode
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkAction, setBulkAction] = useState<"" | "brand" | "status">("");
+  const [bulkAction, setBulkAction] = useState<"" | "brand" | "status" | "category">("");
   const [bulkBrandId, setBulkBrandId] = useState("");
   const [bulkStatus, setBulkStatus] = useState<"ACTIVE" | "INACTIVE">("INACTIVE");
+  const [bulkCategoryId, setBulkCategoryId] = useState("");
+  const [categories, setCategories] = useState<CategoryItem[]>([]);
+
+  // Auto-classify
+  const [classifyStep, setClassifyStep] = useState<"idle" | "preview" | "applying">("idle");
+  const [classifyPreview, setClassifyPreview] = useState<{ totalProducts: number; currentlyInGeneral: number; classification: Record<string, { count: number; samples: string[] }> } | null>(null);
+
+  async function handleAutoClassify(apply: boolean) {
+    if (apply) {
+      setClassifyStep("applying");
+      try {
+        const res = await fetch("/api/products/auto-classify", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dryRun: false }),
+        }).then(r => r.json());
+        if (res.success) {
+          setBulkMessage(`Auto-classified: ${res.data.breakdown.Bicycles} bicycles, ${res.data.breakdown.Spares} spares, ${res.data.breakdown.Accessories} accessories`);
+          fetchProducts(1);
+          // Refresh categories
+          fetch("/api/categories").then(r => r.json()).then(r => { if (r.success) setCategories(r.data); });
+        } else { setBulkMessage(res.error || "Failed"); }
+      } catch { setBulkMessage("Network error"); }
+      setClassifyStep("idle");
+      setClassifyPreview(null);
+    } else {
+      setClassifyStep("preview");
+      try {
+        const res = await fetch("/api/products/auto-classify").then(r => r.json());
+        if (res.success) setClassifyPreview(res.data);
+        else { setBulkMessage(res.error || "Failed"); setClassifyStep("idle"); }
+      } catch { setBulkMessage("Network error"); setClassifyStep("idle"); }
+    }
+  }
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkMessage, setBulkMessage] = useState("");
 
@@ -201,6 +235,7 @@ export default function StockPage() {
       const body: Record<string, unknown> = { productIds: Array.from(selectedIds) };
       if (bulkAction === "brand" && bulkBrandId) body.brandId = bulkBrandId;
       if (bulkAction === "status") body.status = bulkStatus;
+      if (bulkAction === "category" && bulkCategoryId) body.categoryId = bulkCategoryId;
 
       const res = await fetch("/api/products/bulk", {
         method: "POST",
@@ -319,9 +354,11 @@ export default function StockPage() {
     Promise.all([
       fetch("/api/brands").then((r) => r.json()),
       fetch("/api/bins").then((r) => r.json()),
-    ]).then(([brandsRes, binsRes]) => {
+      fetch("/api/categories").then((r) => r.json()),
+    ]).then(([brandsRes, binsRes, catsRes]) => {
       if (brandsRes.success) setBrands(brandsRes.data);
       if (binsRes.success) setBins(binsRes.data);
+      if (catsRes.success) setCategories(catsRes.data);
     }).catch(() => {});
   }, []);
 
@@ -430,6 +467,14 @@ export default function StockPage() {
               <CheckSquare className="h-3.5 w-3.5" /> Select
             </button>
           )}
+          {userRole === "ADMIN" && !selectMode && classifyStep === "idle" && (
+            <button
+              onClick={() => handleAutoClassify(false)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200"
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" /> Classify
+            </button>
+          )}
           {selectMode && (
             <button onClick={exitSelectMode}
               className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white">
@@ -450,6 +495,43 @@ export default function StockPage() {
         <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-2.5 mb-2">
           <span className="text-xs text-green-700 font-medium">{bulkMessage}</span>
           <button onClick={() => setBulkMessage("")} className="text-green-500"><X className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
+
+      {/* Auto-Classify Preview */}
+      {classifyStep === "preview" && classifyPreview && (
+        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
+          <p className="text-xs font-semibold text-purple-800 mb-2">
+            Auto-Classification Preview — {classifyPreview.totalProducts} products ({classifyPreview.currentlyInGeneral} in &quot;General&quot;)
+          </p>
+          <div className="space-y-1.5 mb-3">
+            {Object.entries(classifyPreview.classification).map(([cat, data]) => (
+              <div key={cat}>
+                <p className="text-xs text-slate-700">
+                  <span className="font-medium">{cat}:</span> {data.count} items
+                </p>
+                <p className="text-[10px] text-slate-400 truncate">
+                  e.g. {data.samples.slice(0, 3).join(", ")}
+                </p>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => handleAutoClassify(true)}
+              className="px-4 py-1.5 bg-purple-700 text-white rounded-lg text-xs font-medium disabled:opacity-50">
+              Apply Classification
+            </button>
+            <button onClick={() => { setClassifyStep("idle"); setClassifyPreview(null); }}
+              className="px-3 py-1.5 border border-purple-300 text-purple-700 rounded-lg text-xs">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {classifyStep === "applying" && (
+        <div className="flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-lg p-2.5 mb-2">
+          <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-600" />
+          <span className="text-xs text-purple-700 font-medium">Classifying products...</span>
         </div>
       )}
 
@@ -848,12 +930,20 @@ export default function StockPage() {
 
             <div className="flex gap-2">
               <button
+                onClick={() => setBulkAction("category")}
+                className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors ${
+                  bulkAction === "category" ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                }`}
+              >
+                Category
+              </button>
+              <button
                 onClick={() => setBulkAction("brand")}
                 className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors ${
                   bulkAction === "brand" ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
                 }`}
               >
-                Change Brand
+                Brand
               </button>
               <button
                 onClick={() => setBulkAction("status")}
@@ -861,9 +951,31 @@ export default function StockPage() {
                   bulkAction === "status" ? "bg-blue-600 text-white" : "bg-slate-700 text-slate-300 hover:bg-slate-600"
                 }`}
               >
-                Change Status
+                Status
               </button>
             </div>
+
+            {bulkAction === "category" && (
+              <div className="flex gap-2">
+                <select
+                  value={bulkCategoryId}
+                  onChange={(e) => setBulkCategoryId(e.target.value)}
+                  className="flex-1 h-9 rounded-lg bg-slate-700 border-0 px-2 text-xs text-white focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select category...</option>
+                  {categories.filter(c => c.name !== "General").map((c) => (
+                    <option key={c.id} value={c.id}>{c.name} ({c._count.products})</option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleBulkApply}
+                  disabled={!bulkCategoryId || bulkLoading}
+                  className="px-4 py-2 bg-blue-600 rounded-lg text-xs font-medium disabled:opacity-50"
+                >
+                  {bulkLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Apply"}
+                </button>
+              </div>
+            )}
 
             {bulkAction === "brand" && (
               <div className="flex gap-2">
