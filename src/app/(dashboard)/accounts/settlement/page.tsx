@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Download, Plus, CheckCircle, AlertTriangle, Clock, ChevronRight } from "lucide-react";
+import { ArrowLeft, Download, Plus, CheckCircle, AlertTriangle, Clock, ChevronRight, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,11 +43,13 @@ export default function SettlementListPage() {
   const role = (session?.user as { role?: string })?.role || "";
   const canAccess = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
 
+  const isAdmin = role === "ADMIN";
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetching, setFetching] = useState(false);
   const [creating, setCreating] = useState(false);
   const [fetchDays, setFetchDays] = useState(7);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const loadSettlements = () => {
     setLoading(true);
@@ -106,6 +108,24 @@ export default function SettlementListPage() {
     } finally {
       setCreating(false);
     }
+  };
+
+  const deleteSettlement = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm("Delete this settlement? Sessions will be unlinked (not deleted) and can be re-used.")) return;
+    setDeleting(id);
+    try {
+      const res = await fetch("/api/pos/settlement", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json();
+      if (data.success) loadSettlements();
+      else alert(data.error || "Failed to delete");
+    } catch { alert("Network error"); }
+    finally { setDeleting(null); }
   };
 
   if (sessionStatus === "loading") {
@@ -201,6 +221,15 @@ export default function SettlementListPage() {
                             <p className="text-[10px] text-green-600">{formatCurrency(s.matchedAmount)} matched</p>
                           )}
                         </div>
+                        {isAdmin && (
+                          <button
+                            onClick={(e) => deleteSettlement(s.id, e)}
+                            disabled={deleting === s.id}
+                            className="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                          >
+                            <Trash2 className={`h-3.5 w-3.5 ${deleting === s.id ? "text-slate-300" : "text-red-400 hover:text-red-600"}`} />
+                          </button>
+                        )}
                         <ChevronRight className="h-4 w-4 text-slate-400" />
                       </div>
                     </div>

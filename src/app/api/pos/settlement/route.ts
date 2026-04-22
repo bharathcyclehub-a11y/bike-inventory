@@ -98,3 +98,59 @@ export async function POST(req: NextRequest) {
     return errorResponse(error instanceof Error ? error.message : "Failed to create settlement", 500);
   }
 }
+
+// DELETE — Delete a settlement and its linked sessions (admin only)
+export async function DELETE(req: NextRequest) {
+  try {
+    await requireAuth(["ADMIN"]);
+    const body = await req.json();
+    const { id, deleteType, sessionId } = body as { id?: string; deleteType?: "settlement" | "session"; sessionId?: string };
+
+    // Delete a single POS session
+    if (deleteType === "session" && sessionId) {
+      const session = await prisma.posSession.findUnique({ where: { id: sessionId } });
+      if (!session) return errorResponse("Session not found", 404);
+
+      await prisma.posSession.delete({ where: { id: sessionId } });
+      return successResponse({ deleted: "session" });
+    }
+
+    // Delete a settlement
+    if (!id) return errorResponse("Settlement ID required", 400);
+
+    const settlement = await prisma.dailySettlement.findUnique({
+      where: { id },
+      include: { matches: true, sessions: true },
+    });
+    if (!settlement) return errorResponse("Settlement not found", 404);
+
+    await prisma.$transaction(async (tx) => {
+      // Restore matched bank transactions
+      for (const m of settlement.matches) {
+        if (m.bankTxnId) {
+          await tx.bankTransaction.update({
+            where: { id: m.bankTxnId },
+            data: { matchStatus: "UNMATCHED", processedAt: null },
+          });
+        }
+      }
+
+      // Delete matches
+      await tx.settlementMatch.deleteMany({ where: { settlementId: id } });
+
+      // Unlink sessions (don't delete them — they can be re-used)
+      await tx.posSession.updateMany({
+        where: { settlementId: id },
+        data: { settlementId: null },
+      });
+
+      // Delete settlement
+      await tx.dailySettlement.delete({ where: { id } });
+    });
+
+    return successResponse({ deleted: "settlement" });
+  } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    return errorResponse(error instanceof Error ? error.message : "Failed to delete", 500);
+  }
+}
