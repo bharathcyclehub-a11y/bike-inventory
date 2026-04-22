@@ -93,7 +93,7 @@ export default function InboundPage() {
   const [isLegacy, setIsLegacy] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<StatusFilter>("IN_TRANSIT");
+  const [filter, setFilter] = useState<StatusFilter>("ALL");
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
   const [showSearch, setShowSearch] = useState(false);

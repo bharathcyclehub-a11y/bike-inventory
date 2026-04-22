@@ -178,9 +178,15 @@ export async function POST(req: NextRequest) {
             });
           }
 
-          // Dedup
-          const exists = await prisma.vendorBill.findFirst({ where: { billNo: String(d.billNumber) } });
-          if (exists) continue;
+          // Dedup: check VendorBill AND legacy InventoryTransactions AND InboundShipment
+          const existsVB = await prisma.vendorBill.findFirst({ where: { billNo: String(d.billNumber) } });
+          if (existsVB) continue;
+          const existsShipment = await prisma.inboundShipment.findFirst({ where: { billNo: String(d.billNumber) } });
+          if (existsShipment) continue;
+          const existsLegacy = await prisma.inventoryTransaction.findFirst({
+            where: { type: "INWARD", referenceNo: String(d.billNumber) },
+          });
+          if (existsLegacy) continue;
 
           const total = Number(d.total || 0);
           const balance = Number(d.balance || 0);
