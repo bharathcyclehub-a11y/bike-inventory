@@ -83,6 +83,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
   const [counts, setCounts] = useState<Record<string, number | null>>({});
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState("");
   const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [tab, setTab] = useState<"uncounted" | "counted" | "all">("uncounted");
   const [tabCounts, setTabCounts] = useState({ total: 0, counted: 0, uncounted: 0 });
@@ -224,7 +225,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         setTimeout(() => setAutoSaveStatus("idle"), 2000);
         fetchSummary();
       }
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Auto-save failed"); }
   };
 
   const handleManualSave = async () => {
@@ -252,7 +253,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         fetchSummary();
         fetchItems();
       }
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Save failed"); }
     finally { setSaving(false); }
   };
 
@@ -281,7 +282,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       await fetch(`/api/stock-counts/${id}/items`, { method: "PATCH" });
       setStaleCount(0);
       fetchItems();
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Refresh failed"); }
     finally { setRefreshing(false); }
   };
 
@@ -347,6 +348,13 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <div>
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <Link href="/stock-audit" className="p-1">

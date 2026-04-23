@@ -70,6 +70,7 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
   const userRole = (session?.user as { role?: string } | undefined)?.role;
   const canApprove = userRole === "ADMIN" || userRole === "ACCOUNTS_MANAGER";
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState("");
   const [data, setData] = useState<StockCountData | null>(null);
   const [items, setItems] = useState<StockCountItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -131,7 +132,7 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
         body: JSON.stringify({ status: "APPROVED" }),
       });
       router.push(`/stock-audit/${id}`);
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Approve failed"); }
     finally { setActionLoading(false); }
   };
 
@@ -147,7 +148,7 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
         body: JSON.stringify({ status: "REJECTED", rejectionReason: reason }),
       });
       router.push(`/stock-audit/${id}`);
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Reject failed"); }
     finally { setActionLoading(false); setShowRejectModal(false); }
   };
 
@@ -159,6 +160,13 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="pb-4">
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 mb-3">
         <Link href={`/stock-audit/${id}`} className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <div className="flex-1 min-w-0">

@@ -40,6 +40,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   const [cdDaysValue, setCdDaysValue] = useState("");
   const [cdPctValue, setCdPctValue] = useState("");
   const [savingCd, setSavingCd] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   const loadVendor = useCallback(() => {
     fetch(`/api/vendors/${id}`)
@@ -110,6 +111,13 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
 
   return (
     <div>
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 mb-4">
         <Link href="/vendors" className="p-1">
           <ArrowLeft className="h-5 w-5 text-slate-600" />
@@ -225,7 +233,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                           setVendor({ ...vendor, openingBalance: parseFloat(balanceValue) || 0 });
                           setEditingBalance(false);
                         }
-                      } catch {} finally { setSavingBalance(false); }
+                      } catch (e) { setActionError(e instanceof Error ? e.message : "Save balance failed"); } finally { setSavingBalance(false); }
                     }}
                     disabled={savingBalance}
                     className="flex items-center gap-1 bg-slate-900 text-white px-2.5 py-1 rounded-md text-xs font-medium disabled:opacity-50"
@@ -300,7 +308,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                           setVendor({ ...vendor, paymentTermDays: val });
                           setEditingTerms(false);
                         }
-                      } catch {} finally { setSavingTerms(false); }
+                      } catch (e) { setActionError(e instanceof Error ? e.message : "Save terms failed"); } finally { setSavingTerms(false); }
                     }}
                     disabled={savingTerms}
                     className="p-1 bg-slate-900 text-white rounded-md disabled:opacity-50"
@@ -361,7 +369,7 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
                         }),
                       }).then(r => r.json());
                       if (res.success) { loadVendor(); setEditingCd(false); }
-                    } catch {} finally { setSavingCd(false); }
+                    } catch (e) { setActionError(e instanceof Error ? e.message : "Save cash discount failed"); } finally { setSavingCd(false); }
                   }}
                   disabled={savingCd}
                   className="p-1 bg-slate-900 text-white rounded-md disabled:opacity-50"

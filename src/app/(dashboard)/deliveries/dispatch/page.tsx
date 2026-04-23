@@ -28,6 +28,7 @@ export default function DispatchPage() {
   const [selectedOut, setSelectedOut] = useState<Set<string>>(new Set());
   const [dispatching, setDispatching] = useState(false);
   const [delivering, setDelivering] = useState(false);
+  const [actionError, setActionError] = useState("");
   const [tab, setTab] = useState<"dispatch" | "return">("dispatch");
 
   useEffect(() => {
@@ -67,7 +68,7 @@ export default function DispatchPage() {
       });
       setDeliveries((prev) => prev.filter((d) => !selected.has(d.id)));
       setSelected(new Set());
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Dispatch failed"); }
     finally { setDispatching(false); }
   };
 
@@ -82,7 +83,7 @@ export default function DispatchPage() {
       });
       setOutDeliveries((prev) => prev.filter((d) => !selectedOut.has(d.id)));
       setSelectedOut(new Set());
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Mark delivered failed"); }
     finally { setDelivering(false); }
   };
 
@@ -100,6 +101,13 @@ export default function DispatchPage() {
 
   return (
     <div>
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 mb-3">
         <Link href="/deliveries" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <h1 className="text-lg font-bold text-slate-900">Batch Dispatch</h1>

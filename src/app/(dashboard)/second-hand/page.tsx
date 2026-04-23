@@ -58,6 +58,7 @@ export default function SecondHandPage() {
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const debouncedSearch = useDebounce(search);
+  const [actionError, setActionError] = useState("");
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -89,7 +90,7 @@ export default function SecondHandPage() {
         body: JSON.stringify({ isArchived: true }),
       });
       fetchData();
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Archive failed"); }
   };
 
   return (
@@ -107,6 +108,13 @@ export default function SecondHandPage() {
           </Link>
         )}
       </div>
+
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
 
       {/* Stats */}
       {stats && (

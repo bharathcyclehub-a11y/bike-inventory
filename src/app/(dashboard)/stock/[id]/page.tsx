@@ -85,6 +85,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState("");
   const [editData, setEditData] = useState<Record<string, unknown>>({ name: "", color: "", size: "", sellingPrice: 0, mrp: 0, reorderLevel: 0, brandId: "", binId: "" });
   const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
   const [bins, setBins] = useState<{ id: string; code: string; name: string; location: string }[]>([]);
@@ -158,12 +159,19 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
         setProduct(data.data);
         setEditing(false);
       }
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Save failed"); }
     finally { setSaving(false); }
   }
 
   return (
     <div>
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 mb-4">
         <Link href="/stock" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <h1 className="text-lg font-bold text-slate-900 truncate flex-1">{product.name}</h1>

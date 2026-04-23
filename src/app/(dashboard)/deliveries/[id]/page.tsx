@@ -68,6 +68,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const [data, setData] = useState<DeliveryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   // Schedule form
   const [showSchedule, setShowSchedule] = useState(false);
@@ -135,7 +136,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         body: JSON.stringify({ status, ...extra }),
       });
       fetchData();
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Action failed"); }
     finally { setActionLoading(false); }
   };
 
@@ -156,7 +157,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       });
       setShowSchedule(false);
       fetchData();
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Schedule failed"); }
     finally { setActionLoading(false); }
   };
 
@@ -173,7 +174,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         }),
       });
       fetchData();
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Save courier failed"); }
     finally { setActionLoading(false); }
   };
 
@@ -188,7 +189,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       });
       setEditingDate(false);
       fetchData();
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Date change failed"); }
     finally { setActionLoading(false); }
   };
 
@@ -244,7 +245,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         body: JSON.stringify({ [field]: true }),
       });
       fetchData();
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "WhatsApp update failed"); }
   };
 
   const sendScheduledWhatsApp = () => {
@@ -269,7 +270,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         body: JSON.stringify({ freeAccessories }),
       });
       fetchData();
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Save accessories failed"); }
   };
 
   const sendDispatchedWhatsApp = () => {
@@ -321,6 +322,13 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
   return (
     <div>
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-3 mb-3">
         <Link href="/deliveries" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>

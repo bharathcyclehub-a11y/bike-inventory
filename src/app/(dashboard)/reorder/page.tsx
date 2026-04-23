@@ -53,6 +53,7 @@ export default function ReorderDashboardPage() {
   const [reorderLevels, setReorderLevels] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
+  const [actionError, setActionError] = useState("");
   const [selectedForPO, setSelectedForPO] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(() => {
@@ -109,7 +110,7 @@ export default function ReorderDashboardPage() {
         setTimeout(() => setSavedMsg(""), 2000);
         fetchData();
       }
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Save levels failed"); }
     finally { setSaving(false); }
   };
 
@@ -190,6 +191,13 @@ export default function ReorderDashboardPage() {
           <Badge variant="info">{selectedForPO.size} selected</Badge>
         )}
       </div>
+
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-3 gap-2 mb-3">

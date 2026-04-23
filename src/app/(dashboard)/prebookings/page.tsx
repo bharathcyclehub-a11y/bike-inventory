@@ -81,6 +81,8 @@ export default function PreBookingsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
+  const [actionError, setActionError] = useState("");
+
   // Zoho search
   const [searching, setSearching] = useState(false);
 
@@ -201,7 +203,7 @@ export default function PreBookingsPage() {
     try {
       const res = await fetch("/api/prebookings/available-items").then((r) => r.json());
       if (res.success) setAvailableItems(res.data || []);
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Failed to load items"); }
     finally { setLoadingItems(false); }
   };
 
@@ -259,6 +261,13 @@ export default function PreBookingsPage() {
           )}
         </div>
       </div>
+
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
 
       {matchResult && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 mb-3">

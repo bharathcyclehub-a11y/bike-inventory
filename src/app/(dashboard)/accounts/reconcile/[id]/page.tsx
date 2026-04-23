@@ -118,6 +118,7 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
   const [filter, setFilter] = useState<FilterKey>("UNMATCHED");
   const [processing, setProcessing] = useState<string>("");
   const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [pendingBills, setPendingBills] = useState<PendingBill[]>([]);
@@ -171,7 +172,7 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
         setExpenseTxn(null);
         fetchData();
       }
-    } catch {} finally { setProcessing(""); }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Action failed"); } finally { setProcessing(""); }
   };
 
   const handleBulkAction = async (action: string, extra?: Record<string, unknown>) => {
@@ -190,7 +191,7 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
         setBulkVendorId("");
         fetchData();
       }
-    } catch {} finally { setBulkProcessing(false); }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Bulk action failed"); } finally { setBulkProcessing(false); }
   };
 
   const handleManualPayment = (txnId: string) => {
@@ -413,6 +414,13 @@ export default function ReconcilePage({ params }: { params: Promise<{ id: string
 
   return (
     <div className="pb-20">
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 mb-3">
         <Link href="/accounts/bank-upload" className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <div className="flex-1">

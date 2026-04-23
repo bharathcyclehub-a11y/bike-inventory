@@ -261,7 +261,7 @@ export default function DeliveriesPage() {
       setEditingDateId(null);
       setEditDate("");
       fetchData();
-    } catch { /* */ }
+    } catch (e) { setFetchError(e instanceof Error ? e.message : "Save date failed"); }
   };
 
   // ─── QUICK SEARCH (invoice no / phone → direct Zoho search, no pipeline) ───

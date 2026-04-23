@@ -41,6 +41,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
   const [po, setPo] = useState<PODetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState("");
 
   useEffect(() => {
     fetch(`/api/purchase-orders/${id}`)
@@ -56,7 +57,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
       const res = await fetch(`/api/purchase-orders/${id}/approve`, { method: "POST" });
       const data = await res.json();
       if (data.success) setPo((prev) => prev ? { ...prev, status: "APPROVED" } : prev);
-    } catch {}
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Approve failed"); }
     setActionLoading(false);
   }
 
@@ -70,7 +71,7 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
       });
       const data = await res.json();
       if (data.success) setPo((prev) => prev ? { ...prev, status } : prev);
-    } catch {}
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Status change failed"); }
     setActionLoading(false);
   }
 
@@ -105,6 +106,13 @@ export default function PurchaseOrderDetailPage({ params }: { params: Promise<{ 
 
   return (
     <div>
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
       <div className="flex items-center gap-3 mb-4">
         <Link href="/purchase-orders" className="p-1">
           <ArrowLeft className="h-5 w-5 text-slate-600" />
