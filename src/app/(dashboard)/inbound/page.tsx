@@ -108,6 +108,7 @@ export default function InboundPage() {
   const [fetchPullId, setFetchPullId] = useState("");
   const [fetchDays, setFetchDays] = useState<number>(7);
   const [fetchCustomFrom, setFetchCustomFrom] = useState("");
+  const [billSearchNo, setBillSearchNo] = useState("");
   const [billPreviews, setBillPreviews] = useState<ZohoBillPreview[]>([]);
   const [selectedBills, setSelectedBills] = useState<Set<string>>(new Set());
 
@@ -137,7 +138,7 @@ export default function InboundPage() {
         }
         if (statsRes.success) setStats(statsRes.data);
       })
-      .catch(() => {})
+      .catch((e) => { setFetchError(e instanceof Error ? e.message : "Failed to load shipments"); })
       .finally(() => setLoading(false));
   }, [filter, debouncedSearch, dateFrom, dateTo]);
 
@@ -168,20 +169,30 @@ export default function InboundPage() {
       const pullId = initRes.data.pullId;
       setFetchPullId(pullId);
 
-      let fromDate: string;
-      if (fetchDays === -1 && fetchCustomFrom) {
+      const isBillSearch = billSearchNo.trim().length > 0;
+      let fromDate: string | undefined;
+      let searchText: string | undefined;
+      let label: string;
+
+      if (isBillSearch) {
+        searchText = billSearchNo.trim();
+        label = `"${searchText}"`;
+        setFetchProgress(`Searching for bill ${label}...`);
+      } else if (fetchDays === -1 && fetchCustomFrom) {
         fromDate = fetchCustomFrom;
+        label = "custom range";
+        setFetchProgress(`Pulling bills (${label})...`);
       } else {
         const fromDateObj = new Date();
         fromDateObj.setDate(fromDateObj.getDate() - fetchDays);
         fromDate = fromDateObj.toISOString().slice(0, 10);
+        label = `last ${fetchDays} days`;
+        setFetchProgress(`Pulling bills (${label})...`);
       }
-      const label = fetchDays === -1 ? "custom range" : `last ${fetchDays} days`;
-      setFetchProgress(`Pulling bills (${label})...`);
 
       const billRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "bills", pullId, fromDate }),
+        body: JSON.stringify({ step: "bills", pullId, fromDate, searchText }),
       }, 60000).then(r => r.json());
       if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
 
@@ -208,6 +219,7 @@ export default function InboundPage() {
       setFetchStep(billItems.length > 0 ? "selecting" : "idle");
       if (billItems.length === 0) {
         setFetchError(billsFound > 0 ? `${billsFound} found but all already imported` : `No new bills found (${label})`);
+        if (isBillSearch) setBillSearchNo("");
       }
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
@@ -243,6 +255,7 @@ export default function InboundPage() {
       setFetchStep("idle");
       setBillPreviews([]);
       setSelectedBills(new Set());
+      setBillSearchNo("");
       fetchData();
       if (errors.length > 0) {
         setFetchError(`Imported ${imported} bill(s). Warnings: ${errors.join("; ")}`);
@@ -282,47 +295,70 @@ export default function InboundPage() {
       {/* Fetch Date Picker */}
       {fetchStep === "pickDate" && (
         <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
-          <p className="text-xs font-medium text-slate-700 mb-2">Fetch inbound bills from Zoho within:</p>
-          <div className="flex flex-wrap gap-2 mb-3">
-            {[
-              { label: "3 days", value: 3 },
-              { label: "7 days", value: 7 },
-              { label: "14 days", value: 14 },
-              { label: "30 days", value: 30 },
-              { label: "Custom", value: -1 },
-            ].map((opt) => (
+          {/* Bill Number Search */}
+          <div className="mb-3">
+            <p className="text-xs font-medium text-slate-700 mb-1.5">Search specific bill:</p>
+            <div className="flex gap-2">
+              <Input
+                placeholder="e.g. EB/10311/FY27"
+                value={billSearchNo}
+                onChange={(e) => setBillSearchNo(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && billSearchNo.trim()) handleFetchBills(); }}
+                className="flex-1 text-xs h-8"
+              />
               <button
-                key={opt.value}
-                onClick={() => setFetchDays(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                  fetchDays === opt.value
-                    ? "bg-slate-900 text-white border-slate-900"
-                    : "bg-white text-slate-600 border-slate-300 hover:border-slate-400"
-                }`}
+                onClick={handleFetchBills}
+                disabled={!billSearchNo.trim()}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white disabled:opacity-50 shrink-0"
               >
-                {opt.label}
+                <Search className="h-3.5 w-3.5" /> Find
               </button>
-            ))}
-          </div>
-          {fetchDays === -1 && (
-            <div className="flex gap-2 mb-3">
-              <div>
-                <label className="text-[10px] text-slate-500 block mb-0.5">From</label>
-                <input type="date" value={fetchCustomFrom} onChange={(e) => setFetchCustomFrom(e.target.value)}
-                  className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
-              </div>
             </div>
-          )}
+          </div>
+
+          <div className="border-t border-slate-200 pt-3">
+            <p className="text-xs font-medium text-slate-700 mb-2">Or fetch by date range:</p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {[
+                { label: "3 days", value: 3 },
+                { label: "7 days", value: 7 },
+                { label: "14 days", value: 14 },
+                { label: "30 days", value: 30 },
+                { label: "Custom", value: -1 },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setFetchDays(opt.value)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                    fetchDays === opt.value
+                      ? "bg-slate-900 text-white border-slate-900"
+                      : "bg-white text-slate-600 border-slate-300 hover:border-slate-400"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+            {fetchDays === -1 && (
+              <div className="flex gap-2 mb-3">
+                <div>
+                  <label className="text-[10px] text-slate-500 block mb-0.5">From</label>
+                  <input type="date" value={fetchCustomFrom} onChange={(e) => setFetchCustomFrom(e.target.value)}
+                    className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
+                </div>
+              </div>
+            )}
+          </div>
           <div className="flex gap-2">
             <button
-              onClick={handleFetchBills}
+              onClick={() => { setBillSearchNo(""); handleFetchBills(); }}
               disabled={fetchDays === -1 && !fetchCustomFrom}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
             >
               <Cloud className="h-3.5 w-3.5" /> Fetch
             </button>
             <button
-              onClick={() => setFetchStep("idle")}
+              onClick={() => { setFetchStep("idle"); setBillSearchNo(""); }}
               className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-500 border border-slate-300"
             >
               Cancel
@@ -341,7 +377,11 @@ export default function InboundPage() {
 
       {/* Fetch Error */}
       {fetchError && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-2 text-xs text-amber-700">
+        <div className={`rounded-lg p-2.5 mb-2 text-xs ${
+          fetchError.toLowerCase().includes("fail") || fetchError.toLowerCase().includes("error") || fetchError.toLowerCase().includes("timed out")
+            ? "bg-red-50 border border-red-200 text-red-700"
+            : "bg-amber-50 border border-amber-200 text-amber-700"
+        }`}>
           {fetchError}
           <button onClick={() => setFetchError("")} className="ml-2 underline">dismiss</button>
         </div>
