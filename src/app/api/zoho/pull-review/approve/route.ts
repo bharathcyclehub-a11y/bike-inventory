@@ -212,17 +212,29 @@ export async function POST(req: NextRequest) {
             if (await z.init()) zohoForItems = z;
           } catch { /* best effort */ }
 
-          for (const li of lineItems) {
-            let product = await prisma.product.findFirst({
-              where: li.sku ? { sku: li.sku } : { name: { contains: li.name, mode: "insensitive" } },
-              select: { id: true, currentStock: true },
-            });
+          for (let liIdx = 0; liIdx < lineItems.length; liIdx++) {
+            const li = lineItems[liIdx];
+            const zohoItemId = (li as Record<string, unknown>).item_id as string | undefined;
+
+            // Try to find existing product: by zohoItemId, then SKU, then name
+            let product = zohoItemId
+              ? await prisma.product.findFirst({ where: { zohoItemId }, select: { id: true, currentStock: true } })
+              : null;
+            if (!product && li.sku) {
+              product = await prisma.product.findFirst({ where: { sku: li.sku }, select: { id: true, currentStock: true } });
+            }
+            if (!product) {
+              product = await prisma.product.findFirst({
+                where: { name: { contains: li.name.substring(0, 20), mode: "insensitive" } },
+                select: { id: true, currentStock: true },
+              });
+            }
+
             if (!product) {
               // Fetch item details from Zoho for category, HSN, tax
               let zohoCategoryName = "";
               let zohoHsn = "";
               let zohoTax = 18;
-              const zohoItemId = (li as Record<string, unknown>).item_id as string | undefined;
               if (zohoForItems && zohoItemId) {
                 try {
                   const detail = await zohoForItems.getItem(zohoItemId);
@@ -241,7 +253,21 @@ export async function POST(req: NextRequest) {
                 productCategory = cat;
               }
 
-              const sku = li.sku || `AUTO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
+              // Generate unique SKU — check for conflicts
+              let sku = li.sku || "";
+              if (sku) {
+                const skuExists = await prisma.product.findFirst({ where: { sku }, select: { id: true } });
+                if (skuExists) sku = ""; // clear so we auto-generate
+              }
+              if (!sku) {
+                sku = `AUTO-${Date.now().toString(36).toUpperCase()}${liIdx}${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
+              }
+
+              // Ensure zohoItemId uniqueness
+              const safeZohoItemId = zohoItemId
+                ? (await prisma.product.findFirst({ where: { zohoItemId }, select: { id: true } })) ? null : zohoItemId
+                : null;
+
               product = await prisma.product.create({
                 data: {
                   name: li.name,
@@ -254,7 +280,7 @@ export async function POST(req: NextRequest) {
                   currentStock: 0,
                   brandId: itemBrand.id,
                   categoryId: productCategory.id,
-                  zohoItemId: zohoItemId || null,
+                  zohoItemId: safeZohoItemId,
                 },
                 select: { id: true, currentStock: true },
               });
