@@ -191,18 +191,43 @@ export async function POST(req: NextRequest) {
           const total = Number(d.total || 0);
           const balance = Number(d.balance || 0);
 
-          // Match products for line items — create line items for ALL (productId null if unmatched)
-          const matchedProducts: Array<{ li: typeof lineItems[0]; product: { id: string; currentStock: number } | null }> = [];
+          // Match products for line items — auto-create if not found
+          const matchedProducts: Array<{ li: typeof lineItems[0]; product: { id: string; currentStock: number } }> = [];
+
+          // Resolve brand for new products (use vendor name as brand)
+          const billVendorName = String(d.vendorName).trim();
+          let itemBrand = await prisma.brand.findFirst({ where: { name: { equals: billVendorName, mode: "insensitive" } } });
+          if (!itemBrand) itemBrand = await prisma.brand.create({ data: { name: billVendorName } });
+
+          // Default category for auto-created products
+          let defaultCategory = await prisma.category.findFirst({ where: { name: "Uncategorized" } });
+          if (!defaultCategory) defaultCategory = await prisma.category.create({ data: { name: "Uncategorized", description: "Auto-created from bill import" } });
 
           for (const li of lineItems) {
-            const product = await prisma.product.findFirst({
+            let product = await prisma.product.findFirst({
               where: li.sku ? { sku: li.sku } : { name: { contains: li.name, mode: "insensitive" } },
               select: { id: true, currentStock: true },
             });
             if (!product) {
-              results.errors.push(`Bill ${d.billNumber}: product not found "${li.name}"${li.sku ? ` (${li.sku})` : ""} — will need manual match before delivery`);
+              // Auto-create product from bill line item
+              const sku = li.sku || `AUTO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
+              product = await prisma.product.create({
+                data: {
+                  name: li.name,
+                  sku,
+                  costPrice: li.rate,
+                  sellingPrice: li.rate,
+                  mrp: li.rate,
+                  gstRate: 18,
+                  currentStock: 0,
+                  brandId: itemBrand.id,
+                  categoryId: defaultCategory.id,
+                },
+                select: { id: true, currentStock: true },
+              });
+              results.errors.push(`Bill ${d.billNumber}: auto-created product "${li.name}" (${sku})`);
             }
-            matchedProducts.push({ li, product: product || null });
+            matchedProducts.push({ li, product });
           }
 
           // Calculate due date: use Zoho's dueDate unless it equals billDate (missing), then use vendor's payment terms
@@ -289,7 +314,7 @@ export async function POST(req: NextRequest) {
                   );
                   return {
                     productName: li.name,
-                    productId: product?.id || null,
+                    productId: product.id,
                     sku: li.sku || null,
                     quantity: li.quantity,
                     rate: li.rate,
