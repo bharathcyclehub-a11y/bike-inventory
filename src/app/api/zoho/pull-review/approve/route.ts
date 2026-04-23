@@ -156,7 +156,7 @@ export async function POST(req: NextRequest) {
               if (await zoho.init()) {
                 const detail = await zoho.getBill(preview.zohoId);
                 lineItems = (detail.bill?.line_items || []).map((li) => ({
-                  name: li.name, sku: li.sku || "", quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
+                  name: li.name, sku: li.sku || "", quantity: li.quantity, rate: li.rate, itemTotal: li.item_total, item_id: li.item_id,
                 }));
               }
             } catch (e) {
@@ -199,9 +199,18 @@ export async function POST(req: NextRequest) {
           let itemBrand = await prisma.brand.findFirst({ where: { name: { equals: billVendorName, mode: "insensitive" } } });
           if (!itemBrand) itemBrand = await prisma.brand.create({ data: { name: billVendorName } });
 
-          // Default category for auto-created products
+          // Default category fallback
           let defaultCategory = await prisma.category.findFirst({ where: { name: "Uncategorized" } });
           if (!defaultCategory) defaultCategory = await prisma.category.create({ data: { name: "Uncategorized", description: "Auto-created from bill import" } });
+
+          // Init Zoho client for fetching item details (category, HSN, etc.)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          let zohoForItems: any = null;
+          try {
+            const { ZohoClient: ZC } = await import("@/lib/zoho");
+            const z = new ZC();
+            if (await z.init()) zohoForItems = z;
+          } catch { /* best effort */ }
 
           for (const li of lineItems) {
             let product = await prisma.product.findFirst({
@@ -209,7 +218,29 @@ export async function POST(req: NextRequest) {
               select: { id: true, currentStock: true },
             });
             if (!product) {
-              // Auto-create product from bill line item
+              // Fetch item details from Zoho for category, HSN, tax
+              let zohoCategoryName = "";
+              let zohoHsn = "";
+              let zohoTax = 18;
+              const zohoItemId = (li as Record<string, unknown>).item_id as string | undefined;
+              if (zohoForItems && zohoItemId) {
+                try {
+                  const detail = await zohoForItems.getItem(zohoItemId);
+                  const item = detail.item || {};
+                  zohoCategoryName = String(item.category_name || "").trim();
+                  zohoHsn = String(item.hsn_or_sac || "").trim();
+                  zohoTax = Number(item.tax_percentage || 18);
+                } catch { /* best effort */ }
+              }
+
+              // Resolve category from Zoho or fallback
+              let productCategory = defaultCategory;
+              if (zohoCategoryName) {
+                let cat = await prisma.category.findFirst({ where: { name: zohoCategoryName } });
+                if (!cat) cat = await prisma.category.create({ data: { name: zohoCategoryName, description: `From Zoho: ${zohoCategoryName}` } });
+                productCategory = cat;
+              }
+
               const sku = li.sku || `AUTO-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).substring(2, 5).toUpperCase()}`;
               product = await prisma.product.create({
                 data: {
@@ -218,14 +249,16 @@ export async function POST(req: NextRequest) {
                   costPrice: li.rate,
                   sellingPrice: li.rate,
                   mrp: li.rate,
-                  gstRate: 18,
+                  gstRate: zohoTax,
+                  hsnCode: zohoHsn || null,
                   currentStock: 0,
                   brandId: itemBrand.id,
-                  categoryId: defaultCategory.id,
+                  categoryId: productCategory.id,
+                  zohoItemId: zohoItemId || null,
                 },
                 select: { id: true, currentStock: true },
               });
-              results.errors.push(`Bill ${d.billNumber}: auto-created product "${li.name}" (${sku})`);
+              results.errors.push(`Bill ${d.billNumber}: auto-created "${li.name}" (${sku}) in ${productCategory.name}`);
             }
             matchedProducts.push({ li, product });
           }

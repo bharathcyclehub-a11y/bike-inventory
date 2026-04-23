@@ -218,9 +218,18 @@ export default function InboundPage() {
       setBillPreviews(billItems);
       setSelectedBills(new Set(billItems.map((b: ZohoBillPreview) => b.id)));
       setFetchStep(billItems.length > 0 ? "selecting" : "idle");
+      // Show dedup info (already imported bills)
+      const fetchErrors = billRes.data.errors || [];
       if (billItems.length === 0) {
-        setFetchError(billsFound > 0 ? `${billsFound} found but all already imported` : `No new bills found (${label})`);
+        if (fetchErrors.length > 0) {
+          setFetchError(fetchErrors.join("\n"));
+        } else {
+          setFetchError(billsFound > 0 ? `${billsFound} found but all already imported` : `No new bills found (${label})`);
+        }
         if (isBillSearch) setBillSearchNo("");
+      } else if (fetchErrors.length > 0) {
+        // Some new + some already imported
+        setFetchError(fetchErrors.join("\n"));
       }
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
@@ -383,8 +392,10 @@ export default function InboundPage() {
             ? "bg-red-50 border border-red-200 text-red-700"
             : "bg-amber-50 border border-amber-200 text-amber-700"
         }`}>
-          {fetchError}
-          <button onClick={() => setFetchError("")} className="ml-2 underline">dismiss</button>
+          {fetchError.split("\n").map((line, i) => (
+            <p key={i}>{line}</p>
+          ))}
+          <button onClick={() => setFetchError("")} className="mt-1 underline">dismiss</button>
         </div>
       )}
 

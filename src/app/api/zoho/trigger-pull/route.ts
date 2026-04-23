@@ -279,7 +279,10 @@ export async function POST(req: NextRequest) {
       let source = "none";
 
       try {
-        const billsFromDate = fromDate || todayStr;
+        // Enforce minimum date: April 1 of current FY
+        const fyStart = "2026-04-01";
+        let billsFromDate = fromDate || todayStr;
+        if (billsFromDate < fyStart) billsFromDate = fyStart;
 
         // Use Zoho Books for bills (Inventory token lacks bills scope)
         {
@@ -304,7 +307,7 @@ export async function POST(req: NextRequest) {
           const billNumbers = bills.map((b: { bill_number: string }) => b.bill_number);
           const existingBills = await prisma.vendorBill.findMany({
             where: { billNo: { in: billNumbers } },
-            select: { billNo: true, id: true, inboundShipment: { select: { id: true } }, _count: { select: { payments: true } } },
+            select: { billNo: true, id: true, inboundShipment: { select: { id: true, shipmentNo: true, status: true } }, _count: { select: { payments: true } } },
           });
           // Auto-cleanup orphaned VendorBills (no shipment + no payments) so they can be re-fetched
           const orphanedBillIds = existingBills
@@ -314,12 +317,24 @@ export async function POST(req: NextRequest) {
             await prisma.vendorBill.deleteMany({ where: { id: { in: orphanedBillIds } } });
           }
           // Only block bills that still have a shipment or payments
-          const existingSet = new Set(
+          const existingMap = new Map(
             existingBills
               .filter((b) => b.inboundShipment || b._count.payments > 0)
-              .map((b) => b.billNo)
+              .map((b) => [b.billNo, b])
           );
-          const newBills = bills.filter((b: { bill_number: string }) => !existingSet.has(b.bill_number));
+          const newBills = bills.filter((b: { bill_number: string }) => !existingMap.has(b.bill_number));
+
+          // Report already-imported bills with location info
+          const skippedBills = bills.filter((b: { bill_number: string }) => existingMap.has(b.bill_number));
+          for (const sb of skippedBills) {
+            const existing = existingMap.get((sb as { bill_number: string }).bill_number);
+            const shipment = existing?.inboundShipment;
+            if (shipment) {
+              errors.push(`${(sb as { bill_number: string }).bill_number}: already imported → ${shipment.shipmentNo} (${shipment.status})`);
+            } else {
+              errors.push(`${(sb as { bill_number: string }).bill_number}: already imported (in accounts)`);
+            }
+          }
 
           if (newBills.length > 0) {
             // Clean up old preview records for these bills (from previous pulls) so they aren't blocked
