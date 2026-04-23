@@ -191,8 +191,8 @@ export async function POST(req: NextRequest) {
           const total = Number(d.total || 0);
           const balance = Number(d.balance || 0);
 
-          // Match products for line items, skipping any missing ones
-          const matchedProducts: Array<{ li: typeof lineItems[0]; product: { id: string; currentStock: number } }> = [];
+          // Match products for line items — create line items for ALL (productId null if unmatched)
+          const matchedProducts: Array<{ li: typeof lineItems[0]; product: { id: string; currentStock: number } | null }> = [];
 
           for (const li of lineItems) {
             const product = await prisma.product.findFirst({
@@ -200,13 +200,9 @@ export async function POST(req: NextRequest) {
               select: { id: true, currentStock: true },
             });
             if (!product) {
-              // Skip missing product — admin must create it manually via Items import
-              const ref = li.sku || li.name;
-              console.warn(`Product not found: ${ref} — skipping`);
-              results.errors.push(`Bill ${d.billNumber}: product not found "${li.name}"${li.sku ? ` (${li.sku})` : ""} — skipped. Import the item first.`);
-              continue;
+              results.errors.push(`Bill ${d.billNumber}: product not found "${li.name}"${li.sku ? ` (${li.sku})` : ""} — will need manual match before delivery`);
             }
-            matchedProducts.push({ li, product });
+            matchedProducts.push({ li, product: product || null });
           }
 
           // Calculate due date: use Zoho's dueDate unless it equals billDate (missing), then use vendor's payment terms
@@ -293,7 +289,7 @@ export async function POST(req: NextRequest) {
                   );
                   return {
                     productName: li.name,
-                    productId: product.id,
+                    productId: product?.id || null,
                     sku: li.sku || null,
                     quantity: li.quantity,
                     rate: li.rate,
