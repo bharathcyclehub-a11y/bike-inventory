@@ -91,30 +91,32 @@ export async function PUT(
                 where: { name: { contains: searchName, mode: "insensitive" } },
               });
 
-          if (matchedProduct) {
-            // Create one inventory transaction per bin allocation
-            let runningStock = matchedProduct.currentStock;
-            for (const alloc of binAllocations) {
-              const previousStock = runningStock;
-              runningStock += alloc.qty;
-              await tx.inventoryTransaction.create({
-                data: {
-                  type: "INWARD",
-                  productId: matchedProduct.id,
-                  quantity: alloc.qty,
-                  previousStock,
-                  newStock: runningStock,
-                  referenceNo: lineItem.shipment.shipmentNo,
-                  notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${alloc.qty} → Bin: ${alloc.binId.slice(-6)}`,
-                  userId: user.id,
-                },
-              });
-            }
-            await tx.product.update({
-              where: { id: matchedProduct.id },
-              data: { currentStock: runningStock, binId: primaryBinId },
+          if (!matchedProduct) {
+            throw new Error(`Product not found for "${lineItem.productName}" — import it from Zoho Items first`);
+          }
+
+          // Create one inventory transaction per bin allocation
+          let runningStock = matchedProduct.currentStock;
+          for (const alloc of binAllocations) {
+            const previousStock = runningStock;
+            runningStock += alloc.qty;
+            await tx.inventoryTransaction.create({
+              data: {
+                type: "INWARD",
+                productId: matchedProduct.id,
+                quantity: alloc.qty,
+                previousStock,
+                newStock: runningStock,
+                referenceNo: lineItem.shipment.shipmentNo,
+                notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${alloc.qty} → Bin: ${alloc.binId.slice(-6)}`,
+                userId: user.id,
+              },
             });
           }
+          await tx.product.update({
+            where: { id: matchedProduct.id },
+            data: { currentStock: runningStock, binId: primaryBinId },
+          });
 
           // Auto-create delivery for pre-booked items so outwards clerk can see it
           if (lineItem.preBookedCustomerName) {

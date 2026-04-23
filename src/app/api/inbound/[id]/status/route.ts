@@ -95,37 +95,39 @@ export async function PUT(
               where: { name: { contains: searchName, mode: "insensitive" } },
             });
 
-        if (matchedProduct) {
-          const allocations = binAssign?.binAllocations?.length
-            ? binAssign.binAllocations
-            : [{ binId: binAssign?.binId || "", qty }];
-          const primaryBinId = allocations[0]?.binId || null;
+        if (!matchedProduct) {
+          throw new Error(`Product not found for "${li.productName}" — import it from Zoho Items first`);
+        }
 
-          // Create one inventory transaction per bin allocation
-          let runningStock = matchedProduct.currentStock;
-          for (const alloc of allocations) {
-            const allocQty = alloc.qty || qty;
-            const previousStock = runningStock;
-            runningStock += allocQty;
-            await tx.inventoryTransaction.create({
-              data: {
-                type: "INWARD",
-                productId: matchedProduct.id,
-                quantity: allocQty,
-                previousStock,
-                newStock: runningStock,
-                referenceNo: existing.shipmentNo,
-                notes: `[INBOUND] Brand: ${existing.brand.name} | Bill: ${existing.billNo} | ${li.productName} x${allocQty}${alloc.binId ? ` → Bin: ${alloc.binId.slice(-6)}` : ""}`,
-                userId: user.id,
-              },
-            });
-          }
+        const allocations = binAssign?.binAllocations?.length
+          ? binAssign.binAllocations
+          : [{ binId: binAssign?.binId || "", qty }];
+        const primaryBinId = allocations[0]?.binId || null;
 
-          await tx.product.update({
-            where: { id: matchedProduct.id },
-            data: { currentStock: runningStock, ...(primaryBinId ? { binId: primaryBinId } : {}) },
+        // Create one inventory transaction per bin allocation
+        let runningStock = matchedProduct.currentStock;
+        for (const alloc of allocations) {
+          const allocQty = alloc.qty || qty;
+          const previousStock = runningStock;
+          runningStock += allocQty;
+          await tx.inventoryTransaction.create({
+            data: {
+              type: "INWARD",
+              productId: matchedProduct.id,
+              quantity: allocQty,
+              previousStock,
+              newStock: runningStock,
+              referenceNo: existing.shipmentNo,
+              notes: `[INBOUND] Brand: ${existing.brand.name} | Bill: ${existing.billNo} | ${li.productName} x${allocQty}${alloc.binId ? ` → Bin: ${alloc.binId.slice(-6)}` : ""}`,
+              userId: user.id,
+            },
           });
         }
+
+        await tx.product.update({
+          where: { id: matchedProduct.id },
+          data: { currentStock: runningStock, ...(primaryBinId ? { binId: primaryBinId } : {}) },
+        });
       }
 
       // Auto-create delivery records for pre-booked items (for outwards clerk)

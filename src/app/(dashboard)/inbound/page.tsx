@@ -111,6 +111,7 @@ export default function InboundPage() {
   const [billSearchNo, setBillSearchNo] = useState("");
   const [billPreviews, setBillPreviews] = useState<ZohoBillPreview[]>([]);
   const [selectedBills, setSelectedBills] = useState<Set<string>>(new Set());
+  const [expandedShipment, setExpandedShipment] = useState<string | null>(null);
 
   const fetchData = useCallback(() => {
     setLoading(true);
@@ -560,58 +561,69 @@ export default function InboundPage() {
         <div className="space-y-2">
           {shipments.map((s) => {
             const badge = STATUS_BADGE[s.status] || { variant: "default" as const, label: s.status };
+            const isExpanded = expandedShipment === s.id;
             return (
-              <Link key={s.id} href={`/inbound/${s.id}`}>
-                <Card className="hover:border-slate-300 transition-colors mb-2">
-                  <CardContent className="p-3">
-                    <div className="flex items-start justify-between mb-1">
+              <Card key={s.id} className="hover:border-slate-300 transition-colors mb-2">
+                <CardContent className="p-3">
+                  <button
+                    onClick={() => setExpandedShipment(isExpanded ? null : s.id)}
+                    className="w-full text-left"
+                  >
+                    <div className="flex items-start justify-between">
                       <div className="flex-1 min-w-0 mr-2">
                         <p className="text-sm font-semibold text-slate-900">{s.brand.name}</p>
                         <p className="text-xs text-slate-500">Bill: {s.billNo} | {s.shipmentNo}</p>
                       </div>
-                      <Badge variant={badge.variant}>{badge.label}</Badge>
-                    </div>
-
-                    <div className="mt-1.5 space-y-0.5">
-                      {s.lineItems.map((li, idx) => (
-                        <p key={idx} className="text-xs text-slate-600">
-                          {li.productName} <span className="text-slate-400">x {li.quantity}</span>
-                          {li.isDelivered && <span className="text-green-500 ml-1">✓</span>}
-                        </p>
-                      ))}
-                    </div>
-
-                    <div className="flex items-center gap-3 mt-2">
-                      <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <span>Billed: {formatDate(s.billDate)}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Badge variant={badge.variant}>{badge.label}</Badge>
+                        <span className="text-slate-400 text-xs">{isExpanded ? "▾" : "▸"}</span>
                       </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 mt-1.5">
+                      <span className="text-xs text-slate-500">Billed: {formatDate(s.billDate)}</span>
+                      <span className="text-xs text-slate-400">{s.lineItems.length} items</span>
                       {s.status === "IN_TRANSIT" && (
                         <div className="flex items-center gap-1 text-xs ml-auto">
                           <Calendar className="h-3 w-3 text-amber-500" />
                           <span className={`font-medium ${
                             daysUntil(s.expectedDeliveryDate).includes("overdue") ? "text-red-600" : "text-amber-600"
                           }`}>
-                            ETA: {formatDate(s.expectedDeliveryDate)} ({daysUntil(s.expectedDeliveryDate)})
+                            {daysUntil(s.expectedDeliveryDate)}
                           </span>
                         </div>
                       )}
                       {s.status === "DELIVERED" && s.deliveredAt && (
                         <span className="text-xs text-green-600 ml-auto">
-                          Delivered: {formatDate(s.deliveredAt)}
+                          {formatDate(s.deliveredAt)}
+                        </span>
+                      )}
+                      {s._count.preBookings > 0 && (
+                        <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded-full font-medium ml-auto">
+                          {s._count.preBookings} pre-booked
                         </span>
                       )}
                     </div>
+                  </button>
 
-                    {s._count.preBookings > 0 && (
-                      <div className="mt-1.5">
-                        <span className="text-[10px] px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded-full font-medium">
-                          {s._count.preBookings} pre-booked
-                        </span>
+                  {isExpanded && (
+                    <div className="mt-2 pt-2 border-t border-slate-100">
+                      <div className="space-y-0.5 mb-2">
+                        {s.lineItems.map((li, idx) => (
+                          <p key={idx} className="text-xs text-slate-600">
+                            {li.productName} <span className="text-slate-400">x {li.quantity}</span>
+                            {li.isDelivered && <span className="text-green-500 ml-1">✓</span>}
+                          </p>
+                        ))}
                       </div>
-                    )}
-                  </CardContent>
-                </Card>
-              </Link>
+                      <Link href={`/inbound/${s.id}`}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700">
+                        Open Details →
+                      </Link>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             );
           })}
         </div>

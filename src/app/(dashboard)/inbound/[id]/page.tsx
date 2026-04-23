@@ -85,6 +85,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const [putawayLoading, setPutawayLoading] = useState(false);
   const [approveLoading, setApproveLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<{ shipmentNo: string; deliveredCount: number } | null>(null);
+  const [actionError, setActionError] = useState("");
 
   // Per-item bin selections: lineItemId → array of binIds (one per unit)
   const [binSelections, setBinSelections] = useState<Record<string, string[]>>({});
@@ -98,7 +99,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         if (shipRes.success) setShipment(shipRes.data);
         if (binRes.success) setBins(binRes.data || []);
       })
-      .catch(() => {})
+      .catch((e) => { setActionError(e instanceof Error ? e.message : "Failed to load shipment"); })
       .finally(() => setLoading(false));
   }, [id]);
 
@@ -143,9 +144,9 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
     setApproveLoading(true);
     try {
       const res = await fetch(`/api/inbound/${id}/approve`, { method: "POST" }).then((r) => r.json());
-      if (res.success) await refreshShipment();
-      else alert(res.error || "Approval failed");
-    } catch { /* */ }
+      if (res.success) { setActionError(""); await refreshShipment(); }
+      else setActionError(res.error || "Approval failed");
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Approval failed"); }
     finally { setApproveLoading(false); }
   };
 
@@ -177,14 +178,17 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         body: JSON.stringify({ status, binAssignments }),
       }).then((r) => r.json());
       if (res.success) {
+        setActionError("");
         setBinSelections({});
         await refreshShipment();
         if (status === "DELIVERED") {
           const totalDelivered = shipment?.lineItems.length || 0;
           setSuccessMsg({ shipmentNo: shipment?.shipmentNo || "", deliveredCount: totalDelivered });
         }
+      } else {
+        setActionError(res.error || "Delivery failed");
       }
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Delivery failed"); }
     finally { setActionLoading(false); }
   };
 
@@ -218,10 +222,13 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         body: JSON.stringify({ lineItemId: li.id, deliveredQty: li.quantity, binAllocations }),
       }).then((r) => r.json());
       if (res.success) {
+        setActionError("");
         setBinSelections((prev) => { const n = { ...prev }; delete n[li.id]; return n; });
         await refreshShipment();
+      } else {
+        setActionError(res.error || `Failed to mark "${li.productName}" as delivered`);
       }
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Mark delivered failed"); }
     finally { setItemLoading(null); }
   };
 
@@ -246,10 +253,13 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         body: JSON.stringify({ items }),
       }).then((r) => r.json());
       if (res.success) {
+        setActionError("");
         setBinSelections({});
         await refreshShipment();
+      } else {
+        setActionError(res.error || "Putaway failed");
       }
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Putaway failed"); }
     finally { setPutawayLoading(false); }
   };
 
@@ -267,7 +277,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       } else {
         alert(res.error || "Cannot revert");
       }
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Revert failed"); }
     finally { setActionLoading(false); }
   };
 
@@ -281,7 +291,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       } else {
         alert(res.error || "Cannot delete");
       }
-    } catch { /* */ }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Delete failed"); }
     finally { setActionLoading(false); }
   };
 
@@ -382,6 +392,14 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           <p className="text-xs text-slate-500">{shipment.brand.name} | Bill: {shipment.billNo}</p>
         </div>
       </div>
+
+      {/* Action Error */}
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
 
       {/* Summary */}
       <Card className="mb-3">
