@@ -267,8 +267,10 @@ export default function InboundPage() {
       setSelectedBills(new Set());
       setBillSearchNo("");
       fetchData();
-      if (errors.length > 0) {
-        setFetchError(`Imported ${imported} bill(s). Warnings: ${errors.join("; ")}`);
+      if (errors.length > 0 || imported === 0) {
+        const msgs = [...errors];
+        if (imported === 0 && errors.length === 0) msgs.push("No bills were imported — they may already exist");
+        setFetchError(msgs.join("\n"));
       }
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Import failed");

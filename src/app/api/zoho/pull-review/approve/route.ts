@@ -178,15 +178,19 @@ export async function POST(req: NextRequest) {
             });
           }
 
-          // Dedup: check VendorBill AND legacy InventoryTransactions AND InboundShipment
-          const existsVB = await prisma.vendorBill.findFirst({ where: { billNo: String(d.billNumber) } });
-          if (existsVB) continue;
-          const existsShipment = await prisma.inboundShipment.findFirst({ where: { billNo: String(d.billNumber) } });
-          if (existsShipment) continue;
-          const existsLegacy = await prisma.inventoryTransaction.findFirst({
-            where: { type: "INWARD", referenceNo: String(d.billNumber) },
+          // Dedup: skip if shipment already exists for this bill
+          const existsShipment = await prisma.inboundShipment.findFirst({
+            where: { billNo: String(d.billNumber) },
+            select: { id: true, shipmentNo: true },
           });
-          if (existsLegacy) continue;
+          if (existsShipment) {
+            results.errors.push(`${d.billNumber}: already has shipment ${existsShipment.shipmentNo}`);
+            await prisma.zohoPullPreview.update({ where: { id: preview.id }, data: { status: "APPROVED", reviewedAt: new Date(), reviewedById: user.id } });
+            continue;
+          }
+
+          // Reuse existing VendorBill if it exists (e.g. from accounting import), or create new
+          let existingVB = await prisma.vendorBill.findFirst({ where: { billNo: String(d.billNumber) } });
 
           const total = Number(d.total || 0);
           const balance = Number(d.balance || 0);
@@ -297,7 +301,7 @@ export async function POST(req: NextRequest) {
             dueDate.setDate(dueDate.getDate() + (vendor.paymentTermDays || 30));
           }
 
-          const vendorBill = await prisma.vendorBill.create({
+          const vendorBill = existingVB || await prisma.vendorBill.create({
             data: {
               billNo: String(d.billNumber),
               vendorId: vendor.id,
