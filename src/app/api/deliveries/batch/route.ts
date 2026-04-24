@@ -51,7 +51,7 @@ export async function PUT(req: NextRequest) {
             });
             if (!product) continue;
 
-            const newStock = Math.max(0, product.currentStock - item.quantity);
+            const newStock = product.currentStock - item.quantity;
             await tx.product.update({
               where: { id: product.id },
               data: { currentStock: newStock },

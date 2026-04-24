@@ -142,54 +142,20 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             updateData.deliveredAt = new Date();
           }
 
-          // Parse line items and check stock availability at Bharath Cycle Hub only
+          // Deduct stock — allow negative (resolve via transfer/inward later)
           const items = (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
-          const outOfStockItems: string[] = [];
 
           for (const item of items) {
             if (!item.sku) continue;
-            // Only match products in BCH store (not warehouse)
+            // Prefer BCH location, fall back to any product with this SKU
             const product = await tx.product.findFirst({
               where: {
                 sku: item.sku,
                 bin: { location: { startsWith: "Bharath Cycle Hub" } },
               },
-              select: { id: true, name: true, currentStock: true },
-            });
-            if (!product) {
-              // Product exists but not at BCH — treat as out of stock at store
-              const anyProduct = await tx.product.findFirst({
-                where: { sku: item.sku },
-                select: { name: true },
-              });
-              if (anyProduct) {
-                outOfStockItems.push(
-                  `${anyProduct.name || item.name} — not available at Bharath Cycle Hub (check warehouse)`
-                );
-              }
-              continue;
-            }
-            if (product.currentStock < item.quantity) {
-              outOfStockItems.push(
-                `${product.name || item.name} (need ${item.quantity}, have ${product.currentStock} at BCH)`
-              );
-            }
-          }
-
-          if (outOfStockItems.length > 0) {
-            throw new Error(
-              `Insufficient stock at Bharath Cycle Hub for: ${outOfStockItems.join(", ")}. Transfer stock from warehouse or update inventory before processing this ${data.status === "WALK_OUT" ? "walk-out" : "delivery"}.`
-            );
-          }
-
-          // Deduct stock only from BCH location
-          for (const item of items) {
-            if (!item.sku) continue;
-            const product = await tx.product.findFirst({
-              where: {
-                sku: item.sku,
-                bin: { location: { startsWith: "Bharath Cycle Hub" } },
-              },
+              select: { id: true, currentStock: true },
+            }) || await tx.product.findFirst({
+              where: { sku: item.sku },
               select: { id: true, currentStock: true },
             });
             if (!product) continue;
@@ -199,6 +165,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
               where: { id: product.id },
               data: { currentStock: newStock },
             });
+            const negativeTag = newStock < 0 ? " [NEGATIVE STOCK]" : "";
             await tx.inventoryTransaction.create({
               data: {
                 type: "OUTWARD",
@@ -207,7 +174,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
                 previousStock: product.currentStock,
                 newStock,
                 referenceNo: existing.invoiceNo,
-                notes: `[ZOHO][VERIFIED] Customer: ${existing.customerName} | Invoice: ${existing.invoiceNo} | ${item.name} x${item.quantity}`,
+                notes: `[ZOHO][VERIFIED] Customer: ${existing.customerName} | Invoice: ${existing.invoiceNo} | ${item.name} x${item.quantity}${negativeTag}`,
                 userId: user.id,
               },
             });
