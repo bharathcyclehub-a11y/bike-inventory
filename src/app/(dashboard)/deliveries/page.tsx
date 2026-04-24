@@ -492,7 +492,6 @@ export default function DeliveriesPage() {
     { key: "OUT_FOR_DELIVERY", label: "Out", count: stats?.outForDelivery },
     { key: "DELIVERED", label: "Delivered", count: stats?.deliveredToday },
     { key: "FLAGGED", label: "Flagged", count: stats?.flagged },
-    { key: "PREBOOKED", label: "Prebooked", count: stats?.prebooked },
     { key: "WALK_OUT", label: "Walk-out" },
     { key: "PACKED", label: "Packed" },
     { key: "SHIPPED", label: "Shipped" },
@@ -671,7 +670,7 @@ export default function DeliveriesPage() {
       )}
 
       {/* Filter Chips */}
-      <div className="flex gap-1.5 overflow-x-auto scrollbar-hide mb-2 pb-1">
+      <div className="flex gap-1.5 overflow-x-auto scrollbar-hide mb-1.5 pb-1">
         {FILTERS.map((f) => (
           <button key={f.key} onClick={() => setFilter(f.key)}
             className={`shrink-0 px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors ${
@@ -680,10 +679,26 @@ export default function DeliveriesPage() {
             {f.label}{f.count !== undefined && f.count > 0 ? ` (${f.count})` : ""}
           </button>
         ))}
-        <button onClick={() => setShowOutstation(!showOutstation)}
-          className={`shrink-0 px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors ${
-            showOutstation ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"
+      </div>
+
+      {/* Daily Actions: Prebooked & Outstation */}
+      <div className="flex gap-2 mb-2">
+        <button onClick={() => setFilter("PREBOOKED")}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors border ${
+            filter === "PREBOOKED"
+              ? "bg-purple-600 text-white border-purple-600"
+              : "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
           }`}>
+          <Package className="h-3.5 w-3.5" />
+          Prebooked{stats?.prebooked ? ` (${stats.prebooked})` : ""}
+        </button>
+        <button onClick={() => setShowOutstation(!showOutstation)}
+          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors border ${
+            showOutstation
+              ? "bg-amber-500 text-white border-amber-500"
+              : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
+          }`}>
+          <Truck className="h-3.5 w-3.5" />
           Outstation
         </button>
       </div>
