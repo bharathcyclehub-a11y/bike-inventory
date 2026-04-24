@@ -161,12 +161,16 @@ export default function DeliveriesPage() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const handleVerify = async (id: string) => {
-    await fetch(`/api/deliveries/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "VERIFIED" }),
-    });
-    fetchData();
+    try {
+      const res = await fetch(`/api/deliveries/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "VERIFIED" }),
+      });
+      const data = await res.json();
+      if (!data.success) { setFetchError(data.error || "Verify failed"); return; }
+      fetchData();
+    } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
   };
 
   const handleFlag = async (id: string) => {
@@ -194,31 +198,43 @@ export default function DeliveriesPage() {
       ? `Mark as walk-out?\n\nStock will be deducted:\n${stockLines}`
       : "Mark as walk-out? Stock will be deducted.";
     if (!confirm(msg)) return;
-    await fetch(`/api/deliveries/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "WALK_OUT" }),
-    });
-    fetchData();
+    try {
+      const res = await fetch(`/api/deliveries/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "WALK_OUT" }),
+      });
+      const data = await res.json();
+      if (!data.success) { setFetchError(data.error || "Walk-out failed"); return; }
+      fetchData();
+    } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
   };
 
   const handleTagType = async (id: string, invoiceType: "SALES" | "SERVICE") => {
     if (invoiceType === "SERVICE" && !confirm("Mark as service invoice? It will exit the delivery pipeline.")) return;
-    await fetch(`/api/deliveries/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ invoiceType }),
-    });
-    fetchData();
+    try {
+      const res = await fetch(`/api/deliveries/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceType }),
+      });
+      const data = await res.json();
+      if (!data.success) { setFetchError(data.error || "Tag failed"); return; }
+      fetchData();
+    } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
   };
 
   const handleUndoType = async (id: string) => {
-    await fetch(`/api/deliveries/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ invoiceType: null }),
-    });
-    fetchData();
+    try {
+      const res = await fetch(`/api/deliveries/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceType: null }),
+      });
+      const data = await res.json();
+      if (!data.success) { setFetchError(data.error || "Undo failed"); return; }
+      fetchData();
+    } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
   };
 
   const handleDelete = async (id: string) => {
