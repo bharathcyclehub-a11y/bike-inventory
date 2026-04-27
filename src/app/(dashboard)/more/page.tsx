@@ -33,6 +33,7 @@ import {
   Clock,
   IndianRupee,
   Wrench,
+  ClipboardList,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -99,6 +100,7 @@ const MENU_GROUPS: MenuGroup[] = [
   {
     title: "Admin",
     items: [
+      { label: "Activity Log", icon: ClipboardList, href: "/activity", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "INWARDS_CLERK", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "CUSTOM"] },
       { label: "Team Management", icon: Users, href: "/team", roles: ["ADMIN", "SUPERVISOR"], featureKey: "team" },
       { label: "Reports", icon: BarChart3, href: "/reports", roles: ["ADMIN", "SUPERVISOR"], featureKey: "reports" },
       { label: "Service Revenue", icon: Wrench, href: "/service-revenue", roles: ["ADMIN"] },
