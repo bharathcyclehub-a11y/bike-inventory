@@ -43,7 +43,7 @@ export default function DesktopInboundPage() {
     fetch(`/api/inbound?${params}`)
       .then((r) => r.json())
       .then((res) => {
-        if (res.success) setShipments(res.data);
+        if (res.success) setShipments(res.data?.shipments || res.data || []);
       })
       .finally(() => setLoading(false));
   }, [filter]);

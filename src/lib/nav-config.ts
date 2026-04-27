@@ -11,6 +11,7 @@ import {
   BarChart3,
   FileText,
   Settings,
+  ClipboardList,
 } from "lucide-react";
 import type { Role } from "@/types";
 
@@ -83,26 +84,51 @@ export function getPrimaryTabs(role: Role): NavItem[] {
   }
 }
 
-// Extra sidebar items visible only on desktop (for ADMIN/SUPERVISOR)
+// Extra sidebar items visible only on desktop (items not already in primary tabs)
 export function getDesktopExtraTabs(role: Role): NavItem[] {
-  if (role === "ADMIN") {
-    return [
-      { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
-      { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
-      { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
-      { href: "/team", label: "Team", icon: Users, key: "team" },
-      { href: "/more", label: "Settings", icon: Settings, key: "settings" },
-    ];
+  switch (role) {
+    case "ADMIN":
+      return [
+        { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
+        { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+        { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
+        { href: "/team", label: "Team", icon: Users, key: "team" },
+        { href: "/more", label: "Settings", icon: Settings, key: "settings" },
+      ];
+    case "SUPERVISOR":
+      return [
+        { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
+        { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+        { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
+        { href: "/team", label: "Team", icon: Users, key: "team" },
+      ];
+    case "PURCHASE_MANAGER":
+      return [
+        { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+      ];
+    case "ACCOUNTS_MANAGER":
+      return [
+        { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+      ];
+    case "INWARDS_CLERK":
+      return [
+        { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+      ];
+    case "OUTWARDS_CLERK":
+      return [
+        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+      ];
+    default:
+      return [
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+      ];
   }
-  if (role === "SUPERVISOR") {
-    return [
-      { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
-      { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
-      { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
-      { href: "/team", label: "Team", icon: Users, key: "team" },
-    ];
-  }
-  return [];
 }
 
 // Resolve href for desktop context (prefix with /desktop)
