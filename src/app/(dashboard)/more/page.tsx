@@ -34,6 +34,9 @@ import {
   IndianRupee,
   Wrench,
   ClipboardList,
+  ListTodo,
+  BookOpenCheck,
+  Activity,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -66,6 +69,15 @@ const ROLE_LABELS: Record<Role, string> = {
 };
 
 const MENU_GROUPS: MenuGroup[] = [
+  {
+    title: "Operations Hub",
+    items: [
+      { label: "Tasks", icon: ListTodo, href: "/tasks", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"] },
+      { label: "SOPs", icon: BookOpenCheck, href: "/sops", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "My Check-offs", icon: ClipboardCheck, href: "/sops/my-checkoffs", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"] },
+      { label: "Ops Stats", icon: Activity, href: "/ops-stats", roles: ["ADMIN", "SUPERVISOR"] },
+    ],
+  },
   {
     title: "Accounts",
     items: [

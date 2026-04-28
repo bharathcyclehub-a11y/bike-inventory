@@ -76,6 +76,14 @@ function daysUntil(d: string) {
   return `${diff} days`;
 }
 
+function getAgingBadge(createdAt: string) {
+  const hours = (Date.now() - new Date(createdAt).getTime()) / (1000 * 60 * 60);
+  if (hours > 72) return { text: `${Math.floor(hours / 24)}d`, cls: "bg-red-200 text-red-900 animate-pulse" };
+  if (hours > 48) return { text: "48h+", cls: "bg-red-100 text-red-800" };
+  if (hours > 24) return { text: "24h+", cls: "bg-yellow-100 text-yellow-800" };
+  return null; // <24h = no badge (green/ok)
+}
+
 const STATUS_BADGE: Record<string, { variant: "success" | "warning" | "info" | "default"; label: string }> = {
   IN_TRANSIT: { variant: "warning", label: "In Transit" },
   DELIVERED: { variant: "success", label: "Delivered" },
@@ -589,6 +597,14 @@ export default function InboundPage() {
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <Badge variant={badge.variant}>{badge.label}</Badge>
+                        {["IN_TRANSIT", "PARTIALLY_DELIVERED"].includes(s.status) && (() => {
+                          const aging = getAgingBadge(s.createdAt);
+                          return aging ? (
+                            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${aging.cls}`}>
+                              {aging.text}
+                            </span>
+                          ) : null;
+                        })()}
                         <span className="text-slate-400 text-xs">{isExpanded ? "▾" : "▸"}</span>
                       </div>
                     </div>

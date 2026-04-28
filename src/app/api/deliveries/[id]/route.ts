@@ -103,17 +103,6 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.whatsAppDispatchedSent !== undefined) updateData.whatsAppDispatchedSent = data.whatsAppDispatchedSent;
       if (data.whatsAppDeliveredSent !== undefined) updateData.whatsAppDeliveredSent = data.whatsAppDeliveredSent;
 
-      // Invoice type tagging (Sales vs Service)
-      if (data.invoiceType !== undefined) {
-        updateData.invoiceType = data.invoiceType;
-        // Service invoices exit the delivery pipeline — mark as DELIVERED (revenue only)
-        if (data.invoiceType === "SERVICE" && existing.status === "PENDING") {
-          updateData.status = "DELIVERED";
-          updateData.deliveredAt = new Date();
-          updateData.notes = (existing.notes || "") + " [SERVICE - no delivery needed]";
-        }
-      }
-
       if (data.status) {
         updateData.status = data.status;
 
@@ -143,8 +132,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             updateData.deliveredAt = new Date();
           }
 
+          // Idempotency: skip if stock already deducted for this invoice
+          const alreadyDeducted = await tx.inventoryTransaction.findFirst({
+            where: { referenceNo: existing.invoiceNo, type: "OUTWARD" },
+          });
+
           // Deduct stock — allow negative (resolve via transfer/inward later)
-          const items = (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
+          const items = (!alreadyDeducted ? (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) : []) || [];
 
           for (const item of items) {
             if (!item.sku) continue;

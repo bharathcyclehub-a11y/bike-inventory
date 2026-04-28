@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
   Search, Loader2, Cloud, Download, Truck, AlertTriangle, CheckCircle2,
-  Clock, Package, Flag, Trash2, Phone, Wrench, ShoppingBag,
+  Clock, Package, Flag, Trash2, Phone,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -207,33 +207,6 @@ export default function DeliveriesPage() {
       });
       const data = await res.json();
       if (!data.success) { setFetchError(data.error || "Walk-out failed"); return; }
-      fetchData();
-    } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
-  };
-
-  const handleTagType = async (id: string, invoiceType: "SALES" | "SERVICE" | "CENTRE") => {
-    if (invoiceType === "SERVICE" && !confirm("Mark as service invoice? It will exit the delivery pipeline.")) return;
-    try {
-      const res = await fetch(`/api/deliveries/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoiceType }),
-      });
-      const data = await res.json();
-      if (!data.success) { setFetchError(data.error || "Tag failed"); return; }
-      fetchData();
-    } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
-  };
-
-  const handleUndoType = async (id: string) => {
-    try {
-      const res = await fetch(`/api/deliveries/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoiceType: null }),
-      });
-      const data = await res.json();
-      if (!data.success) { setFetchError(data.error || "Undo failed"); return; }
       fetchData();
     } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
   };
@@ -935,24 +908,6 @@ export default function DeliveriesPage() {
                       <Badge variant={cfg.variant as "warning" | "info" | "success" | "danger" | "default"}>
                         {cfg.label}
                       </Badge>
-                      {d.invoiceType === "SALES" && d.status === "PENDING" && (
-                        <button onClick={(e) => { e.preventDefault(); handleUndoType(d.id); }}
-                          className="inline-flex items-center gap-0.5 text-[9px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">
-                          Sales <span className="text-blue-400">x</span>
-                        </button>
-                      )}
-                      {d.invoiceType === "SALES" && d.status !== "PENDING" && (
-                        <Badge variant={"info"} className="text-[9px]">Sales</Badge>
-                      )}
-                      {d.invoiceType === "SERVICE" && (
-                        <button onClick={(e) => { e.preventDefault(); handleUndoType(d.id); }}
-                          className="inline-flex items-center gap-0.5 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">
-                          Service <span className="text-amber-400">x</span>
-                        </button>
-                      )}
-                      {d.invoiceType === "CENTRE" && (
-                        <Badge variant={"default"} className="text-[9px] bg-purple-100 text-purple-700">Centre</Badge>
-                      )}
                       {d.isOutstation && (
                         <Badge variant={"warning"} className="text-[9px]">Outstation</Badge>
                       )}
@@ -1038,25 +993,7 @@ export default function DeliveriesPage() {
 
                   {/* Action buttons */}
                   <div className="flex gap-2 mt-1">
-                    {d.status === "PENDING" && !d.invoiceType && (
-                      <>
-                        <button onClick={() => handleTagType(d.id, "SALES")}
-                          className="flex-1 flex items-center justify-center gap-1 bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">
-                          <ShoppingBag className="h-3 w-3" /> Sales
-                        </button>
-                        <button onClick={() => handleTagType(d.id, "SERVICE")}
-                          className="flex-1 flex items-center justify-center gap-1 bg-amber-500 text-white py-1.5 rounded-md text-xs font-medium">
-                          <Wrench className="h-3 w-3" /> Service
-                        </button>
-                        {isAdmin && (
-                          <button onClick={() => { if (!confirm("Move to Centre Sales?")) return; handleTagType(d.id, "CENTRE"); }}
-                            className="flex items-center justify-center gap-1 bg-purple-100 text-purple-700 px-2.5 py-1.5 rounded-md text-xs font-medium">
-                            Centre
-                          </button>
-                        )}
-                      </>
-                    )}
-                    {d.status === "PENDING" && d.invoiceType === "SALES" && (
+                    {d.status === "PENDING" && (
                       <>
                         <button onClick={() => handleWalkOut(d.id)}
                           className="flex-1 bg-green-600 text-white py-1.5 rounded-md text-xs font-medium">Walk-out</button>

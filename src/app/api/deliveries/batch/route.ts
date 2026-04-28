@@ -41,11 +41,24 @@ export async function PUT(req: NextRequest) {
         if (action === "DELIVERED") {
           updateData.deliveredAt = new Date();
 
-          // Stock deduction
+          // Idempotency: skip if already deducted
+          const alreadyDeducted = await tx.inventoryTransaction.findFirst({
+            where: { referenceNo: delivery.invoiceNo, type: "OUTWARD" },
+          });
+          if (alreadyDeducted) {
+            await tx.delivery.update({ where: { id: delivery.id }, data: updateData });
+            updated++;
+            continue;
+          }
+
+          // Stock deduction — prefer BCH location
           const items = (delivery.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
           for (const item of items) {
             if (!item.sku) continue;
             const product = await tx.product.findFirst({
+              where: { sku: item.sku, bin: { location: { startsWith: "Bharath Cycle Hub" } } },
+              select: { id: true, currentStock: true },
+            }) || await tx.product.findFirst({
               where: { sku: item.sku },
               select: { id: true, currentStock: true },
             });

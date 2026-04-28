@@ -78,9 +78,10 @@ export async function PUT(
       }
 
       // Add stock for newly delivered line items (skip already-delivered ones)
+      // PARTIALLY_DELIVERED: per-item handler already added stock — don't double-add
       const itemsToAddStock = status === "DELIVERED"
-        ? existing.lineItems.filter((li) => !li.isDelivered) // Only add stock for items not yet delivered
-        : existing.lineItems.filter((li) => li.isDelivered);
+        ? existing.lineItems.filter((li) => !li.isDelivered)
+        : [];
 
       for (const li of itemsToAddStock) {
         const qty = li.deliveredQty ?? li.quantity;

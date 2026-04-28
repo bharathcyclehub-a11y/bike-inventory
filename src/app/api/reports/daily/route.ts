@@ -7,14 +7,14 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK"]);
     const { searchParams } = new URL(req.url);
 
     const dateStr = searchParams.get("date") || new Date().toISOString().split("T")[0];
     const dayStart = new Date(dateStr + "T00:00:00.000Z");
     const dayEnd = new Date(dateStr + "T23:59:59.999Z");
 
-    const [inwardTxns, outwardTxns, payments, expenses, recentTxns] = await Promise.all([
+    const [inwardTxns, outwardTxns, payments, expenses, transfers, recentTxns] = await Promise.all([
       prisma.inventoryTransaction.aggregate({
         where: { type: "INWARD", createdAt: { gte: dayStart, lte: dayEnd } },
         _count: true,
@@ -35,6 +35,9 @@ export async function GET(req: NextRequest) {
         _count: true,
         _sum: { amount: true },
       }),
+      prisma.transferOrder.count({
+        where: { status: "APPROVED", reviewedAt: { gte: dayStart, lte: dayEnd } },
+      }),
       prisma.inventoryTransaction.findMany({
         where: { createdAt: { gte: dayStart, lte: dayEnd } },
         include: {
@@ -52,6 +55,7 @@ export async function GET(req: NextRequest) {
       outwards: { count: outwardTxns._count, totalQty: outwardTxns._sum.quantity || 0 },
       payments: { count: payments._count, totalAmount: payments._sum.amount || 0 },
       expenses: { count: expenses._count, totalAmount: expenses._sum.amount || 0 },
+      transfers,
       recentTransactions: recentTxns,
     });
   } catch (error) {

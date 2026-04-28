@@ -50,15 +50,15 @@ export async function GET() {
       expensesRecorded,
       posWithoutTracking,
     ] = await Promise.all([
-      // --- Nithin: unverified inwards with age buckets ---
+      // --- Nithin: pending inbound shipments (IN_TRANSIT / PARTIALLY_DELIVERED) ---
       prisma.$queryRaw<[{ pending: number; overdue24h: number; overdue48h: number; overdue72h: number }]>`
         SELECT
           COUNT(*)::int AS pending,
           COUNT(*) FILTER (WHERE "createdAt" < ${h24})::int AS "overdue24h",
           COUNT(*) FILTER (WHERE "createdAt" < ${h48})::int AS "overdue48h",
           COUNT(*) FILTER (WHERE "createdAt" < ${h72})::int AS "overdue72h"
-        FROM "InventoryTransaction"
-        WHERE type = 'INWARD' AND notes LIKE '%[UNVERIFIED]%'
+        FROM "InboundShipment"
+        WHERE status IN ('IN_TRANSIT', 'PARTIALLY_DELIVERED')
       `,
 
       // --- Ranjitha: pending deliveries with age buckets ---
@@ -97,11 +97,11 @@ export async function GET() {
           AND (notes IS NULL OR notes NOT LIKE '%[UNVERIFIED]%')
       `,
 
-      // Pending inwards (unverified, any date)
+      // Pending inwards (shipments not yet delivered)
       prisma.$queryRaw<[{ count: number }]>`
         SELECT COUNT(*)::int AS count
-        FROM "InventoryTransaction"
-        WHERE type = 'INWARD' AND notes LIKE '%[UNVERIFIED]%'
+        FROM "InboundShipment"
+        WHERE status IN ('IN_TRANSIT', 'PARTIALLY_DELIVERED')
       `,
 
       // Deliveries closed today
@@ -178,33 +178,33 @@ export async function GET() {
       posWithoutTracking: posWithoutTracking[0]?.count || 0,
     };
 
-    // Build critical alerts (items > 72h needing Syed's attention)
+    // Build critical alerts (items > 24h needing Syed's attention)
     const criticalAlerts: CriticalAlert[] = [];
 
-    if (nithin.overdue72h > 0) {
+    if (nithin.overdue24h > 0) {
       criticalAlerts.push({
         type: "inward",
-        message: `${nithin.overdue72h} inwards unverified for 72+ hours`,
+        message: `${nithin.overdue24h} inbound shipment${nithin.overdue24h > 1 ? "s" : ""} pending 24h+${nithin.overdue72h > 0 ? ` (${nithin.overdue72h} over 72h!)` : ""}`,
         owner: "Nithin",
-        count: nithin.overdue72h,
+        count: nithin.overdue24h,
       });
     }
 
-    if (ranjitha.overdue72h > 0) {
+    if (ranjitha.overdue24h > 0) {
       criticalAlerts.push({
         type: "delivery",
-        message: `${ranjitha.overdue72h} delivery pending for 72+ hours`,
+        message: `${ranjitha.overdue24h} deliver${ranjitha.overdue24h > 1 ? "ies" : "y"} pending 24h+${ranjitha.overdue72h > 0 ? ` (${ranjitha.overdue72h} over 72h!)` : ""}`,
         owner: "Ranjitha",
-        count: ranjitha.overdue72h,
+        count: ranjitha.overdue24h,
       });
     }
 
-    if (abhi.overdue72h > 0) {
+    if (abhi.overdue48h > 0) {
       criticalAlerts.push({
         type: "purchase_order",
-        message: `${abhi.overdue72h} PO without tracking for 72+ hours`,
+        message: `${abhi.overdue48h} PO without tracking 48h+${abhi.overdue72h > 0 ? ` (${abhi.overdue72h} over 72h!)` : ""}`,
         owner: "Abhi Gowda",
-        count: abhi.overdue72h,
+        count: abhi.overdue48h,
       });
     }
 

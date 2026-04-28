@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "SUPERVISOR", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN"]);
     const body = await req.json();
     const data = outwardSchema.parse(body);
 

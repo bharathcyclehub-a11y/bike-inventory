@@ -2,12 +2,10 @@
 
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useSession } from "next-auth/react";
 import {
   ArrowLeft, Phone, MapPin, Clock, CheckCircle2, Truck,
   Flag, AlertTriangle, Loader2, Package, Download,
-  MessageCircle, Check, Globe, IndianRupee, Building2,
+  MessageCircle, Check, Globe, IndianRupee,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -70,10 +68,6 @@ function formatINR(n: number) {
 
 export default function DeliveryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const router = useRouter();
-  const { data: session } = useSession();
-  const role = (session?.user as { role?: string })?.role || "";
-  const isAdmin = role === "ADMIN";
   const [data, setData] = useState<DeliveryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -918,7 +912,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
       {/* Action Buttons */}
       <div className="space-y-2">
-        {data.status === "PENDING" && data.invoiceType === "SALES" && !showSchedule && (
+        {data.status === "PENDING" && !showSchedule && (
           <div className="flex gap-2">
             {/* Require contact saved before allowing actions */}
             {!contactSaved && data.customerPhone ? (
@@ -944,30 +938,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                   className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
                   Schedule Delivery
                 </button>
-                {isAdmin && (
-                  <button onClick={() => {
-                    if (!confirm("Move to Centre Sales?")) return;
-                    updateStatus("PENDING", { invoiceType: "CENTRE" });
-                  }}
-                    className="flex items-center justify-center gap-1.5 bg-purple-100 text-purple-700 px-3 py-2.5 rounded-lg text-sm font-medium">
-                    <Building2 className="h-4 w-4" /> Centre
-                  </button>
-                )}
               </>
-            )}
-          </div>
-        )}
-
-        {data.status === "PENDING" && !data.invoiceType && (
-          <div className="flex gap-2">
-            {isAdmin && (
-              <button onClick={() => {
-                if (!confirm("Move to Centre Sales?")) return;
-                updateStatus("PENDING", { invoiceType: "CENTRE" });
-              }}
-                className="flex-1 flex items-center justify-center gap-1.5 bg-purple-100 text-purple-700 px-4 py-2.5 rounded-lg text-sm font-medium">
-                <Building2 className="h-4 w-4" /> Centre
-              </button>
             )}
           </div>
         )}

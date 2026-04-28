@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, ArrowDownCircle, ArrowUpCircle, CreditCard, Receipt } from "lucide-react";
+import { ArrowLeft, ArrowDownCircle, ArrowUpCircle, CreditCard, Receipt, ArrowRightLeft, MessageCircle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ interface DailyData {
   outwards: { count: number; totalQty: number };
   payments: { count: number; totalAmount: number };
   expenses: { count: number; totalAmount: number };
+  transfers: number;
   recentTransactions: Array<{
     id: string; type: string; quantity: number; createdAt: string;
     product: { name: string; sku: string };
@@ -100,6 +101,32 @@ export default function DailyReportPage() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Transfers */}
+          {data.transfers > 0 && (
+            <Card className="mb-4 bg-purple-50 border-purple-200">
+              <CardContent className="p-3">
+                <div className="flex items-center gap-2">
+                  <ArrowRightLeft className="h-4 w-4 text-purple-600" />
+                  <span className="text-xs text-purple-600 font-medium">Transfers</span>
+                  <span className="text-lg font-bold text-purple-700 ml-auto">{data.transfers}</span>
+                  <span className="text-[10px] text-purple-500">completed</span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* WhatsApp Share */}
+          <button
+            onClick={() => {
+              const d = new Date(data.date).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+              const msg = `*BCH Daily Report — ${d}*\n\nInwards: ${data.inwards.totalQty} items (${data.inwards.count} entries)\nOutwards: ${data.outwards.totalQty} items (${data.outwards.count} entries)\nPayments: ${fmt(data.payments.totalAmount)} (${data.payments.count})\nExpenses: ${fmt(data.expenses.totalAmount)} (${data.expenses.count})${data.transfers > 0 ? `\nTransfers: ${data.transfers} completed` : ""}\n\n— Sent from BCH App`;
+              window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+            }}
+            className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium mb-4"
+          >
+            <MessageCircle className="h-4 w-4" /> Share to WhatsApp
+          </button>
 
           {data.recentTransactions.length > 0 && (
             <>

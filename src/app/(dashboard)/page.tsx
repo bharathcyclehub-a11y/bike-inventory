@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   Package, ArrowDownCircle, ArrowUpCircle, AlertTriangle,
   IndianRupee, Brain, Truck, Clock, CheckCircle2, Flag,
-  Users, ShieldAlert,
+  Users, ShieldAlert, ListTodo, ChevronRight, Circle,
 } from "lucide-react";
 import { DashboardCard } from "@/components/dashboard-card";
 import { TransactionItem } from "@/components/transaction-item";
@@ -37,6 +37,100 @@ interface CEOData {
   people: Array<{ name: string; role: string; pending: number; overdue24h: number; overdue48h: number; overdue72h: number }>;
   todaySummary: { inwardsVerified: number; inwardsPending: number; deliveriesClosed: number; deliveriesPending: number; expensesRecorded: number; posWithoutTracking: number };
   criticalAlerts: Array<{ type: string; message: string; owner: string; count: number }>;
+}
+
+/* ── My Tasks widget — shown on all dashboards ──────── */
+function MyTasksWidget() {
+  const [tasks, setTasks] = useState<Array<{
+    id: string; taskNo: string; title: string; priority: string; status: string;
+    assignees?: Array<{ user: { name: string } }>;
+  }>>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/tasks?limit=50")
+      .then((r) => r.json())
+      .then((res) => {
+        const data = res.data ?? res;
+        // Show non-done tasks, sorted: TODAY first, then WEEK, then MONTH
+        const priorityOrder: Record<string, number> = { TODAY: 0, TOMORROW: 1, THREE_DAYS: 2, WEEK: 3, MONTH: 4 };
+        const pending = data
+          .filter((t: { status: string }) => t.status !== "DONE")
+          .sort((a: { priority: string }, b: { priority: string }) => (priorityOrder[a.priority] ?? 9) - (priorityOrder[b.priority] ?? 9));
+        setTasks(pending);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const priorityDot: Record<string, string> = {
+    TODAY: "bg-red-500", TOMORROW: "bg-orange-500", THREE_DAYS: "bg-yellow-500",
+    WEEK: "bg-blue-500", MONTH: "bg-gray-400",
+  };
+  const statusBg: Record<string, string> = {
+    IN_PROGRESS: "text-blue-600 bg-blue-50", BLOCKED: "text-red-600 bg-red-50",
+  };
+
+  if (loading) {
+    return (
+      <Card className="mb-4">
+        <CardContent className="p-4 animate-pulse space-y-2">
+          <div className="h-4 bg-slate-200 rounded w-24" />
+          <div className="h-10 bg-slate-100 rounded" />
+          <div className="h-10 bg-slate-100 rounded" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (tasks.length === 0) return null;
+
+  const shown = tasks.slice(0, 5);
+  const remaining = tasks.length - shown.length;
+
+  return (
+    <Card className="mb-4 border-blue-200 bg-blue-50/30">
+      <CardHeader className="pb-1">
+        <CardTitle className="flex items-center justify-between">
+          <span className="flex items-center gap-1.5">
+            <ListTodo className="h-4 w-4 text-blue-600" />
+            My Tasks
+          </span>
+          <Link href="/tasks" className="text-xs text-blue-600 font-medium flex items-center gap-0.5">
+            View all <ChevronRight className="h-3 w-3" />
+          </Link>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="pt-1 space-y-1">
+        {shown.map((task) => (
+          <Link key={task.id} href="/tasks">
+            <div className="flex items-center gap-2.5 py-2 px-2 rounded-lg hover:bg-blue-50 transition-colors">
+              <div className={`w-2 h-2 rounded-full shrink-0 ${priorityDot[task.priority] || "bg-gray-400"}`} />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-slate-800 truncate">{task.title}</p>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-[10px] text-slate-400 font-mono">{task.taskNo}</span>
+                  {task.status !== "PENDING" && (
+                    <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusBg[task.status] || ""}`}>
+                      {task.status === "IN_PROGRESS" ? "In Progress" : task.status === "BLOCKED" ? "Blocked" : task.status}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <ChevronRight className="h-3.5 w-3.5 text-slate-300 shrink-0" />
+            </div>
+          </Link>
+        ))}
+        {remaining > 0 && (
+          <Link href="/tasks">
+            <p className="text-xs text-blue-600 font-medium text-center py-1.5">
+              +{remaining} more tasks
+            </p>
+          </Link>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 function AdminDashboard() {
@@ -112,7 +206,30 @@ function AdminDashboard() {
 
   return (
     <>
-      {/* Financial Overview — Top Priority */}
+      {/* Tasks — Highest Priority */}
+      <MyTasksWidget />
+
+      {/* Critical Alerts — 24h+ overdue, needs CEO attention (above everything) */}
+      {data.criticalAlerts.length > 0 && (
+        <Card className="mb-3 border-red-300 bg-red-50">
+          <CardHeader className="pb-1">
+            <CardTitle className="flex items-center gap-1.5 text-red-700">
+              <ShieldAlert className="h-4 w-4" />
+              Alerts
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1.5">
+            {data.criticalAlerts.map((alert, i) => (
+              <div key={i} className="flex items-center justify-between py-1">
+                <p className="text-xs text-red-700 font-medium">{alert.message}</p>
+                <Badge variant="danger" className="text-[9px] animate-pulse">{alert.owner}</Badge>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Financial Overview */}
       <div className="grid grid-cols-2 gap-3">
         <Link href="/accounts">
           <Card className="bg-red-50 border-red-200">
@@ -231,25 +348,7 @@ function AdminDashboard() {
         </Card>
       )}
 
-      {/* Critical Alerts — 72h+ overdue, needs CEO attention */}
-      {data.criticalAlerts.length > 0 && (
-        <Card className="mt-4 border-red-300 bg-red-50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-1.5 text-red-700">
-              <ShieldAlert className="h-4 w-4" />
-              Critical Alerts
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {data.criticalAlerts.map((alert, i) => (
-              <div key={i} className="flex items-center justify-between py-1.5">
-                <p className="text-xs text-red-700 font-medium">{alert.message}</p>
-                <Badge variant="danger" className="text-[9px] animate-pulse">{alert.owner}</Badge>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+      {/* Critical Alerts moved to top of dashboard */}
 
       {/* Team Health — Per-person accountability */}
       {data.people.length > 0 && (
@@ -431,6 +530,9 @@ function SupervisorDashboard() {
 
   return (
     <>
+      {/* Tasks */}
+      <MyTasksWidget />
+
       {/* Top Cards — Srinu's priorities */}
       <div className="grid grid-cols-2 gap-3">
         <Link href="/accounts">
