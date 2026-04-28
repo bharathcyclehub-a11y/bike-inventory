@@ -643,6 +643,16 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               <label className="text-[10px] text-slate-500">Delivery Notes</label>
               <Input value={delNotes} onChange={(e) => setDelNotes(e.target.value)} placeholder="Landmark, instructions..." className="text-xs" />
             </div>
+            {/* Outstation toggle */}
+            <label className="flex items-center gap-2 py-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isOutstation}
+                onChange={(e) => setIsOutstation(e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              <span className="text-xs font-medium text-amber-700">Outstation delivery (courier/transport)</span>
+            </label>
             <div className="flex gap-2">
               <button onClick={handleSchedule} disabled={!schedDate || actionLoading}
                 className="flex-1 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50 bg-blue-600">
