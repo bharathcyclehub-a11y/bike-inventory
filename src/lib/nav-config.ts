@@ -12,6 +12,7 @@ import {
   FileText,
   Settings,
   ClipboardList,
+  QrCode,
 } from "lucide-react";
 import type { Role } from "@/types";
 
@@ -91,6 +92,7 @@ export function getDesktopExtraTabs(role: Role): NavItem[] {
       return [
         { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
         { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
+        { href: "/barcode", label: "Barcode Labels", icon: QrCode, key: "barcode" },
         { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
         { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
         { href: "/team", label: "Team", icon: Users, key: "team" },
@@ -100,6 +102,7 @@ export function getDesktopExtraTabs(role: Role): NavItem[] {
       return [
         { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
         { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
+        { href: "/barcode", label: "Barcode Labels", icon: QrCode, key: "barcode" },
         { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
         { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
         { href: "/team", label: "Team", icon: Users, key: "team" },

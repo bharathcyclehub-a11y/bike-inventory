@@ -14,6 +14,8 @@ const BREADCRUMB_MAP: Record<string, string> = {
   "/desktop/reports": "Reports",
   "/desktop/team": "Team",
   "/desktop/more": "Settings",
+  "/desktop/barcode": "Barcode Labels",
+  "/desktop/activity": "Activity Log",
 };
 
 export function DesktopHeader() {
