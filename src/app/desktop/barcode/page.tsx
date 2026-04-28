@@ -117,38 +117,45 @@ export default function DesktopBarcodePage() {
 
   const totalLabels = queue.reduce((sum, q) => sum + q.qty, 0);
 
-  // ──── Print ────
+  // ──── Print (uses hidden iframe to avoid popup blockers) ────
+  const printFrameRef = useRef<HTMLIFrameElement | null>(null);
+
   const handlePrint = () => {
     if (queue.length === 0 || !template) return;
 
-    const win = window.open("", "_blank");
-    if (!win) return;
+    // Create or reuse hidden iframe
+    let iframe = printFrameRef.current;
+    if (!iframe) {
+      iframe = document.createElement("iframe");
+      iframe.style.position = "fixed";
+      iframe.style.top = "-10000px";
+      iframe.style.left = "-10000px";
+      iframe.style.width = "0";
+      iframe.style.height = "0";
+      iframe.style.border = "none";
+      document.body.appendChild(iframe);
+      printFrameRef.current = iframe;
+    }
+
+    const doc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!doc) return;
 
     const w = template.width;
     const h = template.height;
     const pad = template.padding;
     const visibleElements = template.elements.filter((el) => el.visible);
 
-    // TVS Neo: 203 DPI thermal printer, typical 2-inch (50mm) width
-    // Using mm units for precise alignment
-    win.document.open();
-    win.document.write(`<!DOCTYPE html><html><head><title>Print Labels</title>
+    doc.open();
+    doc.write(`<!DOCTYPE html><html><head><title>Print Labels</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: Arial, sans-serif; }
-  @media print {
-    @page {
-      size: ${w}mm ${h}mm;
-      margin: 0;
-    }
-    body { margin: 0; }
-    .label { page-break-after: always; }
-    .label:last-child { page-break-after: auto; }
+  body { font-family: Arial, sans-serif; margin: 0; }
+  @page {
+    size: ${w}mm ${h}mm;
+    margin: 0;
   }
-  @media screen {
-    body { background: #f1f5f9; padding: 20px; display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
-    .label { box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-  }
+  .label { page-break-after: always; }
+  .label:last-child { page-break-after: auto; }
   .label {
     width: ${w}mm;
     height: ${h}mm;
@@ -180,16 +187,15 @@ export default function DesktopBarcodePage() {
     gap: 2mm;
   }
 </style></head><body></body></html>`);
-    win.document.close();
+    doc.close();
 
-    const body = win.document.body;
+    const body = doc.body;
 
     for (const item of queue) {
       for (let c = 0; c < item.qty; c++) {
-        const label = win.document.createElement("div");
+        const label = doc.createElement("div");
         label.className = "label";
 
-        // Check if MRP and sellingPrice are adjacent to combine into one row
         const mrpIdx = visibleElements.findIndex((el) => el.field === "mrp");
         const spIdx = visibleElements.findIndex((el) => el.field === "sellingPrice");
         const priceOnSameRow = mrpIdx >= 0 && spIdx >= 0 && Math.abs(mrpIdx - spIdx) === 1;
@@ -205,11 +211,11 @@ export default function DesktopBarcodePage() {
         };
 
         visibleElements.forEach((el, elIdx) => {
-          if (elIdx === skipIdx) return; // Skip second price element
+          if (elIdx === skipIdx) return;
 
           if (el.type === "barcode") {
             if (item.barcodeImg) {
-              const img = win.document.createElement("img");
+              const img = doc.createElement("img");
               img.src = item.barcodeImg;
               img.alt = item.product.sku || "";
               label.appendChild(img);
@@ -218,19 +224,18 @@ export default function DesktopBarcodePage() {
           }
 
           if (elIdx === priceRowAt) {
-            // Combined price row
-            const row = win.document.createElement("div");
+            const row = doc.createElement("div");
             row.className = "price-row";
 
             const mrpEl = visibleElements[mrpIdx];
             const spEl = visibleElements[spIdx];
 
-            const mrpP = win.document.createElement("p");
+            const mrpP = doc.createElement("p");
             mrpP.style.fontSize = `${mrpEl.fontSize * 0.35}mm`;
             mrpP.style.fontWeight = mrpEl.bold ? "bold" : "normal";
             mrpP.textContent = formatFieldValue("mrp", productData);
 
-            const spP = win.document.createElement("p");
+            const spP = doc.createElement("p");
             spP.style.fontSize = `${spEl.fontSize * 0.35}mm`;
             spP.style.fontWeight = spEl.bold ? "bold" : "normal";
             spP.textContent = formatFieldValue("sellingPrice", productData);
@@ -244,7 +249,7 @@ export default function DesktopBarcodePage() {
           const value = formatFieldValue(el.field, productData);
           if (!value) return;
 
-          const p = win.document.createElement("p");
+          const p = doc.createElement("p");
           p.style.fontSize = `${el.fontSize * 0.35}mm`;
           p.style.fontWeight = el.bold ? "bold" : "normal";
           p.style.textAlign = el.align;
@@ -256,8 +261,11 @@ export default function DesktopBarcodePage() {
       }
     }
 
-    // Small delay for images to load before printing
-    setTimeout(() => win.print(), 300);
+    // Print via iframe (no popup blocker issues)
+    setTimeout(() => {
+      iframe?.contentWindow?.focus();
+      iframe?.contentWindow?.print();
+    }, 400);
   };
 
   // ──── Search results columns ────
@@ -426,12 +434,19 @@ export default function DesktopBarcodePage() {
                       </button>
                     </div>
 
-                    {/* Barcode preview */}
-                    {item.barcodeImg && (
-                      <div className="bg-slate-50 rounded-lg p-2 mb-2 flex justify-center">
-                        <img src={item.barcodeImg} alt={item.product.sku || ""} className="max-h-[40px]" />
+                    {/* Label preview */}
+                    <div className="bg-white border border-slate-200 rounded-lg p-2 mb-2">
+                      {item.barcodeImg && (
+                        <div className="flex justify-center my-1">
+                          <img src={item.barcodeImg} alt={item.product.sku || ""} className="max-h-[36px]" />
+                        </div>
+                      )}
+                      <p className="text-[9px] text-slate-400 text-center font-mono">{item.product.sku}</p>
+                      <div className="flex justify-between mt-1 px-1">
+                        <span className="text-[10px] text-slate-500">MRP: ₹{item.editMrp.toLocaleString("en-IN")}</span>
+                        <span className="text-[10px] font-bold text-slate-900">₹{item.editPrice.toLocaleString("en-IN")}</span>
                       </div>
-                    )}
+                    </div>
 
                     {/* Editable MRP & Offer Price */}
                     <div className="grid grid-cols-2 gap-2 mb-2">
