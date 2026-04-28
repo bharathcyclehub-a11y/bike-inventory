@@ -63,7 +63,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         const VALID: Record<string, string[]> = {
           PENDING: ["VERIFIED", "WALK_OUT", "SCHEDULED", "FLAGGED", "PREBOOKED"],
           VERIFIED: ["WALK_OUT", "SCHEDULED", "PACKED"],
-          SCHEDULED: ["OUT_FOR_DELIVERY", "VERIFIED", "PACKED"],
+          SCHEDULED: ["OUT_FOR_DELIVERY", "VERIFIED", "PACKED", "DELIVERED"],
           PACKED: ["SHIPPED"],
           SHIPPED: ["IN_TRANSIT"],
           IN_TRANSIT: ["DELIVERED"],

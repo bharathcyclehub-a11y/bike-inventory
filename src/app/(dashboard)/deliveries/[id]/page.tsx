@@ -57,9 +57,12 @@ interface DeliveryData {
   } | null;
 }
 
-const STATUS_STEPS = ["PENDING", "SCHEDULED", "OUT_FOR_DELIVERY", "DELIVERED"];
-// CENTRE invoiceType moves delivery to centre sales view
-const OUTSTATION_STEPS = ["VERIFIED", "PACKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"];
+// Inside Bangalore: simpler flow, no "Out" step
+const BANGALORE_STEPS = ["PENDING", "SCHEDULED", "DELIVERED"];
+// Outside Bangalore (outstation): full flow with dispatch
+const OUTSTATION_STEPS = ["PENDING", "SCHEDULED", "OUT_FOR_DELIVERY", "DELIVERED"];
+// Courier outstation: packed → shipped → transit → delivered
+const COURIER_STEPS = ["VERIFIED", "PACKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"];
 
 function formatINR(n: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
@@ -169,6 +172,16 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         body: JSON.stringify(payload),
       });
       setShowSchedule(false);
+      // Auto-trigger WhatsApp scheduled message
+      if (data?.customerPhone) {
+        const date = new Date(schedDate).toLocaleDateString("en-IN");
+        const productName = getProductName();
+        const msg = templates.scheduled
+          ? renderTemplate(templates.scheduled, { customerName: data.customerName, productName, deliveryDate: date })
+          : `Hello ${data.customerName},\n\nYour order from Bharath Cycle Hub has been scheduled for delivery.\n\nProduct: ${productName}\nDelivery Date: ${date}\n\nPlease share your delivery location on WhatsApp so our rider can reach you.\n\nThank you!\n- Bharath Cycle Hub`;
+        openWhatsApp(data.customerPhone, msg);
+        markWhatsAppSent("whatsAppScheduledSent");
+      }
       fetchData();
     } catch (e) { setActionError(e instanceof Error ? e.message : "Schedule failed"); }
     finally { setActionLoading(false); }
@@ -330,7 +343,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   }
 
   const isOuts = data.isOutstation;
-  const activeSteps = isOuts ? OUTSTATION_STEPS : STATUS_STEPS;
+  // Choose progress steps based on delivery type
+  const isCourierFlow = isOuts && ["VERIFIED", "PACKED", "SHIPPED", "IN_TRANSIT"].includes(data.status);
+  const activeSteps = isCourierFlow ? COURIER_STEPS : isOuts ? OUTSTATION_STEPS : BANGALORE_STEPS;
   const stepIdx = activeSteps.indexOf(data.status);
 
   return (
@@ -378,11 +393,11 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       {/* PENDING progress */}
       {data.status === "PENDING" && (
         <div className="flex items-center gap-1 mb-3">
-          {STATUS_STEPS.map((step, i) => (
+          {BANGALORE_STEPS.map((step, i) => (
             <div key={step} className="flex-1">
               <div className={`h-1.5 rounded-full ${i === 0 ? "bg-blue-500" : "bg-slate-200"}`} />
               <p className={`text-[8px] mt-0.5 text-center ${i === 0 ? "text-blue-600 font-medium" : "text-slate-400"}`}>
-                {step === "OUT_FOR_DELIVERY" ? "Out" : step.charAt(0) + step.slice(1).toLowerCase()}
+                {step.charAt(0) + step.slice(1).toLowerCase()}
               </p>
             </div>
           ))}
@@ -957,45 +972,31 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           </div>
         )}
 
-        {/* Local delivery: SCHEDULED -> OUT_FOR_DELIVERY */}
-        {data.status === "SCHEDULED" && !isOuts && !showDispatch && (
+        {/* Inside Bangalore: SCHEDULED -> DELIVERED directly (with WhatsApp) */}
+        {data.status === "SCHEDULED" && !isOuts && (
+          <button onClick={() => {
+            const delWarning = data.paymentStatus?.hasPending
+              ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
+              : "";
+            if (!confirm(`${delWarning}Mark as delivered? Stock will be deducted.`)) return;
+            updateStatus("DELIVERED").then(() => {
+              // Auto-trigger WhatsApp delivered message
+              if (data.customerPhone) {
+                sendDeliveredWhatsApp();
+              }
+            });
+          }} disabled={actionLoading}
+            className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+            <CheckCircle2 className="h-4 w-4" /> Mark Delivered
+          </button>
+        )}
+
+        {/* Outstation: SCHEDULED -> dispatch form */}
+        {data.status === "SCHEDULED" && isOuts && !showDispatch && (
           <button onClick={() => setShowDispatch(true)} disabled={actionLoading}
             className="w-full flex items-center justify-center gap-2 bg-orange-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <Truck className="h-4 w-4" /> Dispatch
           </button>
-        )}
-
-        {showDispatch && data.status === "SCHEDULED" && !isOuts && (
-          <Card className="border-orange-200">
-            <CardContent className="p-3 space-y-2">
-              <p className="text-xs font-semibold text-slate-700">Dispatch Details (Porter)</p>
-              <div>
-                <label className="text-[10px] text-slate-500">Vehicle Number</label>
-                <Input value={vehicleNo} onChange={(e) => setVehicleNo(e.target.value)} placeholder="e.g. KA-01-AB-1234" className="text-xs" />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500">Tracking Link</label>
-                <Input value={courierTrackingNo} onChange={(e) => setCourierTrackingNo(e.target.value)} placeholder="Porter / tracking URL" className="text-xs" />
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={async () => {
-                    await updateStatus("OUT_FOR_DELIVERY", {
-                      courierName: "Porter",
-                      vehicleNo: vehicleNo.trim() || undefined,
-                      courierTrackingNo: courierTrackingNo.trim() || undefined,
-                    });
-                    setShowDispatch(false);
-                    setShowDispatchWhatsApp(true);
-                  }}
-                  disabled={actionLoading}
-                  className="flex-1 bg-orange-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
-                  {actionLoading ? "Dispatching..." : "Confirm Dispatch"}
-                </button>
-                <button onClick={() => setShowDispatch(false)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">Cancel</button>
-              </div>
-            </CardContent>
-          </Card>
         )}
 
         {showDispatch && data.status === "SCHEDULED" && isOuts && (
@@ -1024,7 +1025,8 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                       courierCost: courierCost ? parseFloat(courierCost) : undefined,
                     });
                     setShowDispatch(false);
-                    setShowDispatchWhatsApp(true);
+                    // Auto-trigger WhatsApp dispatched message
+                    if (data.customerPhone) sendDispatchedWhatsApp();
                   }}
                   disabled={actionLoading}
                   className="flex-1 bg-amber-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
@@ -1067,7 +1069,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
               : "";
             if (!confirm(`${delWarning}Mark as delivered? Stock will be deducted.`)) return;
-            updateStatus("DELIVERED");
+            updateStatus("DELIVERED").then(() => {
+              if (data.customerPhone) sendDeliveredWhatsApp();
+            });
           }} disabled={actionLoading}
             className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <CheckCircle2 className="h-4 w-4" /> Mark Delivered
@@ -1080,7 +1084,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
               : "";
             if (!confirm(`${delWarning}Mark as delivered? Stock will be deducted.`)) return;
-            updateStatus("DELIVERED");
+            updateStatus("DELIVERED").then(() => {
+              if (data.customerPhone) sendDeliveredWhatsApp();
+            });
           }} disabled={actionLoading}
             className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <CheckCircle2 className="h-4 w-4" /> Mark Delivered
