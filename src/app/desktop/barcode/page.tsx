@@ -143,7 +143,6 @@ export default function DesktopBarcodePage() {
     const w = template.width;
     const h = template.height;
     const pad = template.padding;
-    const visibleElements = template.elements.filter((el) => el.visible);
 
     doc.open();
     doc.write(`<!DOCTYPE html><html><head><title>Print Labels</title>
@@ -164,28 +163,27 @@ export default function DesktopBarcodePage() {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    align-items: stretch;
+    align-items: center;
     overflow: hidden;
+    text-align: center;
   }
   .label img {
     max-width: 100%;
     height: ${template.barcodeHeight}mm;
     object-fit: contain;
     display: block;
-    margin: 0.5mm auto;
+    margin: 0.3mm auto;
   }
   .label p {
-    line-height: 1.3;
+    line-height: 1.2;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    width: 100%;
   }
-  .price-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 2mm;
-  }
+  .sku { font-size: 2.4mm; font-weight: bold; font-family: monospace; }
+  .mrp { font-size: 2.2mm; }
+  .price { font-size: 2.8mm; font-weight: bold; }
 </style></head><body></body></html>`);
     doc.close();
 
@@ -196,66 +194,31 @@ export default function DesktopBarcodePage() {
         const label = doc.createElement("div");
         label.className = "label";
 
-        const mrpIdx = visibleElements.findIndex((el) => el.field === "mrp");
-        const spIdx = visibleElements.findIndex((el) => el.field === "sellingPrice");
-        const priceOnSameRow = mrpIdx >= 0 && spIdx >= 0 && Math.abs(mrpIdx - spIdx) === 1;
-        const priceRowAt = priceOnSameRow ? Math.min(mrpIdx, spIdx) : -1;
-        const skipIdx = priceOnSameRow ? Math.max(mrpIdx, spIdx) : -1;
+        // SKU
+        const skuP = doc.createElement("p");
+        skuP.className = "sku";
+        skuP.textContent = item.product.sku || "";
+        label.appendChild(skuP);
 
-        const productData = {
-          name: item.product.name,
-          sku: item.product.sku || "",
-          mrp: item.editMrp,
-          sellingPrice: item.editPrice,
-          brand: item.product.brand?.name || "",
-        };
+        // Barcode
+        if (item.barcodeImg) {
+          const img = doc.createElement("img");
+          img.src = item.barcodeImg;
+          img.alt = item.product.sku || "";
+          label.appendChild(img);
+        }
 
-        visibleElements.forEach((el, elIdx) => {
-          if (elIdx === skipIdx) return;
+        // MRP
+        const mrpP = doc.createElement("p");
+        mrpP.className = "mrp";
+        mrpP.textContent = `MRP: ₹${item.editMrp.toLocaleString("en-IN")}`;
+        label.appendChild(mrpP);
 
-          if (el.type === "barcode") {
-            if (item.barcodeImg) {
-              const img = doc.createElement("img");
-              img.src = item.barcodeImg;
-              img.alt = item.product.sku || "";
-              label.appendChild(img);
-            }
-            return;
-          }
-
-          if (elIdx === priceRowAt) {
-            const row = doc.createElement("div");
-            row.className = "price-row";
-
-            const mrpEl = visibleElements[mrpIdx];
-            const spEl = visibleElements[spIdx];
-
-            const mrpP = doc.createElement("p");
-            mrpP.style.fontSize = `${mrpEl.fontSize * 0.35}mm`;
-            mrpP.style.fontWeight = mrpEl.bold ? "bold" : "normal";
-            mrpP.textContent = formatFieldValue("mrp", productData);
-
-            const spP = doc.createElement("p");
-            spP.style.fontSize = `${spEl.fontSize * 0.35}mm`;
-            spP.style.fontWeight = spEl.bold ? "bold" : "normal";
-            spP.textContent = formatFieldValue("sellingPrice", productData);
-
-            row.appendChild(mrpP);
-            row.appendChild(spP);
-            label.appendChild(row);
-            return;
-          }
-
-          const value = formatFieldValue(el.field, productData);
-          if (!value) return;
-
-          const p = doc.createElement("p");
-          p.style.fontSize = `${el.fontSize * 0.35}mm`;
-          p.style.fontWeight = el.bold ? "bold" : "normal";
-          p.style.textAlign = el.align;
-          p.textContent = value;
-          label.appendChild(p);
-        });
+        // Offer Price
+        const priceP = doc.createElement("p");
+        priceP.className = "price";
+        priceP.textContent = `₹${item.editPrice.toLocaleString("en-IN")}`;
+        label.appendChild(priceP);
 
         body.appendChild(label);
       }
@@ -434,18 +397,16 @@ export default function DesktopBarcodePage() {
                       </button>
                     </div>
 
-                    {/* Label preview */}
-                    <div className="bg-white border border-slate-200 rounded-lg p-2 mb-2">
+                    {/* Label preview (matches print: SKU → barcode → MRP → offer price) */}
+                    <div className="bg-white border border-slate-200 rounded-lg p-2 mb-2 text-center">
+                      <p className="text-[10px] font-bold text-slate-700 font-mono">{item.product.sku}</p>
                       {item.barcodeImg && (
                         <div className="flex justify-center my-1">
                           <img src={item.barcodeImg} alt={item.product.sku || ""} className="max-h-[36px]" />
                         </div>
                       )}
-                      <p className="text-[9px] text-slate-400 text-center font-mono">{item.product.sku}</p>
-                      <div className="flex justify-between mt-1 px-1">
-                        <span className="text-[10px] text-slate-500">MRP: ₹{item.editMrp.toLocaleString("en-IN")}</span>
-                        <span className="text-[10px] font-bold text-slate-900">₹{item.editPrice.toLocaleString("en-IN")}</span>
-                      </div>
+                      <p className="text-[10px] text-slate-500">MRP: ₹{item.editMrp.toLocaleString("en-IN")}</p>
+                      <p className="text-[11px] font-bold text-slate-900">₹{item.editPrice.toLocaleString("en-IN")}</p>
                     </div>
 
                     {/* Editable MRP & Offer Price */}

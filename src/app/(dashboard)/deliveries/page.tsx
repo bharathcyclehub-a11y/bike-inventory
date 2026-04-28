@@ -53,6 +53,7 @@ interface ZohoSearchResult {
   balance: number;
   status: string;
   alreadyImported: boolean;
+  appStatus: string | null;
 }
 
 const STATUS_CONFIG: Record<string, { label: string; variant: string; icon: typeof Truck }> = {
@@ -160,15 +161,15 @@ export default function DeliveriesPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const handleVerify = async (id: string) => {
+  const handleMarkReady = async (id: string) => {
     try {
       const res = await fetch(`/api/deliveries/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "VERIFIED" }),
+        body: JSON.stringify({ status: "PENDING" }),
       });
       const data = await res.json();
-      if (!data.success) { setFetchError(data.error || "Verify failed"); return; }
+      if (!data.success) { setFetchError(data.error || "Mark ready failed"); return; }
       fetchData();
     } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
   };
@@ -210,7 +211,7 @@ export default function DeliveriesPage() {
     } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
   };
 
-  const handleTagType = async (id: string, invoiceType: "SALES" | "SERVICE") => {
+  const handleTagType = async (id: string, invoiceType: "SALES" | "SERVICE" | "CENTRE") => {
     if (invoiceType === "SERVICE" && !confirm("Mark as service invoice? It will exit the delivery pipeline.")) return;
     try {
       const res = await fetch(`/api/deliveries/${id}`, {
@@ -503,7 +504,6 @@ export default function DeliveriesPage() {
 
   const FILTERS = [
     { key: "PENDING", label: "Pending", count: stats?.pending },
-    { key: "VERIFIED", label: "Verified", count: stats?.verified },
     { key: "SCHEDULED", label: "Scheduled", count: stats?.scheduled },
     { key: "OUT_FOR_DELIVERY", label: "Out", count: stats?.outForDelivery },
     { key: "DELIVERED", label: "Delivered", count: stats?.deliveredToday },
@@ -575,7 +575,7 @@ export default function DeliveriesPage() {
         </div>
       </div>
 
-      {/* Zoho Quick Search */}
+      {/* Invoice Search (inside Fetch area — searches Zoho for specific invoice) */}
       {canFetchInvoices && (
         <div className="flex gap-1.5 mb-2">
           <div className="relative flex-1">
@@ -792,7 +792,11 @@ export default function DeliveriesPage() {
                     </p>
                     <p className="text-[10px] text-slate-400">
                       {r.date} | {r.status}
-                      {r.alreadyImported && <span className="text-green-600 font-medium ml-1">Already imported</span>}
+                      {r.alreadyImported && (
+                        <span className="text-green-600 font-medium ml-1">
+                          ✓ Imported — {STATUS_CONFIG[r.appStatus || ""]?.label || r.appStatus || "Unknown"}
+                        </span>
+                      )}
                     </p>
                   </div>
                 </label>
@@ -940,6 +944,15 @@ export default function DeliveriesPage() {
                       {d.invoiceType === "SALES" && d.status !== "PENDING" && (
                         <Badge variant={"info"} className="text-[9px]">Sales</Badge>
                       )}
+                      {d.invoiceType === "SERVICE" && (
+                        <button onClick={(e) => { e.preventDefault(); handleUndoType(d.id); }}
+                          className="inline-flex items-center gap-0.5 text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-medium">
+                          Service <span className="text-amber-400">x</span>
+                        </button>
+                      )}
+                      {d.invoiceType === "CENTRE" && (
+                        <Badge variant={"default"} className="text-[9px] bg-purple-100 text-purple-700">Centre</Badge>
+                      )}
                       {d.isOutstation && (
                         <Badge variant={"warning"} className="text-[9px]">Outstation</Badge>
                       )}
@@ -1035,8 +1048,12 @@ export default function DeliveriesPage() {
                           className="flex-1 flex items-center justify-center gap-1 bg-amber-500 text-white py-1.5 rounded-md text-xs font-medium">
                           <Wrench className="h-3 w-3" /> Service
                         </button>
-                        <button onClick={() => handleFlag(d.id)}
-                          className="bg-red-100 text-red-700 px-3 py-1.5 rounded-md text-xs font-medium">Flag</button>
+                        {isAdmin && (
+                          <button onClick={() => { if (!confirm("Move to Centre Sales?")) return; handleTagType(d.id, "CENTRE"); }}
+                            className="flex items-center justify-center gap-1 bg-purple-100 text-purple-700 px-2.5 py-1.5 rounded-md text-xs font-medium">
+                            Centre
+                          </button>
+                        )}
                       </>
                     )}
                     {d.status === "PENDING" && d.invoiceType === "SALES" && (
@@ -1052,22 +1069,13 @@ export default function DeliveriesPage() {
                         </button>
                       </>
                     )}
-                    {d.status === "VERIFIED" && (
-                      <>
-                        <button onClick={() => handleWalkOut(d.id)}
-                          className="flex-1 bg-green-600 text-white py-1.5 rounded-md text-xs font-medium">Walk-out</button>
-                        <Link href={`/deliveries/${d.id}`} className="flex-1">
-                          <button className="w-full bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Schedule</button>
-                        </Link>
-                      </>
-                    )}
                     {d.status === "SCHEDULED" && (
                       <Link href="/deliveries/dispatch" className="flex-1">
                         <button className="w-full bg-orange-600 text-white py-1.5 rounded-md text-xs font-medium">Go to Dispatch</button>
                       </Link>
                     )}
                     {d.status === "PREBOOKED" && (
-                      <button onClick={() => handleVerify(d.id)}
+                      <button onClick={() => handleMarkReady(d.id)}
                         className="flex-1 bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Mark Ready</button>
                     )}
                     {role === "ADMIN" && (

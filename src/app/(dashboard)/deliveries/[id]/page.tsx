@@ -3,10 +3,11 @@
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import {
   ArrowLeft, Phone, MapPin, Clock, CheckCircle2, Truck,
   Flag, AlertTriangle, Loader2, Package, Download,
-  MessageCircle, Check, Globe, IndianRupee,
+  MessageCircle, Check, Globe, IndianRupee, Building2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +57,7 @@ interface DeliveryData {
 }
 
 const STATUS_STEPS = ["PENDING", "SCHEDULED", "OUT_FOR_DELIVERY", "DELIVERED"];
+// CENTRE invoiceType moves delivery to centre sales view
 const OUTSTATION_STEPS = ["VERIFIED", "PACKED", "SHIPPED", "IN_TRANSIT", "DELIVERED"];
 
 function formatINR(n: number) {
@@ -65,10 +67,14 @@ function formatINR(n: number) {
 export default function DeliveryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const { data: session } = useSession();
+  const role = (session?.user as { role?: string })?.role || "";
+  const isAdmin = role === "ADMIN";
   const [data, setData] = useState<DeliveryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [contactSaved, setContactSaved] = useState(false);
 
   // Schedule form
   const [showSchedule, setShowSchedule] = useState(false);
@@ -349,7 +355,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       </div>
 
       {/* Progress Steps */}
-      {!["FLAGGED", "WALK_OUT", "PREBOOKED", "PENDING", "VERIFIED"].includes(data.status) && (
+      {!["FLAGGED", "WALK_OUT", "PREBOOKED", "PENDING"].includes(data.status) && (
         <div className="flex items-center gap-1 mb-3">
           {activeSteps.map((step, i) => (
             <div key={step} className="flex-1">
@@ -362,8 +368,8 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         </div>
       )}
 
-      {/* PENDING/VERIFIED progress */}
-      {["PENDING", "VERIFIED"].includes(data.status) && (
+      {/* PENDING progress */}
+      {data.status === "PENDING" && (
         <div className="flex items-center gap-1 mb-3">
           {STATUS_STEPS.map((step, i) => (
             <div key={step} className="flex-1">
@@ -377,7 +383,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       )}
 
       {/* Customer Info */}
-      <Card className="mb-3">
+      <Card className={`mb-3 ${isOuts ? "border-amber-200" : ""}`}>
         <CardContent className="p-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-sm font-semibold text-slate-900">{data.customerName}</p>
@@ -393,14 +399,27 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               <p className="text-xs text-slate-600">{data.customerAddress}</p>
             </div>
           )}
-          {data.customerArea && <p className="text-[10px] text-slate-500">Area: {data.customerArea} {data.customerPincode ? `| ${data.customerPincode}` : ""}</p>}
+          {(data.customerArea || data.customerPincode) && (
+            <p className="text-[10px] text-slate-500">
+              {data.customerArea ? `Area: ${data.customerArea}` : ""}
+              {data.customerPincode ? ` | Pincode: ${data.customerPincode}` : ""}
+            </p>
+          )}
+          {/* Show address/pincode prominently for outstation */}
+          {isOuts && !data.customerAddress && (
+            <p className="text-[10px] text-amber-600 font-medium">⚠ No address on file — outstation delivery needs an address</p>
+          )}
+          {isOuts && !data.customerPincode && (
+            <p className="text-[10px] text-amber-600 font-medium">⚠ No pincode on file</p>
+          )}
         </CardContent>
       </Card>
 
-      {/* Save Contact Card */}
-      {["PENDING", "VERIFIED"].includes(data.status) && data.customerPhone && (
+      {/* Save Contact Card — mandatory before proceeding from PENDING */}
+      {["PENDING"].includes(data.status) && data.customerPhone && !contactSaved && (
         <Card className="mb-3 border-blue-200 bg-blue-50">
           <CardContent className="p-3">
+            <p className="text-[10px] text-blue-700 font-medium mb-1.5">Save the contact before proceeding</p>
             <button
               onClick={() => {
                 const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
@@ -412,6 +431,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                 a.download = `${data.customerName}.vcf`;
                 a.click();
                 URL.revokeObjectURL(url);
+                setContactSaved(true);
               }}
               className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
             >
@@ -790,57 +810,55 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       <div className="space-y-2">
         {data.status === "PENDING" && data.invoiceType === "SALES" && !showSchedule && (
           <div className="flex gap-2">
-            <button onClick={() => {
-              const woWarning = data.paymentStatus?.hasPending
-                ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
-                : "";
-              const items = data.lineItems || [];
-              const stockLines = items.map(i => `  ${i.name} x${i.quantity}`).join("\n");
-              const msg = items.length > 0
-                ? `${woWarning}Mark as walk-out?\n\nStock will be deducted:\n${stockLines}`
-                : `${woWarning}Mark as walk-out? Stock will be deducted.`;
-              if (!confirm(msg)) return;
-              updateStatus("WALK_OUT");
-            }} disabled={actionLoading}
-              className="flex-1 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
-              Walk-out (Took it)
-            </button>
-            <button onClick={() => setShowSchedule(true)}
-              className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
-              Schedule Delivery
-            </button>
-            <button onClick={handleFlag}
-              className="flex items-center justify-center gap-2 bg-red-100 text-red-700 px-4 py-2.5 rounded-lg text-sm font-medium">
-              <Flag className="h-4 w-4" /> Flag
-            </button>
+            {/* Require contact saved before allowing actions */}
+            {!contactSaved && data.customerPhone ? (
+              <p className="text-xs text-amber-600 font-medium py-2">Save customer contact above to proceed</p>
+            ) : (
+              <>
+                <button onClick={() => {
+                  const woWarning = data.paymentStatus?.hasPending
+                    ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
+                    : "";
+                  const items = data.lineItems || [];
+                  const stockLines = items.map(i => `  ${i.name} x${i.quantity}`).join("\n");
+                  const msg = items.length > 0
+                    ? `${woWarning}Mark as walk-out?\n\nStock will be deducted:\n${stockLines}`
+                    : `${woWarning}Mark as walk-out? Stock will be deducted.`;
+                  if (!confirm(msg)) return;
+                  updateStatus("WALK_OUT");
+                }} disabled={actionLoading}
+                  className="flex-1 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+                  Walk-out (Took it)
+                </button>
+                <button onClick={() => setShowSchedule(true)}
+                  className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
+                  Schedule Delivery
+                </button>
+                {isAdmin && (
+                  <button onClick={() => {
+                    if (!confirm("Move to Centre Sales?")) return;
+                    updateStatus("PENDING", { invoiceType: "CENTRE" });
+                  }}
+                    className="flex items-center justify-center gap-1.5 bg-purple-100 text-purple-700 px-3 py-2.5 rounded-lg text-sm font-medium">
+                    <Building2 className="h-4 w-4" /> Centre
+                  </button>
+                )}
+              </>
+            )}
           </div>
         )}
 
         {data.status === "PENDING" && !data.invoiceType && (
           <div className="flex gap-2">
-            <button onClick={handleFlag}
-              className="flex-1 flex items-center justify-center gap-2 bg-red-100 text-red-700 px-4 py-2.5 rounded-lg text-sm font-medium">
-              <Flag className="h-4 w-4" /> Flag
-            </button>
-          </div>
-        )}
-
-        {data.status === "VERIFIED" && !showSchedule && (
-          <div className="flex gap-2">
-            <button onClick={() => {
-              const woWarning = data.paymentStatus?.hasPending
-                ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
-                : "";
-              if (!confirm(`${woWarning}Mark as walk-out? Stock will be deducted.`)) return;
-              updateStatus("WALK_OUT");
-            }} disabled={actionLoading}
-              className="flex-1 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
-              Walk-out (Took it)
-            </button>
-            <button onClick={() => setShowSchedule(true)}
-              className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
-              Schedule Delivery
-            </button>
+            {isAdmin && (
+              <button onClick={() => {
+                if (!confirm("Move to Centre Sales?")) return;
+                updateStatus("PENDING", { invoiceType: "CENTRE" });
+              }}
+                className="flex-1 flex items-center justify-center gap-1.5 bg-purple-100 text-purple-700 px-4 py-2.5 rounded-lg text-sm font-medium">
+                <Building2 className="h-4 w-4" /> Centre
+              </button>
+            )}
           </div>
         )}
 
@@ -982,7 +1000,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         )}
 
         {data.status === "PREBOOKED" && (
-          <button onClick={() => updateStatus("VERIFIED")} disabled={actionLoading}
+          <button onClick={() => updateStatus("PENDING")} disabled={actionLoading}
             className="w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             Mark Ready (Cycle Available)
           </button>

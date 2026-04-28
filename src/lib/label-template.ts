@@ -26,11 +26,11 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   barcodeHeight: 8,
   elements: [
     { id: "storeName", type: "text", field: "storeName", label: "Store Name", visible: false, fontSize: 6, bold: true, align: "center" },
-    { id: "productName", type: "text", field: "productName", label: "Product Name", visible: true, fontSize: 6, bold: false, align: "center" },
+    { id: "productName", type: "text", field: "productName", label: "Product Name", visible: false, fontSize: 6, bold: false, align: "center" },
     { id: "sku", type: "text", field: "sku", label: "SKU", visible: true, fontSize: 7, bold: true, align: "center" },
     { id: "barcode", type: "barcode", field: "barcode", label: "Barcode", visible: true, fontSize: 0, bold: false, align: "center" },
-    { id: "mrp", type: "text", field: "mrp", label: "MRP", visible: true, fontSize: 7, bold: true, align: "left" },
-    { id: "sellingPrice", type: "text", field: "sellingPrice", label: "Offer Price", visible: true, fontSize: 8, bold: true, align: "right" },
+    { id: "mrp", type: "text", field: "mrp", label: "MRP", visible: true, fontSize: 7, bold: true, align: "center" },
+    { id: "sellingPrice", type: "text", field: "sellingPrice", label: "Offer Price", visible: true, fontSize: 8, bold: true, align: "center" },
     { id: "brand", type: "text", field: "brand", label: "Brand", visible: false, fontSize: 6, bold: false, align: "center" },
   ],
 };

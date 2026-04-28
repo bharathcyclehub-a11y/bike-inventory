@@ -82,9 +82,9 @@ export async function POST(req: NextRequest) {
     const invoiceNumbers = invoices.map((inv: { invoice_number: string }) => inv.invoice_number);
     const existing = await prisma.delivery.findMany({
       where: { invoiceNo: { in: invoiceNumbers } },
-      select: { invoiceNo: true },
+      select: { invoiceNo: true, status: true },
     });
-    const existingSet = new Set(existing.map((d) => d.invoiceNo));
+    const existingMap = new Map(existing.map((d) => [d.invoiceNo, d.status]));
 
     // Build results with import status
     const results = invoices.map((inv: {
@@ -99,7 +99,8 @@ export async function POST(req: NextRequest) {
       total: inv.total,
       balance: inv.balance,
       status: inv.status,
-      alreadyImported: existingSet.has(inv.invoice_number),
+      alreadyImported: existingMap.has(inv.invoice_number),
+      appStatus: existingMap.get(inv.invoice_number) || null,
     }));
 
     return successResponse({ results, source, total: results.length });
