@@ -892,6 +892,8 @@ model Delivery {
   whatsAppDeliveredSent   Boolean  @default(false)
   freeAccessories         String?
 
+  reversePickup           Boolean  @default(false)
+
   // Outstation delivery
   isOutstation            Boolean  @default(false)
   courierName             String?

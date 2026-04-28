@@ -97,6 +97,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.courierCost !== undefined) updateData.courierCost = data.courierCost;
       if (data.vehicleNo !== undefined) updateData.vehicleNo = data.vehicleNo;
       if (data.freeAccessories !== undefined) updateData.freeAccessories = data.freeAccessories;
+      if (data.reversePickup !== undefined) updateData.reversePickup = data.reversePickup;
 
       // WhatsApp tracking flags
       if (data.whatsAppScheduledSent !== undefined) updateData.whatsAppScheduledSent = data.whatsAppScheduledSent;

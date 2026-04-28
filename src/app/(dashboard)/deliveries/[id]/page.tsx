@@ -40,6 +40,7 @@ interface DeliveryData {
   whatsAppDispatchedSent: boolean;
   whatsAppDeliveredSent: boolean;
   freeAccessories: string | null;
+  reversePickup: boolean;
   googleReviewLink: string | null;
   invoiceType: string | null;
   isOutstation: boolean;
@@ -53,6 +54,7 @@ interface DeliveryData {
     paidAmount: number;
     totalAmount: number;
   } | null;
+  salesPerson: string | null;
 }
 
 // Inside Bangalore: simpler flow, no "Out" step
@@ -100,6 +102,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
   // Free accessories
   const [freeAccessories, setFreeAccessories] = useState("");
+  const [reversePickup, setReversePickup] = useState(false);
 
   // WhatsApp templates
   const [templates, setTemplates] = useState<Record<string, string>>({});
@@ -122,6 +125,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           setCourierTrackingNo(res.data.courierTrackingNo || "");
           setCourierCost(res.data.courierCost ? String(res.data.courierCost) : "");
           setVehicleNo(res.data.vehicleNo || "");
+          setReversePickup(res.data.reversePickup || false);
         }
       })
       .catch(() => {})
@@ -147,37 +151,6 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       });
       fetchData();
     } catch (e) { setActionError(e instanceof Error ? e.message : "Action failed"); }
-    finally { setActionLoading(false); }
-  };
-
-  const handleSchedule = async () => {
-    if (!schedDate) return;
-    setActionLoading(true);
-    try {
-      const payload: Record<string, unknown> = {
-        status: "SCHEDULED",
-        scheduledDate: schedDate,
-        deliveryNotes: delNotes,
-        isOutstation,
-      };
-      await fetch(`/api/deliveries/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      setShowSchedule(false);
-      // Auto-trigger WhatsApp scheduled message
-      if (data?.customerPhone) {
-        const date = new Date(schedDate).toLocaleDateString("en-IN");
-        const productName = getProductName();
-        const msg = templates.scheduled
-          ? renderTemplate(templates.scheduled, { customerName: data.customerName, productName, deliveryDate: date })
-          : `Hello ${data.customerName},\n\nYour order from Bharath Cycle Hub has been scheduled for delivery.\n\nProduct: ${productName}\nDelivery Date: ${date}\n\nPlease share your delivery location on WhatsApp so our rider can reach you.\n\nThank you!\n- Bharath Cycle Hub`;
-        openWhatsApp(data.customerPhone, msg);
-        markWhatsAppSent("whatsAppScheduledSent");
-      }
-      fetchData();
-    } catch (e) { setActionError(e instanceof Error ? e.message : "Schedule failed"); }
     finally { setActionLoading(false); }
   };
 
@@ -456,49 +429,45 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
-      {/* Delivery Details — Pincode (all deliveries) + Address/Alt Phone (outstation) */}
-      {["PENDING", "SCHEDULED"].includes(data.status) && (
+      {/* Delivery Details — editable on SCHEDULED (read-only summary, tap to edit pincode/address) */}
+      {data.status === "SCHEDULED" && (
         <Card className={`mb-3 ${isOuts ? "border-amber-200" : "border-slate-200"}`}>
           <CardContent className="p-3 space-y-2">
             <p className="text-xs font-semibold text-slate-700">
               {isOuts ? "Outstation Delivery Details" : "Delivery Details"}
             </p>
-            {/* Pincode — always visible */}
             <div>
-              <label className="text-[10px] text-slate-500">Pincode *</label>
-              <Input
-                value={editPincode}
-                onChange={(e) => setEditPincode(e.target.value)}
-                placeholder="e.g. 560001"
-                className="text-xs"
-                inputMode="numeric"
-                maxLength={6}
-              />
+              <label className="text-[10px] text-slate-500">{isOuts ? "Delivery Address *" : "Pincode *"}</label>
+              {isOuts ? (
+                <textarea
+                  value={editAddress}
+                  onChange={(e) => setEditAddress(e.target.value)}
+                  placeholder="House no, street, area, city, state"
+                  className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-slate-300 resize-none"
+                  rows={2}
+                />
+              ) : (
+                <Input
+                  value={editPincode}
+                  onChange={(e) => setEditPincode(e.target.value)}
+                  placeholder="e.g. 560001"
+                  className="text-xs"
+                  inputMode="numeric"
+                  maxLength={6}
+                />
+              )}
             </div>
-            {/* Outstation: full address + alt phone */}
             {isOuts && (
-              <>
-                <div>
-                  <label className="text-[10px] text-slate-500">Full Address *</label>
-                  <textarea
-                    value={editAddress}
-                    onChange={(e) => setEditAddress(e.target.value)}
-                    placeholder="House no, street, area, city, state"
-                    className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-slate-300 resize-none"
-                    rows={2}
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] text-slate-500">Alternate Phone</label>
-                  <Input
-                    value={editAltPhone}
-                    onChange={(e) => setEditAltPhone(e.target.value)}
-                    placeholder="Alternate contact number"
-                    className="text-xs"
-                    inputMode="tel"
-                  />
-                </div>
-              </>
+              <div>
+                <label className="text-[10px] text-slate-500">Alternate Phone</label>
+                <Input
+                  value={editAltPhone}
+                  onChange={(e) => setEditAltPhone(e.target.value)}
+                  placeholder="Alternate contact number"
+                  className="text-xs"
+                  inputMode="tel"
+                />
+              </div>
             )}
             <button
               onClick={async () => {
@@ -522,7 +491,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               disabled={actionLoading}
               className="w-full bg-slate-800 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50"
             >
-              {actionLoading ? "Saving..." : "Save Details"}
+              {actionLoading ? "Saving..." : "Update Details"}
             </button>
           </CardContent>
         </Card>
@@ -692,13 +661,129 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
-      {/* Schedule Form */}
+      {/* Schedule Form — TeleCRM-style: Inside Bangalore / Outside Bangalore */}
       {showSchedule && (
-        <Card className="mb-3 border-blue-200">
-          <CardContent className="p-3 space-y-2">
-            <p className="text-xs font-semibold text-slate-700">Schedule Delivery</p>
+        <Card className={`mb-3 ${isOutstation ? "border-amber-200" : "border-blue-200"}`}>
+          <CardContent className="p-3 space-y-3">
+            {/* Toggle: Inside / Outside Bangalore */}
+            <div className="flex rounded-lg overflow-hidden border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setIsOutstation(false)}
+                className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                  !isOutstation ? "bg-blue-600 text-white" : "bg-slate-50 text-slate-600"
+                }`}
+              >
+                Inside Bangalore
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsOutstation(true)}
+                className={`flex-1 py-2 text-xs font-medium transition-colors ${
+                  isOutstation ? "bg-amber-600 text-white" : "bg-slate-50 text-slate-600"
+                }`}
+              >
+                Outside Bangalore
+              </button>
+            </div>
+
+            {/* Auto-populated: Invoice Number */}
             <div>
-              <label className="text-[10px] text-slate-500">Delivery Date *</label>
+              <label className="text-[10px] text-slate-500">Invoice Number</label>
+              <div className="text-xs font-medium text-slate-900 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">{data.invoiceNo}</div>
+            </div>
+
+            {/* Auto-populated: Product Name */}
+            <div>
+              <label className="text-[10px] text-slate-500">Product Name</label>
+              <div className="text-xs font-medium text-slate-900 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                {data.lineItems?.map((i) => i.name).join(", ") || "—"}
+              </div>
+            </div>
+
+            {/* Auto-populated: Sales Person */}
+            <div>
+              <label className="text-[10px] text-slate-500">Sales Person</label>
+              <div className="text-xs font-medium text-slate-900 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+                {data.salesPerson || "—"}
+              </div>
+            </div>
+
+            {/* Alternate Phone */}
+            <div>
+              <label className="text-[10px] text-slate-500">Alternate Phone</label>
+              <Input
+                value={editAltPhone}
+                onChange={(e) => setEditAltPhone(e.target.value)}
+                placeholder="Alternate contact number"
+                className="text-xs"
+                inputMode="tel"
+              />
+            </div>
+
+            {/* --- Inside Bangalore specific fields --- */}
+            {!isOutstation && (
+              <>
+                <div>
+                  <label className="text-[10px] text-slate-500">Pincode *</label>
+                  <Input
+                    value={editPincode}
+                    onChange={(e) => setEditPincode(e.target.value)}
+                    placeholder="e.g. 560001"
+                    className="text-xs"
+                    inputMode="numeric"
+                    maxLength={6}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500">Free Accessories</label>
+                  <Input
+                    value={freeAccessories}
+                    onChange={(e) => setFreeAccessories(e.target.value)}
+                    placeholder="e.g. Lock, Bell, Pump, Toolkit"
+                    className="text-xs"
+                  />
+                </div>
+                <label className="flex items-center gap-2 py-1 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={reversePickup}
+                    onChange={(e) => setReversePickup(e.target.checked)}
+                    className="rounded border-slate-300"
+                  />
+                  <span className="text-xs font-medium text-slate-700">Reverse Pickup (exchange old cycle)</span>
+                </label>
+              </>
+            )}
+
+            {/* --- Outside Bangalore specific fields --- */}
+            {isOutstation && (
+              <>
+                <div>
+                  <label className="text-[10px] text-slate-500">Delivery Address *</label>
+                  <textarea
+                    value={editAddress}
+                    onChange={(e) => setEditAddress(e.target.value)}
+                    placeholder="House no, street, area, city, state, pincode"
+                    className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-slate-300 resize-none"
+                    rows={2}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500">Free Accessories</label>
+                  <Input
+                    value={freeAccessories}
+                    onChange={(e) => setFreeAccessories(e.target.value)}
+                    placeholder="e.g. Lock, Bell, Pump, Toolkit"
+                    className="text-xs"
+                  />
+                </div>
+              </>
+            )}
+
+            {/* Estimated Delivery Date */}
+            <div>
+              <label className="text-[10px] text-slate-500">Estimated Delivery *</label>
               <div className="grid grid-cols-3 gap-1.5 mt-1">
                 {[
                   { label: "Today", days: 0 },
@@ -713,7 +798,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                   return (
                     <button key={opt.label} type="button" onClick={() => setSchedDate(val)}
                       className={`px-2 py-2 rounded-lg text-xs font-medium transition-colors ${
-                        schedDate === val ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                        schedDate === val
+                          ? (isOutstation ? "bg-amber-600 text-white" : "bg-blue-600 text-white")
+                          : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                       }`}>
                       {opt.label}
                     </button>
@@ -721,31 +808,67 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                 })}
               </div>
               {schedDate && (
-                <p className="text-[10px] text-blue-600 mt-1">
+                <p className={`text-[10px] mt-1 ${isOutstation ? "text-amber-600" : "text-blue-600"}`}>
                   Selected: {new Date(schedDate + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
                 </p>
               )}
             </div>
+
+            {/* Delivery Notes */}
             <div>
               <label className="text-[10px] text-slate-500">Delivery Notes</label>
               <Input value={delNotes} onChange={(e) => setDelNotes(e.target.value)} placeholder="Landmark, instructions..." className="text-xs" />
             </div>
-            {/* Outstation toggle */}
-            <label className="flex items-center gap-2 py-1.5 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={isOutstation}
-                onChange={(e) => setIsOutstation(e.target.checked)}
-                className="rounded border-slate-300"
-              />
-              <span className="text-xs font-medium text-amber-700">Outstation delivery (courier/transport)</span>
-            </label>
+
+            {/* Submit */}
             <div className="flex gap-2">
-              <button onClick={handleSchedule} disabled={!schedDate || actionLoading}
-                className="flex-1 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50 bg-blue-600">
-                {actionLoading ? "Scheduling..." : "Schedule"}
+              <button
+                onClick={async () => {
+                  if (!schedDate) return;
+                  setActionLoading(true);
+                  try {
+                    const payload: Record<string, unknown> = {
+                      status: "SCHEDULED",
+                      scheduledDate: schedDate,
+                      deliveryNotes: delNotes,
+                      isOutstation,
+                      alternatePhone: editAltPhone.trim() || undefined,
+                      freeAccessories: freeAccessories.trim() || undefined,
+                      ...(isOutstation
+                        ? { customerAddress: editAddress.trim() || undefined }
+                        : {
+                            customerPincode: editPincode.trim() || undefined,
+                            reversePickup,
+                          }),
+                    };
+                    await fetch(`/api/deliveries/${id}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify(payload),
+                    });
+                    setShowSchedule(false);
+                    // Auto-trigger WhatsApp scheduled message
+                    if (data?.customerPhone) {
+                      const date = new Date(schedDate).toLocaleDateString("en-IN");
+                      const productName = getProductName();
+                      const msg = templates.scheduled
+                        ? renderTemplate(templates.scheduled, { customerName: data.customerName, productName, deliveryDate: date })
+                        : `Hello ${data.customerName},\n\nYour order from Bharath Cycle Hub has been scheduled for delivery.\n\nProduct: ${productName}\nDelivery Date: ${date}\n\nPlease share your delivery location on WhatsApp so our rider can reach you.\n\nThank you!\n- Bharath Cycle Hub`;
+                      openWhatsApp(data.customerPhone, msg);
+                      markWhatsAppSent("whatsAppScheduledSent");
+                    }
+                    fetchData();
+                  } catch (e) { setActionError(e instanceof Error ? e.message : "Schedule failed"); }
+                  finally { setActionLoading(false); }
+                }}
+                disabled={!schedDate || actionLoading}
+                className={`flex-1 text-white py-2.5 rounded-lg text-xs font-medium disabled:opacity-50 ${
+                  isOutstation ? "bg-amber-600" : "bg-blue-600"
+                }`}
+              >
+                {actionLoading ? "Scheduling..." : "Schedule Delivery"}
               </button>
-              <button onClick={() => setShowSchedule(false)} className="px-4 py-2 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">Cancel</button>
+              <button onClick={() => setShowSchedule(false)} className="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium">Cancel</button>
             </div>
           </CardContent>
         </Card>
