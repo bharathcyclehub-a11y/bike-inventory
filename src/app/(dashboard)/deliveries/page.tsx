@@ -481,7 +481,6 @@ export default function DeliveriesPage() {
     { key: "OUT_FOR_DELIVERY", label: "Out", count: stats?.outForDelivery },
     { key: "DELIVERED", label: "Delivered", count: stats?.deliveredToday },
     { key: "FLAGGED", label: "Flagged", count: stats?.flagged },
-    { key: "WALK_OUT", label: "Walk-out" },
     { key: "PACKED", label: "Packed" },
     { key: "SHIPPED", label: "Shipped" },
     { key: "IN_TRANSIT", label: "In Transit" },
@@ -995,8 +994,6 @@ export default function DeliveriesPage() {
                   <div className="flex gap-2 mt-1">
                     {d.status === "PENDING" && (
                       <>
-                        <button onClick={() => handleWalkOut(d.id)}
-                          className="flex-1 bg-green-600 text-white py-1.5 rounded-md text-xs font-medium">Walk-out</button>
                         <Link href={`/deliveries/${d.id}`} className="flex-1">
                           <button className="w-full bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Schedule</button>
                         </Link>

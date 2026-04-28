@@ -427,38 +427,31 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         </CardContent>
       </Card>
 
-      {/* Save Contact — opens phone's Add Contact with pre-filled details */}
+      {/* Save Contact — VCF download (works on both iOS and Android) */}
       {["PENDING"].includes(data.status) && data.customerPhone && !contactSaved && (
         <Card className="mb-3 border-blue-200 bg-blue-50">
           <CardContent className="p-3">
             <p className="text-[10px] text-blue-700 font-medium mb-1.5">Save the contact before proceeding</p>
-            <a
-              href={`tel:${data.customerPhone}`}
-              onClick={(e) => {
-                e.preventDefault();
+            <button
+              onClick={() => {
                 const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
-                // Use Android intent to open Add Contact with pre-filled data
-                const intentUrl = `intent://contacts/#Intent;action=android.intent.action.INSERT;type=vnd.android.cursor.dir/contact;S.phone=+91${phone};S.name=${encodeURIComponent(data.customerName + " - " + data.invoiceNo)};end`;
-                // Fallback: try web-based contact add, then VCF
-                try {
-                  window.location.href = intentUrl;
-                } catch {
-                  // Fallback to VCF download
-                  const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${data.customerName} - ${data.invoiceNo}\nTEL:+91${phone}\nEND:VCARD`;
-                  const blob = new Blob([vcard], { type: "text/vcard" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `${data.customerName}.vcf`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }
+                const contactName = `${data.customerName} - ${data.invoiceNo}`;
+                const vcard = `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${contactName}\r\nTEL;TYPE=CELL:+91${phone}\r\nEND:VCARD`;
+                const blob = new Blob([vcard], { type: "text/vcard" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${data.customerName}.vcf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
                 setContactSaved(true);
               }}
               className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
             >
               <Download className="h-4 w-4" /> Save Customer Contact
-            </a>
+            </button>
           </CardContent>
         </Card>
       )}
@@ -918,27 +911,10 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             {!contactSaved && data.customerPhone ? (
               <p className="text-xs text-amber-600 font-medium py-2">Save customer contact above to proceed</p>
             ) : (
-              <>
-                <button onClick={() => {
-                  const woWarning = data.paymentStatus?.hasPending
-                    ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
-                    : "";
-                  const items = data.lineItems || [];
-                  const stockLines = items.map(i => `  ${i.name} x${i.quantity}`).join("\n");
-                  const msg = items.length > 0
-                    ? `${woWarning}Mark as walk-out?\n\nStock will be deducted:\n${stockLines}`
-                    : `${woWarning}Mark as walk-out? Stock will be deducted.`;
-                  if (!confirm(msg)) return;
-                  updateStatus("WALK_OUT");
-                }} disabled={actionLoading}
-                  className="flex-1 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
-                  Walk-out (Took it)
-                </button>
-                <button onClick={() => setShowSchedule(true)}
-                  className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
-                  Schedule Delivery
-                </button>
-              </>
+              <button onClick={() => setShowSchedule(true)}
+                className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
+                Schedule Delivery
+              </button>
             )}
           </div>
         )}
