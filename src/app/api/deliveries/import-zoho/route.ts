@@ -48,6 +48,12 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
+        // Skip BCC (Bharath Cycle Centre) invoices
+        if (inv.invoice_number?.startsWith("BCC/")) {
+          errors.push(`${inv.invoice_number}: skipped (Centre invoice)`);
+          continue;
+        }
+
         // Check duplicate
         const exists = await prisma.delivery.findFirst({
           where: { invoiceNo: inv.invoice_number },

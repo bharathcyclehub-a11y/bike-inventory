@@ -75,8 +75,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Filter out void invoices
-    invoices = invoices.filter((inv: { status: string }) => inv.status !== "void");
+    // Filter out void invoices and BCC (Bharath Cycle Centre) invoices
+    invoices = invoices.filter((inv: { status: string; invoice_number: string }) =>
+      inv.status !== "void" && !inv.invoice_number.startsWith("BCC/")
+    );
 
     // Check which are already imported
     const invoiceNumbers = invoices.map((inv: { invoice_number: string }) => inv.invoice_number);

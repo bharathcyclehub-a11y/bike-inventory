@@ -420,7 +420,10 @@ export async function POST(req: NextRequest) {
         });
         const existingInvSet = new Set(existingInvoices.map((d) => d.invoiceNo));
         const newInvoices = invoices.filter(
-          (inv: { status: string; invoice_number: string }) => inv.status !== "void" && !existingInvSet.has(inv.invoice_number)
+          (inv: { status: string; invoice_number: string }) =>
+            inv.status !== "void" &&
+            !existingInvSet.has(inv.invoice_number) &&
+            !inv.invoice_number.startsWith("BCC/") // Skip Bharath Cycle Centre invoices
         );
 
         // Batch create all previews in one transaction
