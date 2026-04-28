@@ -85,6 +85,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.customerArea !== undefined) updateData.customerArea = data.customerArea;
       if (data.customerPincode !== undefined) updateData.customerPincode = data.customerPincode;
       if (data.customerPhone !== undefined) updateData.customerPhone = data.customerPhone;
+      if (data.alternatePhone !== undefined) updateData.alternatePhone = data.alternatePhone;
       if (data.deliveryNotes !== undefined) updateData.deliveryNotes = data.deliveryNotes;
       if (data.notes !== undefined) updateData.notes = data.notes;
       if (data.scheduledDate) updateData.scheduledDate = new Date(data.scheduledDate);

@@ -24,6 +24,7 @@ interface DeliveryData {
   customerAddress: string | null;
   customerArea: string | null;
   customerPincode: string | null;
+  alternatePhone: string | null;
   status: string;
   verifiedAt: string | null;
   verifiedBy: { name: string } | null;
@@ -75,6 +76,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState("");
   const [contactSaved, setContactSaved] = useState(false);
+  const [editPincode, setEditPincode] = useState("");
+  const [editAddress, setEditAddress] = useState("");
+  const [editAltPhone, setEditAltPhone] = useState("");
 
   // Schedule form
   const [showSchedule, setShowSchedule] = useState(false);
@@ -114,6 +118,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           setDelNotes(res.data.deliveryNotes || "");
           setFreeAccessories(res.data.freeAccessories || "");
           setIsOutstation(res.data.isOutstation || false);
+          setEditPincode(res.data.customerPincode || "");
+          setEditAddress(res.data.customerAddress || "");
+          setEditAltPhone(res.data.alternatePhone || "");
           setCourierName(res.data.courierName || "");
           setCourierTrackingNo(res.data.courierTrackingNo || "");
           setCourierCost(res.data.courierCost ? String(res.data.courierCost) : "");
@@ -393,6 +400,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               </a>
             )}
           </div>
+          {data.alternatePhone && (
+            <p className="text-[10px] text-slate-500">Alt: {data.alternatePhone}</p>
+          )}
           {data.customerAddress && (
             <div className="flex items-start gap-1.5">
               <MapPin className="h-3.5 w-3.5 text-slate-400 mt-0.5 shrink-0" />
@@ -405,37 +415,112 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               {data.customerPincode ? ` | Pincode: ${data.customerPincode}` : ""}
             </p>
           )}
-          {/* Show address/pincode prominently for outstation */}
-          {isOuts && !data.customerAddress && (
-            <p className="text-[10px] text-amber-600 font-medium">⚠ No address on file — outstation delivery needs an address</p>
-          )}
-          {isOuts && !data.customerPincode && (
-            <p className="text-[10px] text-amber-600 font-medium">⚠ No pincode on file</p>
-          )}
         </CardContent>
       </Card>
 
-      {/* Save Contact Card — mandatory before proceeding from PENDING */}
+      {/* Save Contact — opens phone's Add Contact with pre-filled details */}
       {["PENDING"].includes(data.status) && data.customerPhone && !contactSaved && (
         <Card className="mb-3 border-blue-200 bg-blue-50">
           <CardContent className="p-3">
             <p className="text-[10px] text-blue-700 font-medium mb-1.5">Save the contact before proceeding</p>
-            <button
-              onClick={() => {
+            <a
+              href={`tel:${data.customerPhone}`}
+              onClick={(e) => {
+                e.preventDefault();
                 const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
-                const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${data.customerName} - ${data.invoiceNo}\nTEL:+91${phone}\nEND:VCARD`;
-                const blob = new Blob([vcard], { type: "text/vcard" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `${data.customerName}.vcf`;
-                a.click();
-                URL.revokeObjectURL(url);
+                // Use Android intent to open Add Contact with pre-filled data
+                const intentUrl = `intent://contacts/#Intent;action=android.intent.action.INSERT;type=vnd.android.cursor.dir/contact;S.phone=+91${phone};S.name=${encodeURIComponent(data.customerName + " - " + data.invoiceNo)};end`;
+                // Fallback: try web-based contact add, then VCF
+                try {
+                  window.location.href = intentUrl;
+                } catch {
+                  // Fallback to VCF download
+                  const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${data.customerName} - ${data.invoiceNo}\nTEL:+91${phone}\nEND:VCARD`;
+                  const blob = new Blob([vcard], { type: "text/vcard" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `${data.customerName}.vcf`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }
                 setContactSaved(true);
               }}
               className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
             >
               <Download className="h-4 w-4" /> Save Customer Contact
+            </a>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Delivery Details — Pincode (all deliveries) + Address/Alt Phone (outstation) */}
+      {["PENDING", "SCHEDULED"].includes(data.status) && (
+        <Card className={`mb-3 ${isOuts ? "border-amber-200" : "border-slate-200"}`}>
+          <CardContent className="p-3 space-y-2">
+            <p className="text-xs font-semibold text-slate-700">
+              {isOuts ? "Outstation Delivery Details" : "Delivery Details"}
+            </p>
+            {/* Pincode — always visible */}
+            <div>
+              <label className="text-[10px] text-slate-500">Pincode *</label>
+              <Input
+                value={editPincode}
+                onChange={(e) => setEditPincode(e.target.value)}
+                placeholder="e.g. 560001"
+                className="text-xs"
+                inputMode="numeric"
+                maxLength={6}
+              />
+            </div>
+            {/* Outstation: full address + alt phone */}
+            {isOuts && (
+              <>
+                <div>
+                  <label className="text-[10px] text-slate-500">Full Address *</label>
+                  <textarea
+                    value={editAddress}
+                    onChange={(e) => setEditAddress(e.target.value)}
+                    placeholder="House no, street, area, city, state"
+                    className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-1 focus:ring-slate-300 resize-none"
+                    rows={2}
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500">Alternate Phone</label>
+                  <Input
+                    value={editAltPhone}
+                    onChange={(e) => setEditAltPhone(e.target.value)}
+                    placeholder="Alternate contact number"
+                    className="text-xs"
+                    inputMode="tel"
+                  />
+                </div>
+              </>
+            )}
+            <button
+              onClick={async () => {
+                setActionLoading(true);
+                try {
+                  await fetch(`/api/deliveries/${id}`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      customerPincode: editPincode.trim() || undefined,
+                      ...(isOuts ? {
+                        customerAddress: editAddress.trim() || undefined,
+                        alternatePhone: editAltPhone.trim() || undefined,
+                      } : {}),
+                    }),
+                  });
+                  fetchData();
+                } catch (e) { setActionError(e instanceof Error ? e.message : "Save failed"); }
+                finally { setActionLoading(false); }
+              }}
+              disabled={actionLoading}
+              className="w-full bg-slate-800 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50"
+            >
+              {actionLoading ? "Saving..." : "Save Details"}
             </button>
           </CardContent>
         </Card>
