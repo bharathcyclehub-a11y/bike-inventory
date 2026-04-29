@@ -209,6 +209,16 @@ function AdminDashboard() {
       {/* Tasks — Highest Priority */}
       <MyTasksWidget />
 
+      {/* Quick Actions: SOP */}
+      <div className="flex gap-2 mb-3">
+        <Link href="/sops" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200">
+          <ShieldAlert className="h-3.5 w-3.5" /> SOPs
+        </Link>
+        <Link href="/sops?action=add" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700">
+          <ListTodo className="h-3.5 w-3.5" /> Add SOP
+        </Link>
+      </div>
+
       {/* Critical Alerts — 24h+ overdue, needs CEO attention (above everything) */}
       {data.criticalAlerts.length > 0 && (
         <Card className="mb-3 border-red-300 bg-red-50">

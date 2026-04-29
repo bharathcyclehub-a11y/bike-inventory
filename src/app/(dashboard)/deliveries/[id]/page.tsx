@@ -104,6 +104,12 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const [freeAccessories, setFreeAccessories] = useState("");
   const [reversePickup, setReversePickup] = useState(false);
 
+  // Handover confirmation checklist
+  const [showHandover, setShowHandover] = useState<"WALK_OUT" | "DELIVERED" | null>(null);
+  const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
+  const [accessoriesConfirmed, setAccessoriesConfirmed] = useState(false);
+  const [salesPersonConfirmed, setSalesPersonConfirmed] = useState(false);
+
   // WhatsApp templates
   const [templates, setTemplates] = useState<Record<string, string>>({});
   const [showDispatchWhatsApp, setShowDispatchWhatsApp] = useState(false);
@@ -1025,9 +1031,138 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
+      {/* Handover Confirmation Checklist */}
+      {showHandover && (
+        <Card className="mb-3 border-green-300 bg-green-50 ring-2 ring-green-300">
+          <CardContent className="p-3 space-y-3">
+            <p className="text-xs font-bold text-green-900">
+              {showHandover === "WALK_OUT" ? "Walk-out Handover Checklist" : "Delivery Handover Checklist"}
+            </p>
+            {data.paymentStatus?.hasPending && (
+              <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg p-2">
+                <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
+                <p className="text-[10px] text-red-700 font-medium">Payment pending: {formatINR(data.paymentStatus.balance)} balance</p>
+              </div>
+            )}
+
+            {/* Line items — each must be checked */}
+            <div className="space-y-1.5">
+              <p className="text-[10px] text-green-800 font-semibold uppercase">Items</p>
+              {(data.lineItems || []).map((item, i) => {
+                const key = `item-${i}`;
+                return (
+                  <label key={key} className="flex items-center gap-2 bg-white rounded-lg px-2.5 py-2 border border-green-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={checkedItems.has(key)}
+                      onChange={(e) => {
+                        const next = new Set(checkedItems);
+                        e.target.checked ? next.add(key) : next.delete(key);
+                        setCheckedItems(next);
+                      }}
+                      className="rounded border-green-400 text-green-600 focus:ring-green-500"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-slate-900 truncate">{item.name}</p>
+                      <p className="text-[10px] text-slate-500">{item.sku} | Qty: {item.quantity}</p>
+                    </div>
+                    <CheckCircle2 className={`h-4 w-4 shrink-0 ${checkedItems.has(key) ? "text-green-600" : "text-slate-200"}`} />
+                  </label>
+                );
+              })}
+              {(!data.lineItems || data.lineItems.length === 0) && (
+                <p className="text-[10px] text-slate-400 italic">No line items on this invoice</p>
+              )}
+            </div>
+
+            {/* Accessories confirmation */}
+            <label className="flex items-center gap-2 bg-white rounded-lg px-2.5 py-2 border border-blue-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={accessoriesConfirmed}
+                onChange={(e) => setAccessoriesConfirmed(e.target.checked)}
+                className="rounded border-blue-400 text-blue-600 focus:ring-blue-500"
+              />
+              <div className="flex-1">
+                <p className="text-xs font-medium text-slate-900">Free accessories handed over</p>
+                <p className="text-[10px] text-slate-500">
+                  {data.freeAccessories || freeAccessories || "None specified"}
+                </p>
+              </div>
+              <Package className={`h-4 w-4 shrink-0 ${accessoriesConfirmed ? "text-blue-600" : "text-slate-200"}`} />
+            </label>
+
+            {/* Sales person confirmation */}
+            <label className="flex items-center gap-2 bg-white rounded-lg px-2.5 py-2 border border-purple-200 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={salesPersonConfirmed}
+                onChange={(e) => setSalesPersonConfirmed(e.target.checked)}
+                className="rounded border-purple-400 text-purple-600 focus:ring-purple-500"
+              />
+              <div className="flex-1">
+                <p className="text-xs font-medium text-slate-900">Confirmed with sales person</p>
+                <p className="text-[10px] text-slate-500">
+                  {data.salesPerson || "—"}
+                </p>
+              </div>
+              <Check className={`h-4 w-4 shrink-0 ${salesPersonConfirmed ? "text-purple-600" : "text-slate-200"}`} />
+            </label>
+
+            {/* Confirm / Cancel */}
+            {(() => {
+              const itemCount = data.lineItems?.length || 0;
+              const allItemsChecked = itemCount === 0 || checkedItems.size >= itemCount;
+              const allConfirmed = allItemsChecked && accessoriesConfirmed && salesPersonConfirmed;
+              return (
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      if (showHandover === "WALK_OUT") {
+                        await updateStatus("WALK_OUT");
+                      } else {
+                        await updateStatus("DELIVERED");
+                        if (data.customerPhone) sendDeliveredWhatsApp();
+                      }
+                      setShowHandover(null);
+                      setCheckedItems(new Set());
+                      setAccessoriesConfirmed(false);
+                      setSalesPersonConfirmed(false);
+                    }}
+                    disabled={!allConfirmed || actionLoading}
+                    className={`flex-1 flex items-center justify-center gap-2 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-40 ${
+                      showHandover === "WALK_OUT" ? "bg-green-600" : "bg-green-700"
+                    }`}
+                  >
+                    {actionLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                    {actionLoading
+                      ? "Processing..."
+                      : allConfirmed
+                        ? (showHandover === "WALK_OUT" ? "Confirm Walk-out" : "Confirm Delivered")
+                        : `Check all items (${checkedItems.size + (accessoriesConfirmed ? 1 : 0) + (salesPersonConfirmed ? 1 : 0)}/${itemCount + 2})`
+                    }
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowHandover(null);
+                      setCheckedItems(new Set());
+                      setAccessoriesConfirmed(false);
+                      setSalesPersonConfirmed(false);
+                    }}
+                    className="px-4 py-2.5 bg-slate-100 text-slate-600 rounded-lg text-xs font-medium"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              );
+            })()}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Action Buttons */}
       <div className="space-y-2">
-        {data.status === "PENDING" && !showSchedule && (
+        {data.status === "PENDING" && !showSchedule && !showHandover && (
           <div className="flex gap-2">
             {!contactSaved && data.customerPhone ? (
               <p className="text-xs text-amber-600 font-medium py-2">Save customer contact above to proceed</p>
@@ -1037,10 +1172,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                   className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
                   Schedule Delivery
                 </button>
-                <button onClick={() => {
-                  if (!confirm("Customer is taking the cycle now? Stock will be deducted.")) return;
-                  updateStatus("WALK_OUT");
-                }}
+                <button onClick={() => setShowHandover("WALK_OUT")}
                   disabled={actionLoading}
                   className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
                   <ShoppingBag className="h-4 w-4" /> Walk-out
@@ -1050,20 +1182,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           </div>
         )}
 
-        {/* Inside Bangalore: SCHEDULED -> DELIVERED directly (with WhatsApp) */}
-        {data.status === "SCHEDULED" && !isOuts && (
-          <button onClick={() => {
-            const delWarning = data.paymentStatus?.hasPending
-              ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
-              : "";
-            if (!confirm(`${delWarning}Mark as delivered? Stock will be deducted.`)) return;
-            updateStatus("DELIVERED").then(() => {
-              // Auto-trigger WhatsApp delivered message
-              if (data.customerPhone) {
-                sendDeliveredWhatsApp();
-              }
-            });
-          }} disabled={actionLoading}
+        {/* Inside Bangalore: SCHEDULED -> DELIVERED directly */}
+        {data.status === "SCHEDULED" && !isOuts && !showHandover && (
+          <button onClick={() => setShowHandover("DELIVERED")} disabled={actionLoading}
             className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <CheckCircle2 className="h-4 w-4" /> Mark Delivered
           </button>
@@ -1103,7 +1224,6 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                       courierCost: courierCost ? parseFloat(courierCost) : undefined,
                     });
                     setShowDispatch(false);
-                    // Auto-trigger WhatsApp dispatched message
                     if (data.customerPhone) sendDispatchedWhatsApp();
                   }}
                   disabled={actionLoading}
@@ -1141,31 +1261,15 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         )}
 
         {/* Outstation: IN_TRANSIT -> DELIVERED */}
-        {data.status === "IN_TRANSIT" && (
-          <button onClick={() => {
-            const delWarning = data.paymentStatus?.hasPending
-              ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
-              : "";
-            if (!confirm(`${delWarning}Mark as delivered? Stock will be deducted.`)) return;
-            updateStatus("DELIVERED").then(() => {
-              if (data.customerPhone) sendDeliveredWhatsApp();
-            });
-          }} disabled={actionLoading}
+        {data.status === "IN_TRANSIT" && !showHandover && (
+          <button onClick={() => setShowHandover("DELIVERED")} disabled={actionLoading}
             className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <CheckCircle2 className="h-4 w-4" /> Mark Delivered
           </button>
         )}
 
-        {data.status === "OUT_FOR_DELIVERY" && (
-          <button onClick={() => {
-            const delWarning = data.paymentStatus?.hasPending
-              ? `⚠️ Payment pending: ${formatINR(data.paymentStatus.balance)} balance.\n\n`
-              : "";
-            if (!confirm(`${delWarning}Mark as delivered? Stock will be deducted.`)) return;
-            updateStatus("DELIVERED").then(() => {
-              if (data.customerPhone) sendDeliveredWhatsApp();
-            });
-          }} disabled={actionLoading}
+        {data.status === "OUT_FOR_DELIVERY" && !showHandover && (
+          <button onClick={() => setShowHandover("DELIVERED")} disabled={actionLoading}
             className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <CheckCircle2 className="h-4 w-4" /> Mark Delivered
           </button>
