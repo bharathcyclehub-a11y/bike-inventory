@@ -130,8 +130,6 @@ export default function DeliveriesPage() {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showOutstation, setShowOutstation] = useState(false);
 
-  // Delivery view mode: all, walkout, bangalore, outstation
-  const [viewMode, setViewMode] = useState<"all" | "walkout" | "bangalore" | "outstation">("all");
   const [dateRange, setDateRange] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
@@ -504,27 +502,8 @@ export default function DeliveriesPage() {
 
   return (
     <div>
-      {/* View Mode Tabs */}
-      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 mb-3">
-        {([
-          { key: "all", label: "All" },
-          { key: "walkout", label: "Walk-out" },
-          { key: "bangalore", label: "Bangalore" },
-          { key: "outstation", label: "Outstation" },
-        ] as const).map((tab) => (
-          <button key={tab.key} onClick={() => { setViewMode(tab.key); if (tab.key === "outstation") setShowOutstation(true); else setShowOutstation(false); }}
-            className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-colors ${
-              viewMode === tab.key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
-            }`}>
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
       <div className="flex items-center justify-between mb-2">
-        <h1 className="text-lg font-bold text-slate-900">
-          {viewMode === "all" ? "Deliveries" : viewMode === "walkout" ? "Walk-outs" : viewMode === "bangalore" ? "Bangalore Deliveries" : "Outstation"}
-        </h1>
+        <h1 className="text-lg font-bold text-slate-900">Deliveries</h1>
         <div className="flex items-center gap-1.5">
           {isAdmin && (
             <button onClick={handleBackfill} disabled={backfilling}
@@ -868,35 +847,6 @@ export default function DeliveriesPage() {
         </div>
       )}
 
-      {/* View Mode Stats */}
-      {viewMode !== "all" && stats && (
-        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-3">
-          <div className="grid grid-cols-3 gap-3 text-center">
-            {viewMode === "walkout" && (
-              <>
-                <div><p className="text-lg font-bold text-green-700">{deliveries.filter(d => d.status === "WALK_OUT").length}</p><p className="text-[9px] text-slate-500">Completed</p></div>
-                <div><p className="text-lg font-bold text-amber-700">{deliveries.filter(d => d.status === "PENDING").length}</p><p className="text-[9px] text-slate-500">Pending</p></div>
-                <div><p className="text-lg font-bold text-slate-700">{deliveries.length}</p><p className="text-[9px] text-slate-500">Total</p></div>
-              </>
-            )}
-            {viewMode === "bangalore" && (
-              <>
-                <div><p className="text-lg font-bold text-blue-700">{deliveries.filter(d => d.status === "SCHEDULED").length}</p><p className="text-[9px] text-slate-500">Scheduled</p></div>
-                <div><p className="text-lg font-bold text-green-700">{deliveries.filter(d => d.status === "DELIVERED").length}</p><p className="text-[9px] text-slate-500">Delivered</p></div>
-                <div><p className="text-lg font-bold text-slate-700">{deliveries.length}</p><p className="text-[9px] text-slate-500">Total</p></div>
-              </>
-            )}
-            {viewMode === "outstation" && (
-              <>
-                <div><p className="text-lg font-bold text-orange-700">{deliveries.filter(d => ["OUT_FOR_DELIVERY", "SHIPPED", "IN_TRANSIT"].includes(d.status)).length}</p><p className="text-[9px] text-slate-500">In Transit</p></div>
-                <div><p className="text-lg font-bold text-green-700">{deliveries.filter(d => d.status === "DELIVERED").length}</p><p className="text-[9px] text-slate-500">Delivered</p></div>
-                <div><p className="text-lg font-bold text-slate-700">{deliveries.length}</p><p className="text-[9px] text-slate-500">Total</p></div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
       {/* Delivery Cards */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -909,13 +859,7 @@ export default function DeliveriesPage() {
         </div>
       ) : (
         <div className="space-y-2.5">
-          {deliveries.filter((d) => {
-            if (viewMode === "all") return true;
-            if (viewMode === "walkout") return d.status === "WALK_OUT" || d.status === "PENDING";
-            if (viewMode === "bangalore") return !d.isOutstation && d.status !== "WALK_OUT";
-            if (viewMode === "outstation") return d.isOutstation;
-            return true;
-          }).map((d) => {
+          {deliveries.map((d) => {
             const cfg = STATUS_CONFIG[d.status] || STATUS_CONFIG.PENDING;
             const items = d.lineItems || [];
             const isPending = ["PENDING", "VERIFIED", "SCHEDULED"].includes(d.status);
