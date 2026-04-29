@@ -1310,7 +1310,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         )}
       </div>
       {/* Extra padding so buttons aren't hidden behind bottom nav */}
-      <div className="h-4" />
+      <div className="h-20" />
     </div>
   );
 }
