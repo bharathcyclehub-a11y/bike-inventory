@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   ArrowLeft, Phone, MapPin, Clock, CheckCircle2, Truck,
   Flag, AlertTriangle, Loader2, Package, Download,
-  MessageCircle, Check, Globe, IndianRupee,
+  MessageCircle, Check, Globe, IndianRupee, ShoppingBag, RotateCcw,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -332,6 +332,11 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           <p className="text-xs text-slate-500">{data.customerName} | {formatINR(data.invoiceAmount)}</p>
         </div>
         <div className="flex items-center gap-1.5">
+          {data.reversePickup && (
+            <Badge variant="info">
+              <RotateCcw className="h-3 w-3 mr-1" />Reverse
+            </Badge>
+          )}
           {isOuts && (
             <Badge variant="warning">
               <Globe className="h-3 w-3 mr-1" />Outstation
@@ -410,15 +415,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                 const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
                 const contactName = `${data.customerName} - ${data.invoiceNo}`;
                 const vcard = `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${contactName}\r\nTEL;TYPE=CELL:+91${phone}\r\nEND:VCARD`;
-                const blob = new Blob([vcard], { type: "text/vcard" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `${data.customerName}.vcf`;
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
+                // Use data URI — triggers native contact import on iOS/Android
+                const dataUri = `data:text/vcard;charset=utf-8,${encodeURIComponent(vcard)}`;
+                window.location.href = dataUri;
                 setContactSaved(true);
               }}
               className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
@@ -1030,14 +1029,23 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       <div className="space-y-2">
         {data.status === "PENDING" && !showSchedule && (
           <div className="flex gap-2">
-            {/* Require contact saved before allowing actions */}
             {!contactSaved && data.customerPhone ? (
               <p className="text-xs text-amber-600 font-medium py-2">Save customer contact above to proceed</p>
             ) : (
-              <button onClick={() => setShowSchedule(true)}
-                className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
-                Schedule Delivery
-              </button>
+              <>
+                <button onClick={() => setShowSchedule(true)}
+                  className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
+                  Schedule Delivery
+                </button>
+                <button onClick={() => {
+                  if (!confirm("Customer is taking the cycle now? Stock will be deducted.")) return;
+                  updateStatus("WALK_OUT");
+                }}
+                  disabled={actionLoading}
+                  className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
+                  <ShoppingBag className="h-4 w-4" /> Walk-out
+                </button>
+              </>
             )}
           </div>
         )}

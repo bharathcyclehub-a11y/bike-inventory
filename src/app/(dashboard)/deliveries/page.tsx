@@ -30,6 +30,7 @@ interface DeliveryItem {
   verifiedBy: { name: string } | null;
   salesPerson: string | null;
   isOutstation: boolean;
+  reversePickup: boolean;
   invoiceType: string | null;
 }
 
@@ -909,6 +910,9 @@ export default function DeliveriesPage() {
                       </Badge>
                       {d.isOutstation && (
                         <Badge variant={"warning"} className="text-[9px]">Outstation</Badge>
+                      )}
+                      {d.reversePickup && (
+                        <Badge variant={"info"} className="text-[9px]">Reverse</Badge>
                       )}
                       {aging && aging.level !== "ok" && (
                         <span className={`block text-[9px] font-medium px-1.5 py-0.5 rounded-full ${AGING_BADGE[aging.level]}`}>
