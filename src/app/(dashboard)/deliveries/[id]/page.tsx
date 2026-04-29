@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, use } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft, Phone, MapPin, Clock, CheckCircle2, Truck,
@@ -70,6 +71,7 @@ function formatINR(n: number) {
 
 export default function DeliveryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const searchParams = useSearchParams();
   const [data, setData] = useState<DeliveryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -104,8 +106,10 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const [freeAccessories, setFreeAccessories] = useState("");
   const [reversePickup, setReversePickup] = useState(false);
 
-  // Handover confirmation checklist
-  const [showHandover, setShowHandover] = useState<"WALK_OUT" | "DELIVERED" | null>(null);
+  // Handover confirmation checklist — auto-open if ?action=walkout
+  const [showHandover, setShowHandover] = useState<"WALK_OUT" | "DELIVERED" | null>(
+    searchParams.get("action") === "walkout" ? "WALK_OUT" : null
+  );
   const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
   const [accessoriesConfirmed, setAccessoriesConfirmed] = useState(false);
   const [salesPersonConfirmed, setSalesPersonConfirmed] = useState(false);
@@ -1167,17 +1171,10 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             {!contactSaved && data.customerPhone ? (
               <p className="text-xs text-amber-600 font-medium py-2">Save customer contact above to proceed</p>
             ) : (
-              <>
-                <button onClick={() => setShowSchedule(true)}
-                  className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
-                  Schedule Delivery
-                </button>
-                <button onClick={() => setShowHandover("WALK_OUT")}
-                  disabled={actionLoading}
-                  className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
-                  <ShoppingBag className="h-4 w-4" /> Walk-out
-                </button>
-              </>
+              <button onClick={() => setShowSchedule(true)}
+                className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
+                Schedule Delivery
+              </button>
             )}
           </div>
         )}

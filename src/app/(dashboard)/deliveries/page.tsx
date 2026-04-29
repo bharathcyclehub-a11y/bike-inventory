@@ -1001,6 +1001,9 @@ export default function DeliveriesPage() {
                         <Link href={`/deliveries/${d.id}`} className="flex-1">
                           <button className="w-full bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Schedule</button>
                         </Link>
+                        <Link href={`/deliveries/${d.id}?action=walkout`} className="flex-1">
+                          <button className="w-full bg-green-600 text-white py-1.5 rounded-md text-xs font-medium">Walk-out</button>
+                        </Link>
                         <button onClick={() => handleConvertToPrebook(d)} disabled={prebooking === d.id}
                           className="flex-1 flex items-center justify-center gap-1 bg-purple-600 text-white py-1.5 rounded-md text-xs font-medium disabled:opacity-50">
                           {prebooking === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Package className="h-3 w-3" />} Pre-book
