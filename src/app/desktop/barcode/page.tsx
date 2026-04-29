@@ -155,8 +155,16 @@ export default function DesktopBarcodePage() {
   }
   .label { page-break-after: always; }
   .label:last-child { page-break-after: auto; }
-  .label {
+  .row {
     width: ${w}mm;
+    height: ${h}mm;
+    display: flex;
+    flex-direction: row;
+    page-break-after: always;
+  }
+  .row:last-child { page-break-after: auto; }
+  .label {
+    width: 50mm;
     height: ${h}mm;
     padding: 1mm 2mm;
     background: white;
@@ -189,18 +197,18 @@ export default function DesktopBarcodePage() {
 
     const body = doc.body;
 
+    // Build all individual labels first
+    const allLabels: HTMLDivElement[] = [];
     for (const item of queue) {
       for (let c = 0; c < item.qty; c++) {
         const label = doc.createElement("div");
         label.className = "label";
 
-        // 1. SKU
         const skuP = doc.createElement("p");
         skuP.className = "sku";
         skuP.textContent = item.product.sku || "";
         label.appendChild(skuP);
 
-        // 2. Barcode
         if (item.barcodeImg) {
           const img = doc.createElement("img");
           img.src = item.barcodeImg;
@@ -208,20 +216,29 @@ export default function DesktopBarcodePage() {
           label.appendChild(img);
         }
 
-        // 3. MRP
         const mrpP = doc.createElement("p");
         mrpP.className = "mrp";
         mrpP.textContent = `MRP: ₹${item.editMrp.toLocaleString("en-IN")}`;
         label.appendChild(mrpP);
 
-        // 4. Offer Price
         const priceP = doc.createElement("p");
         priceP.className = "price";
         priceP.textContent = `₹${item.editPrice.toLocaleString("en-IN")}`;
         label.appendChild(priceP);
 
-        body.appendChild(label);
+        allLabels.push(label);
       }
+    }
+
+    // Pair labels into rows of 2 (two 50x25 labels per 100x25 sheet)
+    for (let i = 0; i < allLabels.length; i += 2) {
+      const row = doc.createElement("div");
+      row.className = "row";
+      row.appendChild(allLabels[i]);
+      if (i + 1 < allLabels.length) {
+        row.appendChild(allLabels[i + 1]);
+      }
+      body.appendChild(row);
     }
 
     // Print via iframe (no popup blocker issues)
