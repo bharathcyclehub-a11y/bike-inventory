@@ -652,7 +652,7 @@ export default function SOPManagementPage() {
               </div>
 
               {/* Actions */}
-              <div className="flex gap-3 pt-2 pb-4">
+              <div className="flex gap-3 pt-2 pb-20">
                 <button
                   onClick={() => setShowForm(false)}
                   className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium"
@@ -727,7 +727,7 @@ export default function SOPManagementPage() {
               </div>
 
               {/* Actions */}
-              <div className="flex gap-3 pt-2 pb-4">
+              <div className="flex gap-3 pt-2 pb-20">
                 <button
                   onClick={() => setShowViolationForm(false)}
                   className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium"
