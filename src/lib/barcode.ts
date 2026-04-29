@@ -27,9 +27,7 @@ export async function generateBarcodePng(
       text,
       scale,
       height,
-      includetext,
-      textxalign: "center",
-      textsize: 10,
+      includetext: false,
       paddingwidth: 5,
       paddingheight: 5,
     });

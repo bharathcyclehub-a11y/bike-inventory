@@ -161,28 +161,35 @@ export default function DesktopBarcodePage() {
     padding: ${pad}mm;
     background: white;
     display: flex;
-    flex-direction: column;
-    justify-content: center;
+    flex-direction: row;
     align-items: center;
+    justify-content: space-between;
     overflow: hidden;
+    gap: 2mm;
+  }
+  .label .barcode-section {
+    flex-shrink: 0;
     text-align: center;
   }
   .label img {
-    max-width: 100%;
     height: ${template.barcodeHeight}mm;
     object-fit: contain;
     display: block;
-    margin: 0.3mm auto;
+  }
+  .label .info-section {
+    flex: 1;
+    text-align: center;
+    overflow: hidden;
   }
   .label p {
     line-height: 1.2;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    width: 100%;
+    margin: 0;
   }
   .sku { font-size: 2.4mm; font-weight: bold; font-family: monospace; }
-  .mrp { font-size: 2.2mm; }
+  .mrp { font-size: 2mm; }
   .price { font-size: 2.8mm; font-weight: bold; }
 </style></head><body></body></html>`);
     doc.close();
@@ -194,31 +201,33 @@ export default function DesktopBarcodePage() {
         const label = doc.createElement("div");
         label.className = "label";
 
-        // SKU
-        const skuP = doc.createElement("p");
-        skuP.className = "sku";
-        skuP.textContent = item.product.sku || "";
-        label.appendChild(skuP);
-
-        // Barcode
+        // Left: Barcode image + SKU below
+        const barcodeSection = doc.createElement("div");
+        barcodeSection.className = "barcode-section";
         if (item.barcodeImg) {
           const img = doc.createElement("img");
           img.src = item.barcodeImg;
           img.alt = item.product.sku || "";
-          label.appendChild(img);
+          barcodeSection.appendChild(img);
         }
+        const skuP = doc.createElement("p");
+        skuP.className = "sku";
+        skuP.textContent = item.product.sku || "";
+        barcodeSection.appendChild(skuP);
+        label.appendChild(barcodeSection);
 
-        // MRP
+        // Right: MRP + Offer Price
+        const infoSection = doc.createElement("div");
+        infoSection.className = "info-section";
         const mrpP = doc.createElement("p");
         mrpP.className = "mrp";
         mrpP.textContent = `MRP: ₹${item.editMrp.toLocaleString("en-IN")}`;
-        label.appendChild(mrpP);
-
-        // Offer Price
+        infoSection.appendChild(mrpP);
         const priceP = doc.createElement("p");
         priceP.className = "price";
         priceP.textContent = `₹${item.editPrice.toLocaleString("en-IN")}`;
-        label.appendChild(priceP);
+        infoSection.appendChild(priceP);
+        label.appendChild(infoSection);
 
         body.appendChild(label);
       }
