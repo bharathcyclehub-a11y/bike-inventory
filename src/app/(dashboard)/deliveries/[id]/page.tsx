@@ -254,13 +254,15 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const sendScheduledWhatsApp = () => {
     if (!data?.customerPhone) return;
     const date = data.scheduledDate ? new Date(data.scheduledDate).toLocaleDateString("en-IN") : "TBD";
-    const msg = templates.scheduled
-      ? renderTemplate(templates.scheduled, {
-          customerName: data.customerName,
-          productName: getProductName(),
-          deliveryDate: date,
-        })
-      : `Hello ${data.customerName},\n\nYour order from Bharath Cycle Hub has been scheduled for delivery.\n\nProduct: ${getProductName()}\nDelivery Date: ${date}\n\nPlease share your delivery location on WhatsApp so our rider can reach you.\n\nThank you!\n- Bharath Cycle Hub`;
+    const productName = getProductName();
+    let msg: string;
+    if (templates.scheduled) {
+      msg = renderTemplate(templates.scheduled, { customerName: data.customerName, productName, deliveryDate: date });
+    } else if (data.isOutstation) {
+      msg = `Hello ${data.customerName},\n\nYour ${productName} from Bharath Cycle Hub has been scheduled for dispatch.\n\nExpected Ship Date: ${date}\n\nWe will share the courier tracking details once dispatched. Please ensure someone is available to receive the package at your address.\n\nThank you!\n- Bharath Cycle Hub`;
+    } else {
+      msg = `Hello ${data.customerName},\n\nYour ${productName} from Bharath Cycle Hub has been scheduled for delivery.\n\nDelivery Date: ${date}\n\nPlease share your delivery location on WhatsApp so our rider can reach you.\n\nThank you!\n- Bharath Cycle Hub`;
+    }
     openWhatsApp(data.customerPhone, msg);
     markWhatsAppSent("whatsAppScheduledSent");
   };
@@ -302,12 +304,14 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const sendDeliveredWhatsApp = () => {
     if (!data?.customerPhone) return;
     const reviewLink = data.googleReviewLink || "https://g.page/r/bharathcyclehub/review";
-    const msg = templates.delivered
-      ? renderTemplate(templates.delivered, {
-          customerName: data.customerName,
-          reviewLink,
-        })
-      : `Hello ${data.customerName},\n\nThank you for your purchase from Bharath Cycle Hub!\n\nWe'd love to hear about your experience. Please leave us a review:\n${reviewLink}\n\nThank you!\n- Bharath Cycle Hub`;
+    let msg: string;
+    if (templates.delivered) {
+      msg = renderTemplate(templates.delivered, { customerName: data.customerName, reviewLink });
+    } else if (data.isOutstation) {
+      msg = `Hello ${data.customerName},\n\nYour order from Bharath Cycle Hub has been delivered!\n\nWe hope you enjoy your new cycle. If you have any issues with assembly or setup, please don't hesitate to reach out.\n\nWe'd love your feedback:\n${reviewLink}\n\nThank you for choosing Bharath Cycle Hub!\n- Team BCH`;
+    } else {
+      msg = `Hello ${data.customerName},\n\nThank you for your purchase from Bharath Cycle Hub!\n\nWe'd love to hear about your experience. Please leave us a review:\n${reviewLink}\n\nThank you!\n- Bharath Cycle Hub`;
+    }
     openWhatsApp(data.customerPhone, msg);
     markWhatsAppSent("whatsAppDeliveredSent");
   };
@@ -424,10 +428,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               onClick={() => {
                 const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
                 const contactName = `${data.customerName} - ${data.invoiceNo}`;
-                const vcard = `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${contactName}\r\nTEL;TYPE=CELL:+91${phone}\r\nEND:VCARD`;
-                // Use data URI — triggers native contact import on iOS/Android
-                const dataUri = `data:text/vcard;charset=utf-8,${encodeURIComponent(vcard)}`;
-                window.location.href = dataUri;
+                // Use server endpoint — returns .vcf file with proper Content-Type
+                // This triggers native contact import on iOS/Android PWA
+                window.location.href = `/api/vcard?name=${encodeURIComponent(contactName)}&phone=${phone}`;
                 setContactSaved(true);
               }}
               className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
@@ -1306,6 +1309,8 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           </Card>
         )}
       </div>
+      {/* Extra padding so buttons aren't hidden behind bottom nav */}
+      <div className="h-4" />
     </div>
   );
 }

@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   Package, ArrowDownCircle, ArrowUpCircle, AlertTriangle,
   IndianRupee, Brain, Truck, Clock, CheckCircle2, Flag,
-  Users, ShieldAlert, ListTodo, ChevronRight, Circle,
+  Users, ShieldAlert, ListTodo, ChevronRight, Circle, Share2, Loader2,
 } from "lucide-react";
 import { DashboardCard } from "@/components/dashboard-card";
 import { TransactionItem } from "@/components/transaction-item";
@@ -133,6 +133,69 @@ function MyTasksWidget() {
   );
 }
 
+function ShareDailyReport() {
+  const [sharing, setSharing] = useState(false);
+
+  const handleShare = async () => {
+    setSharing(true);
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const res = await fetch(`/api/activity?date=${today}`);
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+
+      const { totalActions, activities, userSummary } = json.data;
+      const dateStr = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+
+      // Build WhatsApp message
+      let msg = `📋 *Daily Report — ${dateStr}*\n`;
+      msg += `Total Actions: ${totalActions}\n\n`;
+
+      // Category breakdown
+      const catCounts: Record<string, number> = {};
+      for (const a of activities) {
+        catCounts[a.category] = (catCounts[a.category] || 0) + 1;
+      }
+      const catEmoji: Record<string, string> = { DELIVERY: "🚚", STOCK: "📦", INBOUND: "📥", TRANSFER: "🔄", EXPENSE: "💰", PAYMENT: "💳", PO: "📝" };
+      for (const [cat, count] of Object.entries(catCounts)) {
+        msg += `${catEmoji[cat] || "•"} ${cat}: ${count}\n`;
+      }
+
+      // Per-user summary
+      if (userSummary.length > 1) {
+        msg += `\n👥 *Team Activity:*\n`;
+        for (const u of userSummary) {
+          msg += `• ${u.name}: ${u.actions} actions\n`;
+        }
+      }
+
+      // Recent notable actions (last 10)
+      msg += `\n📌 *Recent:*\n`;
+      for (const a of activities.slice(0, 10)) {
+        const time = new Date(a.timestamp).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+        msg += `${time} — ${a.action}: ${a.detail}${a.amount ? ` (${formatINR(a.amount)})` : ""}\n`;
+      }
+
+      msg += `\n— Bharath Cycle Hub App`;
+
+      // Open WhatsApp
+      window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`, "_blank");
+    } catch {
+      alert("Failed to load activity data");
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  return (
+    <button onClick={handleShare} disabled={sharing}
+      className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50 w-full justify-center">
+      {sharing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
+      {sharing ? "Loading..." : "Share Daily Report via WhatsApp"}
+    </button>
+  );
+}
+
 function AdminDashboard() {
   const [data, setData] = useState<CEOData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -209,14 +272,17 @@ function AdminDashboard() {
       {/* Tasks — Highest Priority */}
       <MyTasksWidget />
 
-      {/* Quick Actions: SOP */}
-      <div className="flex gap-2 mb-3">
+      {/* Quick Actions: SOP + Daily Report */}
+      <div className="flex gap-2 mb-2">
         <Link href="/sops" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200">
           <ShieldAlert className="h-3.5 w-3.5" /> SOPs
         </Link>
         <Link href="/sops?action=add" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700">
           <ListTodo className="h-3.5 w-3.5" /> Add SOP
         </Link>
+      </div>
+      <div className="mb-3">
+        <ShareDailyReport />
       </div>
 
       {/* Critical Alerts — 24h+ overdue, needs CEO attention (above everything) */}
@@ -543,6 +609,11 @@ function SupervisorDashboard() {
       {/* Tasks */}
       <MyTasksWidget />
 
+      {/* Daily Report */}
+      <div className="mb-3">
+        <ShareDailyReport />
+      </div>
+
       {/* Top Cards — Srinu's priorities */}
       <div className="grid grid-cols-2 gap-3">
         <Link href="/accounts">
@@ -710,6 +781,9 @@ function OutwardsClerkDashboard() {
             <DashboardCard label="Prebooked" value={stats.prebooked} icon={Package} color="bg-purple-100 text-purple-700" />
           </Link>
         )}
+      </div>
+      <div className="mt-3">
+        <ShareDailyReport />
       </div>
     </>
   );

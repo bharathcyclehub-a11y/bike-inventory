@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Search, Loader2, Cloud, Download, Truck, AlertTriangle, CheckCircle2,
@@ -92,6 +93,7 @@ interface ZohoInvoicePreview {
 }
 
 export default function DeliveriesPage() {
+  const router = useRouter();
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
   const { canFetch } = usePermissions(role);
@@ -127,6 +129,9 @@ export default function DeliveriesPage() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showOutstation, setShowOutstation] = useState(false);
+
+  // Delivery view mode: all, walkout, bangalore, outstation
+  const [viewMode, setViewMode] = useState<"all" | "walkout" | "bangalore" | "outstation">("all");
   const [dateRange, setDateRange] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
@@ -190,26 +195,6 @@ export default function DeliveriesPage() {
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
     }
     fetchData();
-  };
-
-  const handleWalkOut = async (id: string) => {
-    const d = deliveries.find(x => x.id === id);
-    const items = d?.lineItems || [];
-    const stockLines = items.map(i => `  ${i.name} x${i.quantity}`).join("\n");
-    const msg = items.length > 0
-      ? `Mark as walk-out?\n\nStock will be deducted:\n${stockLines}`
-      : "Mark as walk-out? Stock will be deducted.";
-    if (!confirm(msg)) return;
-    try {
-      const res = await fetch(`/api/deliveries/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "WALK_OUT" }),
-      });
-      const data = await res.json();
-      if (!data.success) { setFetchError(data.error || "Walk-out failed"); return; }
-      fetchData();
-    } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
   };
 
   const handleDelete = async (id: string) => {
@@ -519,8 +504,27 @@ export default function DeliveriesPage() {
 
   return (
     <div>
+      {/* View Mode Tabs */}
+      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 mb-3">
+        {([
+          { key: "all", label: "All" },
+          { key: "walkout", label: "Walk-out" },
+          { key: "bangalore", label: "Bangalore" },
+          { key: "outstation", label: "Outstation" },
+        ] as const).map((tab) => (
+          <button key={tab.key} onClick={() => { setViewMode(tab.key); if (tab.key === "outstation") setShowOutstation(true); else setShowOutstation(false); }}
+            className={`flex-1 py-1.5 rounded-md text-xs font-semibold transition-colors ${
+              viewMode === tab.key ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"
+            }`}>
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex items-center justify-between mb-2">
-        <h1 className="text-lg font-bold text-slate-900">Deliveries</h1>
+        <h1 className="text-lg font-bold text-slate-900">
+          {viewMode === "all" ? "Deliveries" : viewMode === "walkout" ? "Walk-outs" : viewMode === "bangalore" ? "Bangalore Deliveries" : "Outstation"}
+        </h1>
         <div className="flex items-center gap-1.5">
           {isAdmin && (
             <button onClick={handleBackfill} disabled={backfilling}
@@ -864,6 +868,35 @@ export default function DeliveriesPage() {
         </div>
       )}
 
+      {/* View Mode Stats */}
+      {viewMode !== "all" && stats && (
+        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-3">
+          <div className="grid grid-cols-3 gap-3 text-center">
+            {viewMode === "walkout" && (
+              <>
+                <div><p className="text-lg font-bold text-green-700">{deliveries.filter(d => d.status === "WALK_OUT").length}</p><p className="text-[9px] text-slate-500">Completed</p></div>
+                <div><p className="text-lg font-bold text-amber-700">{deliveries.filter(d => d.status === "PENDING").length}</p><p className="text-[9px] text-slate-500">Pending</p></div>
+                <div><p className="text-lg font-bold text-slate-700">{deliveries.length}</p><p className="text-[9px] text-slate-500">Total</p></div>
+              </>
+            )}
+            {viewMode === "bangalore" && (
+              <>
+                <div><p className="text-lg font-bold text-blue-700">{deliveries.filter(d => d.status === "SCHEDULED").length}</p><p className="text-[9px] text-slate-500">Scheduled</p></div>
+                <div><p className="text-lg font-bold text-green-700">{deliveries.filter(d => d.status === "DELIVERED").length}</p><p className="text-[9px] text-slate-500">Delivered</p></div>
+                <div><p className="text-lg font-bold text-slate-700">{deliveries.length}</p><p className="text-[9px] text-slate-500">Total</p></div>
+              </>
+            )}
+            {viewMode === "outstation" && (
+              <>
+                <div><p className="text-lg font-bold text-orange-700">{deliveries.filter(d => ["OUT_FOR_DELIVERY", "SHIPPED", "IN_TRANSIT"].includes(d.status)).length}</p><p className="text-[9px] text-slate-500">In Transit</p></div>
+                <div><p className="text-lg font-bold text-green-700">{deliveries.filter(d => d.status === "DELIVERED").length}</p><p className="text-[9px] text-slate-500">Delivered</p></div>
+                <div><p className="text-lg font-bold text-slate-700">{deliveries.length}</p><p className="text-[9px] text-slate-500">Total</p></div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Delivery Cards */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -876,19 +909,23 @@ export default function DeliveriesPage() {
         </div>
       ) : (
         <div className="space-y-2.5">
-          {deliveries.map((d) => {
+          {deliveries.filter((d) => {
+            if (viewMode === "all") return true;
+            if (viewMode === "walkout") return d.status === "WALK_OUT" || d.status === "PENDING";
+            if (viewMode === "bangalore") return !d.isOutstation && d.status !== "WALK_OUT";
+            if (viewMode === "outstation") return d.isOutstation;
+            return true;
+          }).map((d) => {
             const cfg = STATUS_CONFIG[d.status] || STATUS_CONFIG.PENDING;
             const items = d.lineItems || [];
             const isPending = ["PENDING", "VERIFIED", "SCHEDULED"].includes(d.status);
             const aging = isPending ? getAging(d.invoiceDate) : null;
             return (
-              <Card key={d.id} className={aging ? AGING_COLORS[aging.level] : ""}>
+              <Card key={d.id} className={`${aging ? AGING_COLORS[aging.level] : ""} cursor-pointer`} onClick={() => { if (editingDateId !== d.id) router.push(`/deliveries/${d.id}`); }}>
                 <CardContent className="p-3.5">
                   <div className="flex items-start justify-between mb-1.5">
                     <div className="flex-1 min-w-0 mr-2">
-                      <Link href={`/deliveries/${d.id}`}>
                         <p className="text-sm font-semibold text-slate-900">{d.invoiceNo}</p>
-                      </Link>
                       <p className="text-xs text-slate-600">{d.customerName}</p>
                       {items.length > 0 && (
                         <p className="text-[10px] text-slate-700 font-medium mt-0.5">
@@ -995,7 +1032,7 @@ export default function DeliveriesPage() {
                   )}
 
                   {/* Action buttons */}
-                  <div className="flex gap-2 mt-1">
+                  <div className="flex gap-2 mt-1" onClick={(e) => e.stopPropagation()}>
                     {d.status === "PENDING" && (
                       <>
                         <Link href={`/deliveries/${d.id}`} className="flex-1">
