@@ -158,39 +158,32 @@ export default function DesktopBarcodePage() {
   .label {
     width: ${w}mm;
     height: ${h}mm;
-    padding: ${pad}mm;
+    padding: 1mm 2mm;
     background: white;
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     overflow: hidden;
-    gap: 2mm;
-  }
-  .label .barcode-section {
-    flex-shrink: 0;
     text-align: center;
+    gap: 0;
   }
   .label img {
-    height: ${template.barcodeHeight}mm;
+    height: 8mm;
     object-fit: contain;
     display: block;
-  }
-  .label .info-section {
-    flex: 1;
-    text-align: center;
-    overflow: hidden;
+    margin: 0 auto;
   }
   .label p {
-    line-height: 1.2;
+    line-height: 1.1;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     margin: 0;
   }
-  .sku { font-size: 2.4mm; font-weight: bold; font-family: monospace; }
+  .sku { font-size: 2.2mm; font-weight: bold; font-family: monospace; }
   .mrp { font-size: 2mm; }
-  .price { font-size: 2.8mm; font-weight: bold; }
+  .price { font-size: 2.6mm; font-weight: bold; }
 </style></head><body></body></html>`);
     doc.close();
 
@@ -201,33 +194,31 @@ export default function DesktopBarcodePage() {
         const label = doc.createElement("div");
         label.className = "label";
 
-        // Left: Barcode image + SKU below
-        const barcodeSection = doc.createElement("div");
-        barcodeSection.className = "barcode-section";
+        // 1. SKU
+        const skuP = doc.createElement("p");
+        skuP.className = "sku";
+        skuP.textContent = item.product.sku || "";
+        label.appendChild(skuP);
+
+        // 2. Barcode
         if (item.barcodeImg) {
           const img = doc.createElement("img");
           img.src = item.barcodeImg;
           img.alt = item.product.sku || "";
-          barcodeSection.appendChild(img);
+          label.appendChild(img);
         }
-        const skuP = doc.createElement("p");
-        skuP.className = "sku";
-        skuP.textContent = item.product.sku || "";
-        barcodeSection.appendChild(skuP);
-        label.appendChild(barcodeSection);
 
-        // Right: MRP + Offer Price
-        const infoSection = doc.createElement("div");
-        infoSection.className = "info-section";
+        // 3. MRP
         const mrpP = doc.createElement("p");
         mrpP.className = "mrp";
         mrpP.textContent = `MRP: ₹${item.editMrp.toLocaleString("en-IN")}`;
-        infoSection.appendChild(mrpP);
+        label.appendChild(mrpP);
+
+        // 4. Offer Price
         const priceP = doc.createElement("p");
         priceP.className = "price";
         priceP.textContent = `₹${item.editPrice.toLocaleString("en-IN")}`;
-        infoSection.appendChild(priceP);
-        label.appendChild(infoSection);
+        label.appendChild(priceP);
 
         body.appendChild(label);
       }
