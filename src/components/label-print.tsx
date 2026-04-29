@@ -45,9 +45,6 @@ export function LabelPrintButton({ product }: LabelPrintProps) {
     if (!template) return;
     setPrinting(true);
 
-    const win = window.open("", "_blank");
-    if (!win) { setPrinting(false); return; }
-
     const visibleElements = template.elements.filter((el) => el.visible);
 
     // Build label HTML
@@ -71,9 +68,7 @@ export function LabelPrintButton({ product }: LabelPrintProps) {
       `<div class="label">${h}</div>`
     ).join("");
 
-    const doc = win.document;
-    doc.open();
-    doc.write(`<html><head><title>Label - ${product.sku}</title>
+    const htmlContent = `<html><head><title>Label - ${product.sku}</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: Arial, sans-serif; }
@@ -95,12 +90,43 @@ export function LabelPrintButton({ product }: LabelPrintProps) {
           }
         }
       </style>
-    </head><body>${allLabels}</body></html>`);
-    doc.close();
+    </head><body>${allLabels}</body></html>`;
+
+    // Use hidden iframe for printing — works on mobile PWA where window.open is blocked
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.top = "-10000px";
+    iframe.style.left = "-10000px";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!iframeDoc) {
+      // Fallback: try window.open
+      const win = window.open("", "_blank");
+      if (win) {
+        win.document.open();
+        win.document.write(htmlContent);
+        win.document.close();
+        setTimeout(() => { win.print(); setPrinting(false); }, 300);
+      } else {
+        setPrinting(false);
+        alert("Popup blocked. Please allow popups for this site.");
+      }
+      return;
+    }
+
+    iframeDoc.open();
+    iframeDoc.write(htmlContent);
+    iframeDoc.close();
 
     setTimeout(() => {
-      win.print();
-      setPrinting(false);
+      iframe.contentWindow?.print();
+      setTimeout(() => {
+        document.body.removeChild(iframe);
+        setPrinting(false);
+      }, 500);
     }, 300);
   }
 

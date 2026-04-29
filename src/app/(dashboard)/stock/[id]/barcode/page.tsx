@@ -71,47 +71,60 @@ export default function BarcodePage({ params }: { params: Promise<{ id: string }
 
   function handlePrint() {
     if (!printRef.current) return;
-    const printWindow = window.open("", "_blank");
-    if (printWindow) {
-      const safeTitle = escapeHtml(productName);
-      const doc = printWindow.document;
-      doc.open();
-      doc.write(`<html><head><title>Barcodes - ${safeTitle}</title>
-        <style>
-          body { font-family: Arial, sans-serif; padding: 20px; }
-          .barcode-grid { display: flex; flex-wrap: wrap; }
-          .barcode-item { display: inline-block; text-align: center; margin: 10px; padding: 10px; border: 1px dashed #ccc; }
-          .barcode-item img { max-width: 200px; }
-          .serial-code { font-family: monospace; font-size: 11px; margin-top: 4px; }
-          .product-name { font-size: 10px; color: #666; }
-          @media print { .barcode-item { page-break-inside: avoid; } }
-        </style></head><body><div class="barcode-grid"></div></body></html>`);
-      doc.close();
+    const safeTitle = escapeHtml(productName);
 
-      const container = doc.querySelector(".barcode-grid");
-      if (container) {
-        serials.forEach((s) => {
-          const item = doc.createElement("div");
-          item.className = "barcode-item";
-          if (barcodeImages[s.id]) {
-            const img = doc.createElement("img");
-            img.src = barcodeImages[s.id];
-            img.alt = s.serialCode;
-            item.appendChild(img);
-          }
-          const code = doc.createElement("div");
-          code.className = "serial-code";
-          code.textContent = s.serialCode;
-          item.appendChild(code);
-          const name = doc.createElement("div");
-          name.className = "product-name";
-          name.textContent = productName;
-          item.appendChild(name);
-          container.appendChild(item);
-        });
+    // Build barcode items HTML
+    let itemsHtml = "";
+    serials.forEach((s) => {
+      let imgHtml = "";
+      if (barcodeImages[s.id]) {
+        imgHtml = `<img src="${barcodeImages[s.id]}" alt="${escapeHtml(s.serialCode)}" style="max-width:200px;" />`;
       }
-      printWindow.print();
+      itemsHtml += `<div class="barcode-item">${imgHtml}<div class="serial-code">${escapeHtml(s.serialCode)}</div><div class="product-name">${safeTitle}</div></div>`;
+    });
+
+    const htmlContent = `<html><head><title>Barcodes - ${safeTitle}</title>
+      <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .barcode-grid { display: flex; flex-wrap: wrap; }
+        .barcode-item { display: inline-block; text-align: center; margin: 10px; padding: 10px; border: 1px dashed #ccc; }
+        .barcode-item img { max-width: 200px; }
+        .serial-code { font-family: monospace; font-size: 11px; margin-top: 4px; }
+        .product-name { font-size: 10px; color: #666; }
+        @media print { .barcode-item { page-break-inside: avoid; } }
+      </style></head><body><div class="barcode-grid">${itemsHtml}</div></body></html>`;
+
+    // Use hidden iframe — works on mobile PWA where window.open is blocked
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.top = "-10000px";
+    iframe.style.left = "-10000px";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!iframeDoc) {
+      const win = window.open("", "_blank");
+      if (win) {
+        win.document.open();
+        win.document.write(htmlContent);
+        win.document.close();
+        setTimeout(() => win.print(), 300);
+      } else {
+        alert("Popup blocked. Please allow popups for this site.");
+      }
+      return;
     }
+
+    iframeDoc.open();
+    iframeDoc.write(htmlContent);
+    iframeDoc.close();
+
+    setTimeout(() => {
+      iframe.contentWindow?.print();
+      setTimeout(() => document.body.removeChild(iframe), 500);
+    }, 300);
   }
 
   return (
