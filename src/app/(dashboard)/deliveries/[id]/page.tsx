@@ -441,13 +441,16 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                   }
                 }
 
-                // Fallback: open as blob URL (triggers download → user taps .vcf to import)
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `${contactName}.vcf`;
-                a.click();
-                URL.revokeObjectURL(url);
+                // Fallback: Android intent to open Add Contact with pre-filled data
+                const intentUrl = `intent://contacts/#Intent;action=android.intent.action.INSERT;type=vnd.android.cursor.dir/contact;S.phone=+91${phone};S.name=${encodeURIComponent(contactName)};end`;
+                const addContactUrl = `https://contacts.google.com/new?name=${encodeURIComponent(contactName)}&phone=+91${phone}`;
+
+                // Try Android intent first, fall back to Google Contacts web
+                try {
+                  window.location.href = intentUrl;
+                } catch {
+                  window.open(addContactUrl, "_blank");
+                }
                 setContactSaved(true);
               }}
               className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"

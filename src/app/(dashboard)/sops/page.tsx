@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import {
   Search, Plus, ChevronDown, ChevronUp, Trash2, Pencil,
-  AlertTriangle, Smartphone, Loader2, ShieldAlert, X,
+  AlertTriangle, Smartphone, Loader2, ShieldAlert, X, Share2,
 } from "lucide-react";
 import { usePermissions } from "@/lib/use-permissions";
 import {
@@ -267,7 +267,32 @@ export default function SOPManagementPage() {
     <div className="pb-32">
       {/* Header */}
       <div className="sticky top-0 z-30 bg-white border-b px-4 py-3">
-        <h1 className="text-lg font-bold text-gray-900">SOP Management</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-bold text-gray-900">SOP Management</h1>
+          <button
+            onClick={() => {
+              const activeSops = sops.filter(s => s.isActive);
+              if (!activeSops.length) return;
+              const grouped: Record<string, string[]> = {};
+              for (const s of activeSops) {
+                if (!grouped[s.category]) grouped[s.category] = [];
+                grouped[s.category].push(s.title);
+              }
+              const lines = ["📋 *BCH SOPs*", ""];
+              for (const [cat, items] of Object.entries(grouped)) {
+                lines.push(`*${cat}*`);
+                items.forEach((t, i) => lines.push(`  ${i + 1}. ${t}`));
+                lines.push("");
+              }
+              lines.push(`Total: ${activeSops.length} SOPs`);
+              window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
+            }}
+            className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200"
+            title="Share all SOPs on WhatsApp"
+          >
+            <Share2 className="h-4 w-4" />
+          </button>
+        </div>
         {/* Tabs */}
         <div className="flex gap-1 mt-2">
           {(["sops", "compliance"] as const).map((t) => (
