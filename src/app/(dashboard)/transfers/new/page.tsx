@@ -329,7 +329,7 @@ export default function NewTransferOrderPage() {
       {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
 
       {/* Submit - fixed at bottom */}
-      <div className="fixed bottom-16 left-0 right-0 bg-white border-t border-slate-200 p-4 z-50">
+      <div className="fixed above-nav left-0 right-0 bg-white border-t border-slate-200 p-4 z-50">
         <Button type="button" size="lg" disabled={!isValid || submitting} onClick={handleSubmit}
           className="w-full bg-purple-600 hover:bg-purple-700">
           {submitting ? (

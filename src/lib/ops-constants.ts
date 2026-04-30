@@ -47,7 +47,7 @@ export const CATEGORY_COLORS: Record<UpdateCategory, { bg: string; text: string 
 
 export const UPDATE_CATEGORIES: UpdateCategory[] = ["Sales", "Staff", "Ops", "Issue", "Win", "Other"];
 
-export const SOP_CATEGORIES = ["Sales", "Service", "Ops", "Finance", "Billing", "BDC", "Content"];
+export const SOP_CATEGORIES = ["All", "Sales", "Service", "Ops", "Finance", "Billing", "BDC", "Content"];
 
 export const FREQUENCY_LABELS: Record<string, string> = {
   SOP_DAILY: "Daily",

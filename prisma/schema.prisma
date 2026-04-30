@@ -1462,6 +1462,14 @@ model SOPViolation {
   @@index([createdAt])
 }
 
+// ─── APP SETTINGS (key-value store) ──────────────────────
+
+model AppSetting {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
 // ─── OPERATIONS HUB: Daily Snapshot ───────────────────────
 
 model DailySnapshot {

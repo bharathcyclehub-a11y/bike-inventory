@@ -17,11 +17,19 @@ export async function GET(req: NextRequest) {
     const outstation = searchParams.get("outstation") || undefined;
     const sortBy = searchParams.get("sortBy") || undefined;
 
+    const dateRange = searchParams.get("dateRange") || undefined;
     const where: Record<string, unknown> = {};
-    if (status) where.status = status;
+    if (status) {
+      where.status = status;
+      // Auto-hide: delivered items older than current month unless date filter is set
+      if (status === "DELIVERED" && !date && !dateRange) {
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        where.deliveredAt = { gte: startOfMonth };
+      }
+    }
     if (area) where.customerArea = area;
     if (outstation === "true") where.isOutstation = true;
-    const dateRange = searchParams.get("dateRange") || undefined;
     if (dateRange) {
       const now = new Date();
       const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());

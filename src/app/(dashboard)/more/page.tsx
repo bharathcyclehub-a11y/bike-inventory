@@ -122,6 +122,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { label: "Brand Lead Times", icon: Clock, href: "/more/brand-lead-times", roles: ["ADMIN"] },
       { label: "Price Correction", icon: IndianRupee, href: "/price-correction", roles: ["ADMIN"] },
       { label: "WhatsApp Templates", icon: MessageSquare, href: "/more/whatsapp-templates", roles: ["ADMIN"], featureKey: "whatsapp_templates" },
+      { label: "SOP Departments", icon: BookOpenCheck, href: "/more/sop-departments", roles: ["ADMIN"] },
       { label: "Alert Config", icon: Bell, href: "/more/alerts", roles: ["ADMIN"] },
       { label: "Zoho Books Sync", icon: Cloud, href: "/more/zoho", roles: ["ADMIN"], featureKey: "zoho" },
     ],

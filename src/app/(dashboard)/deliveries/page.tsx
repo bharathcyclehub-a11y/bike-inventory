@@ -40,6 +40,7 @@ interface Stats {
   verified: number;
   scheduled: number;
   outForDelivery: number;
+  delivered: number;
   deliveredToday: number;
   flagged: number;
   prebooked: number;
@@ -409,9 +410,13 @@ export default function DeliveriesPage() {
         }),
       }).then(r => r.json());
       if (!res.success) throw new Error(res.error || "Import failed");
+      const importedCount = selectedInvoices.size;
       setFetchStep("idle");
       setInvoicePreviews([]);
       setSelectedInvoices(new Set());
+      setFetchError("");
+      setFetchProgress(`✅ Imported ${importedCount} delivery${importedCount !== 1 ? "s" : ""} successfully`);
+      setTimeout(() => setFetchProgress(""), 5000);
       fetchData();
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Import failed");
@@ -463,7 +468,7 @@ export default function DeliveriesPage() {
     { key: "PENDING", label: "Pending", count: stats?.pending },
     { key: "SCHEDULED", label: "Scheduled", count: stats?.scheduled },
     { key: "OUT_FOR_DELIVERY", label: "Out", count: stats?.outForDelivery },
-    { key: "DELIVERED", label: "Delivered", count: stats?.deliveredToday },
+    { key: "DELIVERED", label: "Delivered", count: stats?.delivered || stats?.deliveredToday },
     { key: "FLAGGED", label: "Flagged", count: stats?.flagged },
     { key: "PACKED", label: "Packed" },
     { key: "SHIPPED", label: "Shipped" },
@@ -635,7 +640,7 @@ export default function DeliveriesPage() {
             <p className="text-[9px] text-orange-600">Out</p>
           </CardContent></Card>
           <Card className="bg-green-50 border-green-200"><CardContent className="p-2 text-center">
-            <p className="text-lg font-bold text-green-700">{stats.deliveredToday}</p>
+            <p className="text-lg font-bold text-green-700">{stats.delivered || stats.deliveredToday}</p>
             <p className="text-[9px] text-green-600">Delivered</p>
           </CardContent></Card>
         </div>
@@ -664,15 +669,11 @@ export default function DeliveriesPage() {
           <Package className="h-3.5 w-3.5" />
           Prebooked{stats?.prebooked ? ` (${stats.prebooked})` : ""}
         </button>
-        <button onClick={() => setShowOutstation(!showOutstation)}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors border ${
-            showOutstation
-              ? "bg-amber-500 text-white border-amber-500"
-              : "bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100"
-          }`}>
+        <Link href="/deliveries/outstation"
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors border bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100">
           <Truck className="h-3.5 w-3.5" />
           Outstation
-        </button>
+        </Link>
       </div>
 
       {/* Date Range Filter */}
@@ -779,10 +780,10 @@ export default function DeliveriesPage() {
       )}
 
       {/* ─── Bulk Fetch Progress ─── */}
-      {fetchStep === "fetching" && fetchProgress && (
-        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
-          <span className="text-xs text-blue-700 font-medium">{fetchProgress}</span>
+      {fetchProgress && (
+        <div className={`flex items-center gap-2 rounded-lg p-2.5 mb-2 border ${fetchProgress.startsWith("✅") ? "bg-green-50 border-green-200" : "bg-blue-50 border-blue-200"}`}>
+          {!fetchProgress.startsWith("✅") && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />}
+          <span className={`text-xs font-medium ${fetchProgress.startsWith("✅") ? "text-green-700" : "text-blue-700"}`}>{fetchProgress}</span>
         </div>
       )}
 

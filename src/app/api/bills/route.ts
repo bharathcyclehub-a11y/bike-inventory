@@ -67,6 +67,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = vendorBillSchema.parse(body);
 
+    // Duplicate check
+    const existing = await prisma.vendorBill.findFirst({ where: { billNo: data.billNo } });
+    if (existing) return errorResponse("Bill number already exists", 409);
+
     // Auto-calculate dueDate from vendor's paymentTermDays if not provided
     let dueDate: Date;
     if (data.dueDate) {

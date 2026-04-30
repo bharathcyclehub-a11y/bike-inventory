@@ -119,6 +119,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   const [showDispatchWhatsApp, setShowDispatchWhatsApp] = useState(false);
   const [editingAccessories, setEditingAccessories] = useState(false);
 
+  // Page tab: actions (default) vs details
+  const [activeTab, setActiveTab] = useState<"actions" | "details">("actions");
+
   const fetchData = () => {
     fetch(`/api/deliveries/${id}`)
       .then((r) => r.json())
@@ -362,6 +365,21 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         </div>
       </div>
 
+      {/* Tab Switcher */}
+      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 mb-3">
+        <button onClick={() => setActiveTab("actions")}
+          className={`flex-1 py-2 rounded-md text-sm font-semibold transition-colors ${activeTab === "actions" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
+          Actions
+        </button>
+        <button onClick={() => setActiveTab("details")}
+          className={`flex-1 py-2 rounded-md text-sm font-semibold transition-colors ${activeTab === "details" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
+          Details
+        </button>
+      </div>
+
+      {/* ═══════════ ACTIONS TAB ═══════════ */}
+      {activeTab === "actions" && (<>
+
       {/* Progress Steps */}
       {!["FLAGGED", "WALK_OUT", "PREBOOKED", "PENDING"].includes(data.status) && (
         <div className="flex items-center gap-1 mb-3">
@@ -389,6 +407,61 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           ))}
         </div>
       )}
+
+      {/* Quick call button on actions tab */}
+      {data.customerPhone && (
+        <div className="flex gap-2 mb-3">
+          <a href={`tel:${data.customerPhone}`} className="flex-1 flex items-center justify-center gap-2 bg-slate-100 text-slate-700 py-2.5 rounded-lg text-sm font-medium">
+            <Phone className="h-4 w-4" /> {data.customerPhone}
+          </a>
+        </div>
+      )}
+
+      {/* Save Contact — uses Web Share API to open native "Add Contact" */}
+      {["PENDING"].includes(data.status) && data.customerPhone && !contactSaved && (
+        <Card className="mb-3 border-blue-200 bg-blue-50">
+          <CardContent className="p-3">
+            <p className="text-[10px] text-blue-700 font-medium mb-1.5">Save the contact before proceeding</p>
+            <button
+              onClick={async () => {
+                const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
+                const contactName = `${data.customerName} - ${data.invoiceNo}`;
+                const vcard = `BEGIN:VCARD\r\nVERSION:3.0\r\nFN:${contactName}\r\nTEL;TYPE=CELL:+91${phone}\r\nEND:VCARD`;
+                const blob = new Blob([vcard], { type: "text/vcard" });
+                const file = new File([blob], `${contactName}.vcf`, { type: "text/vcard" });
+
+                // Try Web Share API first — opens native share sheet → Contacts app
+                if (navigator.share && navigator.canShare?.({ files: [file] })) {
+                  try {
+                    await navigator.share({ files: [file], title: "Save Contact" });
+                    setContactSaved(true);
+                    return;
+                  } catch {
+                    // User cancelled share — fall through to fallback
+                  }
+                }
+
+                // Fallback: open as blob URL (triggers download → user taps .vcf to import)
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${contactName}.vcf`;
+                a.click();
+                URL.revokeObjectURL(url);
+                setContactSaved(true);
+              }}
+              className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
+            >
+              <Download className="h-4 w-4" /> Save Customer Contact
+            </button>
+          </CardContent>
+        </Card>
+      )}
+
+      </>)}
+
+      {/* ═══════════ DETAILS TAB ═══════════ */}
+      {activeTab === "details" && (<>
 
       {/* Customer Info */}
       <Card className={`mb-3 ${isOuts ? "border-amber-200" : ""}`}>
@@ -418,28 +491,6 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           )}
         </CardContent>
       </Card>
-
-      {/* Save Contact — VCF download (works on both iOS and Android) */}
-      {["PENDING"].includes(data.status) && data.customerPhone && !contactSaved && (
-        <Card className="mb-3 border-blue-200 bg-blue-50">
-          <CardContent className="p-3">
-            <p className="text-[10px] text-blue-700 font-medium mb-1.5">Save the contact before proceeding</p>
-            <button
-              onClick={() => {
-                const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
-                const contactName = `${data.customerName} - ${data.invoiceNo}`;
-                // Use server endpoint — returns .vcf file with proper Content-Type
-                // This triggers native contact import on iOS/Android PWA
-                window.location.href = `/api/vcard?name=${encodeURIComponent(contactName)}&phone=${phone}`;
-                setContactSaved(true);
-              }}
-              className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
-            >
-              <Download className="h-4 w-4" /> Save Customer Contact
-            </button>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Delivery Details — editable on SCHEDULED (read-only summary, tap to edit pincode/address) */}
       {data.status === "SCHEDULED" && (
@@ -640,6 +691,11 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           </CardContent>
         </Card>
       )}
+
+      </>)}
+
+      {/* ═══════════ ACTIONS TAB (continued) ═══════════ */}
+      {activeTab === "actions" && (<>
 
       {/* Flag Banner */}
       {data.status === "FLAGGED" && (
@@ -886,6 +942,11 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         </Card>
       )}
 
+      </>)}
+
+      {/* ═══════════ DETAILS TAB (continued) ═══════════ */}
+      {activeTab === "details" && (<>
+
       {/* Delivery Info */}
       {data.scheduledDate && (() => {
         const canEditDate = ["SCHEDULED", "OUT_FOR_DELIVERY", "PACKED", "SHIPPED", "IN_TRANSIT"].includes(data.status);
@@ -1037,6 +1098,11 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           </CardContent>
         </Card>
       )}
+
+      </>)}
+
+      {/* ═══════════ ACTIONS TAB (handover + buttons) ═══════════ */}
+      {activeTab === "actions" && (<>
 
       {/* Handover Confirmation Checklist */}
       {showHandover && (
@@ -1309,6 +1375,8 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           </Card>
         )}
       </div>
+      </>)}
+
       {/* Extra padding so buttons aren't hidden behind bottom nav */}
       <div className="h-20" />
     </div>

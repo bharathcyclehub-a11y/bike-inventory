@@ -269,23 +269,7 @@ function AdminDashboard() {
 
   return (
     <>
-      {/* Tasks — Highest Priority */}
-      <MyTasksWidget />
-
-      {/* Quick Actions: SOP + Daily Report */}
-      <div className="flex gap-2 mb-2">
-        <Link href="/sops" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200">
-          <ShieldAlert className="h-3.5 w-3.5" /> SOPs
-        </Link>
-        <Link href="/sops?action=add" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700">
-          <ListTodo className="h-3.5 w-3.5" /> Add SOP
-        </Link>
-      </div>
-      <div className="mb-3">
-        <ShareDailyReport />
-      </div>
-
-      {/* Critical Alerts — 24h+ overdue, needs CEO attention (above everything) */}
+      {/* Critical Alerts — needs CEO attention first */}
       {data.criticalAlerts.length > 0 && (
         <Card className="mb-3 border-red-300 bg-red-50">
           <CardHeader className="pb-1">
@@ -399,6 +383,22 @@ function AdminDashboard() {
             <p className="text-[10px] text-slate-500">Outwards Today</p>
           </CardContent>
         </Card>
+      </div>
+
+      {/* Tasks + Quick Actions */}
+      <div className="mt-4">
+        <MyTasksWidget />
+      </div>
+      <div className="flex gap-2 mt-3 mb-2">
+        <Link href="/sops" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200">
+          <ShieldAlert className="h-3.5 w-3.5" /> SOPs
+        </Link>
+        <Link href="/sops?action=add" className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700">
+          <ListTodo className="h-3.5 w-3.5" /> Add SOP
+        </Link>
+      </div>
+      <div className="mb-3">
+        <ShareDailyReport />
       </div>
 
       {/* Smart Insights */}
@@ -719,6 +719,7 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
 
   return (
     <>
+      <ShareDailyReport />
       <div className="grid grid-cols-2 gap-3">
         <DashboardCard label={`My ${label} Today`} value={totalQty} icon={Icon} trend={{ direction: "up", value: `${transactions.length} entries` }} color={type === "inward" ? "bg-blue-100 text-blue-600" : "bg-orange-100 text-orange-600"} />
         <DashboardCard label="Total Entries" value={transactions.length} icon={Package} color="bg-slate-100 text-slate-700" />
@@ -738,7 +739,7 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
 }
 
 function OutwardsClerkDashboard() {
-  const [stats, setStats] = useState<{ pending: number; verified: number; scheduled: number; outForDelivery: number; deliveredToday: number; flagged: number; prebooked: number } | null>(null);
+  const [stats, setStats] = useState<{ pending: number; verified: number; scheduled: number; outForDelivery: number; delivered: number; deliveredToday: number; flagged: number; prebooked: number } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -769,7 +770,7 @@ function OutwardsClerkDashboard() {
           <DashboardCard label="Out for Delivery" value={stats.outForDelivery} icon={Truck} color="bg-orange-100 text-orange-700" />
         </Link>
         <Link href="/deliveries">
-          <DashboardCard label="Delivered Today" value={stats.deliveredToday} icon={CheckCircle2} color="bg-green-100 text-green-700" />
+          <DashboardCard label="Delivered" value={stats.delivered || stats.deliveredToday} icon={CheckCircle2} color="bg-green-100 text-green-700" />
         </Link>
         {stats.flagged > 0 && (
           <Link href="/deliveries">
@@ -818,12 +819,15 @@ function PurchaseManagerDashboard() {
     return <div className="text-center py-12"><AlertTriangle className="h-8 w-8 text-red-400 mx-auto mb-2" /><p className="text-sm text-slate-500">Failed to load dashboard.</p></div>;
   }
   return (
+    <>
+    <ShareDailyReport />
     <div className="grid grid-cols-2 gap-3">
       <DashboardCard label="Total Products" value={stats.totalProducts} icon={Package} color="bg-blue-100 text-blue-700" />
       <Link href="/reorder"><DashboardCard label="Low Stock" value={stats.lowStock} icon={AlertTriangle} color="bg-red-100 text-red-600" /></Link>
       <DashboardCard label="Inwards Today" value={stats.todayInwards} icon={ArrowDownCircle} color="bg-blue-100 text-blue-600" />
       <Link href="/purchase-orders"><DashboardCard label="Pending POs" value="—" icon={Package} color="bg-orange-100 text-orange-600" /></Link>
     </div>
+    </>
   );
 }
 
@@ -857,11 +861,14 @@ function AccountsManagerDashboard() {
     return <div className="text-center py-12"><AlertTriangle className="h-8 w-8 text-red-400 mx-auto mb-2" /><p className="text-sm text-slate-500">Failed to load dashboard.</p></div>;
   }
   return (
+    <>
+    <ShareDailyReport />
     <div className="grid grid-cols-2 gap-3">
       <Link href="/vendor-issues"><DashboardCard label="Vendor Issues" value={stats.openIssues} icon={ShieldAlert} color={stats.openIssues > 0 ? "bg-red-100 text-red-600" : "bg-green-100 text-green-600"} /></Link>
       <Link href="/stock-audit"><DashboardCard label="Pending Audits" value={stats.pendingAudits} icon={Package} color="bg-blue-100 text-blue-700" /></Link>
       <Link href="/expenses"><DashboardCard label="Expenses (30d)" value={formatINR(stats.expenses30d)} icon={IndianRupee} color="bg-green-100 text-green-700" /></Link>
     </div>
+    </>
   );
 }
 

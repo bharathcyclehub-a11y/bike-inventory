@@ -166,7 +166,7 @@ export default function DispatchPage() {
 
       {/* Action Bar */}
       {tab === "dispatch" && selected.size > 0 && (
-        <div className="fixed bottom-20 left-0 right-0 px-4">
+        <div className="fixed above-nav left-0 right-0 px-4">
           <button onClick={handleDispatch} disabled={dispatching}
             className="w-full max-w-lg mx-auto flex items-center justify-center gap-2 bg-orange-600 text-white py-3 rounded-xl text-sm font-medium shadow-lg disabled:opacity-50">
             <Truck className="h-4 w-4" /> {dispatching ? "Dispatching..." : `Dispatch ${selected.size} Selected`}
@@ -175,7 +175,7 @@ export default function DispatchPage() {
       )}
 
       {tab === "return" && selectedOut.size > 0 && (
-        <div className="fixed bottom-20 left-0 right-0 px-4">
+        <div className="fixed above-nav left-0 right-0 px-4">
           <button onClick={handleDelivered} disabled={delivering}
             className="w-full max-w-lg mx-auto flex items-center justify-center gap-2 bg-green-600 text-white py-3 rounded-xl text-sm font-medium shadow-lg disabled:opacity-50">
             <CheckCircle2 className="h-4 w-4" /> {delivering ? "Updating..." : `Mark ${selectedOut.size} Delivered`}

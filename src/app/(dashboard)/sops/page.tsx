@@ -70,6 +70,15 @@ export default function SOPManagementPage() {
   const [formFreq, setFormFreq] = useState("SOP_DAILY");
   const [saving, setSaving] = useState(false);
 
+  /* ── Dynamic departments ── */
+  const [departments, setDepartments] = useState<string[]>(SOP_CATEGORIES.filter(c => c !== "All"));
+  useEffect(() => {
+    fetch("/api/settings?key=sop_departments")
+      .then(r => r.json())
+      .then(res => { if (res.success && Array.isArray(res.data?.value)) setDepartments(res.data.value); })
+      .catch(() => {});
+  }, []);
+
   /* ── Violation state ── */
   const [violations, setViolations] = useState<Violation[]>([]);
   const [violationsLoading, setViolationsLoading] = useState(false);
@@ -163,8 +172,12 @@ export default function SOPManagementPage() {
     setShowForm(true);
   };
 
+  const [formError, setFormError] = useState("");
+
   const handleSaveForm = async () => {
-    if (!formTitle.trim()) return;
+    setFormError("");
+    if (!formTitle.trim()) { setFormError("Title is required"); return; }
+    if (!formDesc.trim()) { setFormError("Description is required"); return; }
     setSaving(true);
     try {
       const body = { title: formTitle.trim(), description: formDesc.trim(), category: formCat, frequency: formFreq };
@@ -173,9 +186,13 @@ export default function SOPManagementPage() {
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (res.ok) {
         setShowForm(false);
+        setFormError("");
         fetchSops();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setFormError(data.error || "Failed to save SOP");
       }
-    } catch {}
+    } catch { setFormError("Network error"); }
     setSaving(false);
   };
 
@@ -274,7 +291,7 @@ export default function SOPManagementPage() {
         <div className="px-4 pt-3">
           {/* Category chips */}
           <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-            {["All", ...SOP_CATEGORIES].map((c) => (
+            {["All", ...departments].map((c) => (
               <button
                 key={c}
                 onClick={() => setCatFilter(c)}
@@ -554,7 +571,7 @@ export default function SOPManagementPage() {
       {tab === "sops" && (
         <button
           onClick={openAddForm}
-          className="fixed bottom-24 right-4 w-14 h-14 bg-blue-600 rounded-full shadow-lg z-50 flex items-center justify-center text-white active:scale-95 transition-transform"
+          className="fixed above-nav right-4 w-14 h-14 bg-blue-600 rounded-full shadow-lg z-50 flex items-center justify-center text-white active:scale-95 transition-transform"
           aria-label="Add SOP"
         >
           <Plus className="w-6 h-6" />
@@ -582,7 +599,7 @@ export default function SOPManagementPage() {
 
               {/* Title */}
               <div>
-                <label className="text-xs font-medium text-gray-600 mb-1 block">Title</label>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Title <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={formTitle}
@@ -594,13 +611,14 @@ export default function SOPManagementPage() {
 
               {/* Description */}
               <div>
-                <label className="text-xs font-medium text-gray-600 mb-1 block">Description</label>
+                <label className="text-xs font-medium text-gray-600 mb-1 block">Description <span className="text-red-500">*</span></label>
                 <textarea
                   value={formDesc}
                   onChange={(e) => setFormDesc(e.target.value)}
                   placeholder="Describe the SOP steps..."
-                  rows={3}
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                  rows={4}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none break-words whitespace-pre-wrap overflow-y-auto"
+                  style={{ wordBreak: "break-word", overscrollBehavior: "contain" }}
                 />
               </div>
 
@@ -608,7 +626,7 @@ export default function SOPManagementPage() {
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-2 block">Category</label>
                 <div className="flex flex-wrap gap-2">
-                  {SOP_CATEGORIES.map((c) => (
+                  {departments.map((c) => (
                     <button
                       key={c}
                       onClick={() => setFormCat(c)}
@@ -651,10 +669,15 @@ export default function SOPManagementPage() {
                 </div>
               </div>
 
+              {/* Error */}
+              {formError && (
+                <p className="text-xs text-red-600 font-medium bg-red-50 rounded-lg px-3 py-2">{formError}</p>
+              )}
+
               {/* Actions */}
               <div className="flex gap-3 pt-2 pb-20">
                 <button
-                  onClick={() => setShowForm(false)}
+                  onClick={() => { setShowForm(false); setFormError(""); }}
                   className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl text-sm font-medium"
                 >
                   Cancel

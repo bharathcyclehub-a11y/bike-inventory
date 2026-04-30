@@ -511,7 +511,7 @@ export default function ReceivablesPage() {
       {/* Floating Action Button */}
       <Link
         href="/receivables/new"
-        className="fixed bottom-20 right-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full p-3.5 shadow-lg z-50"
+        className="fixed above-nav right-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full p-3.5 shadow-lg z-50"
       >
         <Plus className="h-5 w-5" />
       </Link>

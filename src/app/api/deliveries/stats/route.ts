@@ -18,7 +18,7 @@ export async function GET() {
       prisma.delivery.count({ where: { status: "VERIFIED" } }),
       prisma.delivery.count({ where: { status: "SCHEDULED" } }),
       prisma.delivery.count({ where: { status: "OUT_FOR_DELIVERY" } }),
-      prisma.delivery.count({ where: { status: "DELIVERED", deliveredAt: { gte: today, lt: tomorrow } } }),
+      prisma.delivery.count({ where: { status: "DELIVERED" } }),
       prisma.delivery.count({ where: { status: "FLAGGED" } }),
       prisma.delivery.count({ where: { status: "PREBOOKED" } }),
     ]);
@@ -28,7 +28,8 @@ export async function GET() {
       verified,
       scheduled,
       outForDelivery,
-      deliveredToday,
+      delivered: deliveredToday,
+      deliveredToday: deliveredToday, // kept for backward compat
       flagged,
       prebooked,
       total: pending + verified + scheduled + outForDelivery + flagged + prebooked,

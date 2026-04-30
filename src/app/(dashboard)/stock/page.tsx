@@ -981,7 +981,7 @@ export default function StockPage() {
 
       {/* Floating Bulk Action Bar */}
       {selectMode && selectedIds.size > 0 && (
-        <div className="fixed bottom-16 left-0 right-0 z-50 px-3">
+        <div className="fixed above-nav left-0 right-0 z-50 px-3">
           <div className="max-w-lg mx-auto bg-slate-900 text-white rounded-xl shadow-lg p-3 space-y-2">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold">{selectedIds.size} product{selectedIds.size !== 1 ? "s" : ""} selected</p>

@@ -271,7 +271,7 @@ export default function VendorIssuesPage() {
       {/* Floating action button */}
       <Link
         href="/vendor-issues/new"
-        className="fixed bottom-6 right-6 bg-blue-600 hover:bg-blue-700 text-white rounded-full p-4 shadow-lg transition-colors z-50"
+        className="fixed above-nav right-6 bg-blue-600 hover:bg-blue-700 text-white rounded-full p-4 shadow-lg transition-colors z-50"
       >
         <Plus className="h-5 w-5" />
       </Link>
