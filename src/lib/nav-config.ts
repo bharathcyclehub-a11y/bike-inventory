@@ -13,6 +13,7 @@ import {
   Settings,
   ClipboardList,
   QrCode,
+  AlertCircle,
 } from "lucide-react";
 import type { Role } from "@/types";
 
@@ -53,7 +54,7 @@ export function getPrimaryTabs(role: Role): NavItem[] {
     case "ACCOUNTS_MANAGER":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
+        { href: "/vendor-issues", label: "Issues", icon: AlertCircle, key: "vendor-issues" },
         { href: "/expenses", label: "Expenses", icon: Receipt, key: "expenses" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },

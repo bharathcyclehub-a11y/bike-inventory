@@ -625,12 +625,13 @@ export default function SOPManagementPage() {
               {/* Title */}
               <div>
                 <label className="text-xs font-medium text-gray-600 mb-1 block">Title <span className="text-red-500">*</span></label>
-                <input
-                  type="text"
+                <textarea
                   value={formTitle}
                   onChange={(e) => setFormTitle(e.target.value)}
                   placeholder="SOP title..."
-                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  rows={2}
+                  className="w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none break-words whitespace-pre-wrap"
+                  style={{ wordBreak: "break-word" }}
                 />
               </div>
 
