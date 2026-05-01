@@ -271,20 +271,24 @@ export default function SOPManagementPage() {
           <h1 className="text-lg font-bold text-gray-900">SOP Management</h1>
           <button
             onClick={() => {
-              const activeSops = sops.filter(s => s.isActive);
-              if (!activeSops.length) return;
-              const grouped: Record<string, string[]> = {};
-              for (const s of activeSops) {
+              let shareSops = sops.filter(s => s.isActive);
+              if (catFilter !== "All") shareSops = shareSops.filter(s => s.category === catFilter);
+              if (!shareSops.length) return;
+              const grouped: Record<string, SOP[]> = {};
+              for (const s of shareSops) {
                 if (!grouped[s.category]) grouped[s.category] = [];
-                grouped[s.category].push(s.title);
+                grouped[s.category].push(s);
               }
-              const lines = ["📋 *BCH SOPs*", ""];
+              const lines = [`📋 *BCH SOPs${catFilter !== "All" ? ` — ${catFilter}` : ""}*`, ""];
               for (const [cat, items] of Object.entries(grouped)) {
                 lines.push(`*${cat}*`);
-                items.forEach((t, i) => lines.push(`  ${i + 1}. ${t}`));
+                items.forEach((s, i) => {
+                  lines.push(`  ${i + 1}. ${s.title}`);
+                  if (s.description) lines.push(`     ${s.description}`);
+                });
                 lines.push("");
               }
-              lines.push(`Total: ${activeSops.length} SOPs`);
+              lines.push(`Total: ${shareSops.length} SOPs`);
               window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
             }}
             className="p-2 rounded-lg bg-green-100 text-green-700 hover:bg-green-200"
