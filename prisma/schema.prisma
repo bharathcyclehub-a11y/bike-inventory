@@ -962,6 +962,7 @@ model SecondHandCycle {
   id              String    @id @default(cuid())
   sku             String    @unique  // Auto: SH-0001
   name            String               // e.g., "Hero Sprint 26"
+  size            String?              // e.g., "26", "24", "20" (wheel size in inches)
   condition       String               // EXCELLENT, GOOD, FAIR, SCRAP
   status          String    @default("IN_STOCK") // IN_STOCK, SOLD
   costPrice       Float               // Exchange price

@@ -15,8 +15,9 @@ interface SecondHandDetail {
   name: string;
   condition: string;
   status: string;
-  costPrice: number;
-  sellingPrice: number | null;
+  costPrice?: number;
+  sellingPrice?: number | null;
+  size?: string | null;
   photoUrl: string;
   photoUrls: string[];
   customerName: string;
@@ -149,7 +150,7 @@ export default function SecondHandDetailPage({ params }: { params: Promise<{ id:
         ? [cycle.photoUrl]
         : [];
 
-  const margin = cycle.sellingPrice ? cycle.sellingPrice - cycle.costPrice : null;
+  const margin = isAdmin && cycle.sellingPrice && cycle.costPrice ? cycle.sellingPrice - cycle.costPrice : null;
 
   return (
     <div>
@@ -270,16 +271,26 @@ export default function SecondHandDetailPage({ params }: { params: Promise<{ id:
               {cycle.condition}
             </span>
           </div>
-          <div className="flex justify-between items-center">
-            <span className="text-xs text-slate-500">Cost Price (Exchange)</span>
-            <span className="text-sm font-semibold text-slate-900">{formatINR(cycle.costPrice)}</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className="text-xs text-slate-500">Selling Price</span>
-            <span className={`text-sm font-semibold ${cycle.sellingPrice ? "text-green-600" : "text-slate-400"}`}>
-              {cycle.sellingPrice ? formatINR(cycle.sellingPrice) : "Not set"}
-            </span>
-          </div>
+          {cycle.size && (
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-slate-500">Wheel Size</span>
+              <span className="text-sm font-semibold text-indigo-700">{cycle.size}</span>
+            </div>
+          )}
+          {isAdmin && cycle.costPrice != null && (
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-slate-500">Cost Price (Exchange)</span>
+              <span className="text-sm font-semibold text-slate-900">{formatINR(cycle.costPrice)}</span>
+            </div>
+          )}
+          {isAdmin && (
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-slate-500">Selling Price</span>
+              <span className={`text-sm font-semibold ${cycle.sellingPrice ? "text-green-600" : "text-slate-400"}`}>
+                {cycle.sellingPrice ? formatINR(cycle.sellingPrice) : "Not set"}
+              </span>
+            </div>
+          )}
           {margin !== null && (
             <div className="flex justify-between items-center">
               <span className="text-xs text-slate-500">Margin</span>

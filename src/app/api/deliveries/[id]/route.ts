@@ -129,9 +129,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
         // Stock deduction on WALK_OUT or DELIVERED
         if (data.status === "WALK_OUT" || data.status === "DELIVERED") {
-          if (data.status === "DELIVERED") {
-            updateData.deliveredAt = new Date();
-          }
+          updateData.deliveredAt = new Date();
 
           // Idempotency: skip if stock already deducted for this invoice
           const alreadyDeducted = await tx.inventoryTransaction.findFirst({

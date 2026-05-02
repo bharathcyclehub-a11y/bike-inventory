@@ -658,8 +658,30 @@ export default function DeliveriesPage() {
         ))}
       </div>
 
-      {/* Daily Actions: Prebooked & Outstation */}
+      {/* Hub Navigation: 3 delivery types + dispatch + prebook */}
+      <div className="grid grid-cols-3 gap-2 mb-2">
+        <Link href="/deliveries/walkout"
+          className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-green-50 text-green-700 border-green-200 hover:bg-green-100">
+          <CheckCircle2 className="h-5 w-5" />
+          Walk-out
+        </Link>
+        <Link href="/deliveries/blr"
+          className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100">
+          <Truck className="h-5 w-5" />
+          Bangalore
+        </Link>
+        <Link href="/deliveries/outstation"
+          className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100">
+          <Package className="h-5 w-5" />
+          Outstation
+        </Link>
+      </div>
       <div className="flex gap-2 mb-2">
+        <Link href="/deliveries/dispatch"
+          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors border bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100">
+          <Truck className="h-3.5 w-3.5" />
+          Batch Dispatch
+        </Link>
         <button onClick={() => setFilter("PREBOOKED")}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors border ${
             filter === "PREBOOKED"
@@ -669,11 +691,6 @@ export default function DeliveriesPage() {
           <Package className="h-3.5 w-3.5" />
           Prebooked{stats?.prebooked ? ` (${stats.prebooked})` : ""}
         </button>
-        <Link href="/deliveries/outstation"
-          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors border bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100">
-          <Truck className="h-3.5 w-3.5" />
-          Outstation
-        </Link>
       </div>
 
       {/* Date Range Filter */}

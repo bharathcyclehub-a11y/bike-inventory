@@ -16,8 +16,9 @@ interface SecondHandItem {
   name: string;
   condition: string;
   status: string;
-  costPrice: number;
-  sellingPrice: number | null;
+  costPrice?: number;
+  sellingPrice?: number | null;
+  size?: string | null;
   photoUrl: string;
   customerName: string;
   createdAt: string;
@@ -55,6 +56,8 @@ export default function SecondHandPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>("IN_STOCK");
+  const [conditionFilter, setConditionFilter] = useState("ALL");
+  const [sizeFilter, setSizeFilter] = useState("ALL");
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const debouncedSearch = useDebounce(search);
@@ -64,6 +67,8 @@ export default function SecondHandPage() {
     setLoading(true);
     const params = new URLSearchParams({ limit: "100" });
     if (filter !== "ALL") params.set("status", filter);
+    if (conditionFilter !== "ALL") params.set("condition", conditionFilter);
+    if (sizeFilter !== "ALL") params.set("size", sizeFilter);
     if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
     if (showArchived) params.set("showArchived", "true");
 
@@ -77,7 +82,7 @@ export default function SecondHandPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch, showArchived]);
+  }, [filter, conditionFilter, sizeFilter, debouncedSearch, showArchived]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -118,28 +123,30 @@ export default function SecondHandPage() {
 
       {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-3 gap-1.5 mb-3">
+        <div className={`grid ${isAdmin ? "grid-cols-3" : "grid-cols-2"} gap-1.5 mb-3`}>
           <Card className="bg-green-50 border-green-200"><CardContent className="p-2 text-center">
             <p className="text-lg font-bold text-green-700">{stats.inStock.count}</p>
             <p className="text-[9px] text-green-600">In Stock</p>
-            <p className="text-[9px] text-green-500">{formatINR(stats.inStock.totalCostValue)}</p>
+            {isAdmin && <p className="text-[9px] text-green-500">{formatINR(stats.inStock.totalCostValue)}</p>}
           </CardContent></Card>
           <Card className="bg-blue-50 border-blue-200"><CardContent className="p-2 text-center">
             <p className="text-lg font-bold text-blue-700">{stats.soldThisMonth.count}</p>
             <p className="text-[9px] text-blue-600">Sold (Month)</p>
-            <p className="text-[9px] text-blue-500">{formatINR(stats.soldThisMonth.revenue)}</p>
+            {isAdmin && <p className="text-[9px] text-blue-500">{formatINR(stats.soldThisMonth.revenue)}</p>}
           </CardContent></Card>
-          <Card className="bg-purple-50 border-purple-200"><CardContent className="p-2 text-center">
-            <p className="text-lg font-bold text-purple-700">{formatINR(stats.avgMargin)}</p>
-            <p className="text-[9px] text-purple-600">Avg Margin</p>
-            {stats.aging.over30 > 0 && (
-              <p className="text-[9px] text-red-500">{stats.aging.over30} &gt;30d</p>
-            )}
-          </CardContent></Card>
+          {isAdmin && (
+            <Card className="bg-purple-50 border-purple-200"><CardContent className="p-2 text-center">
+              <p className="text-lg font-bold text-purple-700">{formatINR(stats.avgMargin)}</p>
+              <p className="text-[9px] text-purple-600">Avg Margin</p>
+              {stats.aging.over30 > 0 && (
+                <p className="text-[9px] text-red-500">{stats.aging.over30} &gt;30d</p>
+              )}
+            </CardContent></Card>
+          )}
         </div>
       )}
 
-      {/* Filter */}
+      {/* Status Filter */}
       <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide mb-2 pb-1">
         {(["ALL", "IN_STOCK", "SOLD"] as StatusFilter[]).map((f) => (
           <button key={f} onClick={() => setFilter(f)}
@@ -158,6 +165,30 @@ export default function SecondHandPage() {
             {showArchived ? "Showing Archived" : "Show Archived"}
           </button>
         )}
+      </div>
+
+      {/* Size + Condition Filters */}
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-1 pb-1">
+        <span className="shrink-0 text-[10px] text-slate-400 self-center">Size:</span>
+        {["ALL", '12"', '16"', '20"', '24"', '26"', '27.5"', '29"'].map((s) => (
+          <button key={s} onClick={() => setSizeFilter(s)}
+            className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-medium transition-colors ${
+              sizeFilter === s ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"
+            }`}>
+            {s === "ALL" ? "All" : s}
+          </button>
+        ))}
+      </div>
+      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-2 pb-1">
+        <span className="shrink-0 text-[10px] text-slate-400 self-center">Cond:</span>
+        {["ALL", "EXCELLENT", "GOOD", "FAIR", "SCRAP"].map((c) => (
+          <button key={c} onClick={() => setConditionFilter(c)}
+            className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-medium transition-colors ${
+              conditionFilter === c ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500"
+            }`}>
+            {c === "ALL" ? "All" : c.charAt(0) + c.slice(1).toLowerCase()}
+          </button>
+        ))}
       </div>
 
       {/* Search */}
@@ -219,10 +250,17 @@ export default function SecondHandPage() {
                           <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${CONDITION_COLORS[c.condition] || ""}`}>
                             {c.condition}
                           </span>
-                          <span className="text-xs font-medium text-slate-700">
-                            Cost: {formatINR(c.costPrice)}
-                          </span>
-                          {c.sellingPrice && (
+                          {c.size && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-indigo-100 text-indigo-700">
+                              {c.size}
+                            </span>
+                          )}
+                          {isAdmin && c.costPrice != null && (
+                            <span className="text-xs font-medium text-slate-700">
+                              Cost: {formatINR(c.costPrice)}
+                            </span>
+                          )}
+                          {isAdmin && c.sellingPrice && (
                             <span className="text-xs font-medium text-green-600">
                               Sell: {formatINR(c.sellingPrice)}
                             </span>

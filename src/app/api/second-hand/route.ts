@@ -9,6 +9,7 @@ import { z } from "zod";
 
 const createSchema = z.object({
   name: z.string().min(1, "Cycle name is required"),
+  size: z.string().min(1, "Size is required"),
   condition: z.enum(["EXCELLENT", "GOOD", "FAIR", "SCRAP"]),
   costPrice: z.number().min(0, "Cost price must be positive"),
   photoUrl: z.string().min(1, "Photo is required"),
@@ -22,16 +23,21 @@ const createSchema = z.object({
 // GET: List second-hand cycles
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth();
+    const user = await requireAuth();
+    const isAdmin = user.role === "ADMIN";
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status");
     const search = searchParams.get("search");
+    const condition = searchParams.get("condition");
+    const size = searchParams.get("size");
     const showArchived = searchParams.get("showArchived") === "true";
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {};
     if (!showArchived) where.isArchived = false;
     if (status && status !== "ALL") where.status = status;
+    if (condition && condition !== "ALL") where.condition = condition;
+    if (size && size !== "ALL") where.size = size;
     if (search) {
       where.OR = [
         { name: { contains: search, mode: "insensitive" } },
@@ -54,7 +60,10 @@ export async function GET(req: NextRequest) {
       prisma.secondHandCycle.count({ where }),
     ]);
 
-    return paginatedResponse(cycles, total, page, limit);
+    // Hide cost/price from non-admin
+    const data = isAdmin ? cycles : cycles.map(({ costPrice, sellingPrice, ...rest }) => rest);
+
+    return paginatedResponse(data, total, page, limit);
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch", 500);
@@ -87,6 +96,7 @@ export async function POST(req: NextRequest) {
       data: {
         sku,
         name: data.name,
+        size: data.size,
         condition: data.condition,
         costPrice: data.costPrice,
         photoUrl: data.photoUrl,

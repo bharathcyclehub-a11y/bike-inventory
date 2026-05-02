@@ -30,6 +30,7 @@ export async function GET(req: NextRequest) {
     }
     if (area) where.customerArea = area;
     if (outstation === "true") where.isOutstation = true;
+    if (outstation === "false") where.isOutstation = false;
     if (dateRange) {
       const now = new Date();
       const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());

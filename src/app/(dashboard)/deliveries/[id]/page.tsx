@@ -262,9 +262,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
     if (templates.scheduled) {
       msg = renderTemplate(templates.scheduled, { customerName: data.customerName, productName, deliveryDate: date });
     } else if (data.isOutstation) {
-      msg = `Hello ${data.customerName},\n\nYour ${productName} from Bharath Cycle Hub has been scheduled for dispatch.\n\nExpected Ship Date: ${date}\n\nWe will share the courier tracking details once dispatched. Please ensure someone is available to receive the package at your address.\n\nThank you!\n- Bharath Cycle Hub`;
+      msg = `🚲 *Bharath Cycle Hub*\n\nHi ${data.customerName},\n\nYour order #${data.invoiceNo} has been shipped!\n\n📦 ${productName}\n\nYour package is on the way. We'll share tracking details once available.\n\n📞 For queries: 9876543210\n\nThank you! 🙏`;
     } else {
-      msg = `Hello ${data.customerName},\n\nYour ${productName} from Bharath Cycle Hub has been scheduled for delivery.\n\nDelivery Date: ${date}\n\nPlease share your delivery location on WhatsApp so our rider can reach you.\n\nThank you!\n- Bharath Cycle Hub`;
+      msg = `🚲 *Bharath Cycle Hub*\n\nHi ${data.customerName},\n\nYour order #${data.invoiceNo} is out for delivery!\n\n📦 ${productName}\n\nOur delivery boy will call before arriving.\n\n📞 For queries: 9876543210\n\nThank you! 🙏`;
     }
     openWhatsApp(data.customerPhone, msg);
     markWhatsAppSent("whatsAppScheduledSent");

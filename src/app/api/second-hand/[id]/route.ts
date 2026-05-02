@@ -22,7 +22,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth();
+    const user = await requireAuth();
     const { id } = await params;
 
     const cycle = await prisma.secondHandCycle.findUnique({
@@ -34,6 +34,12 @@ export async function GET(
     });
 
     if (!cycle) return errorResponse("Not found", 404);
+
+    // Hide cost/price from non-admin
+    if (user.role !== "ADMIN") {
+      const { costPrice, sellingPrice, ...rest } = cycle;
+      return successResponse(rest);
+    }
     return successResponse(cycle);
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);

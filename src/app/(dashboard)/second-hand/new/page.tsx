@@ -68,6 +68,7 @@ export default function NewSecondHandPage() {
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [cycleName, setCycleName] = useState("");
+  const [cycleSize, setCycleSize] = useState("");
   const [condition, setCondition] = useState<Condition | "">("");
   const [costPrice, setCostPrice] = useState("");
   const [photos, setPhotos] = useState<File[]>([]);
@@ -135,7 +136,7 @@ export default function NewSecondHandPage() {
     setPreviews((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const isValid = cycleName && condition && costPrice && parseFloat(costPrice) > 0 && photos.length >= 1 && customerName;
+  const isValid = cycleName && cycleSize && condition && costPrice && parseFloat(costPrice) > 0 && photos.length >= 1 && customerName;
 
   const handleSubmit = async () => {
     if (!isValid) return;
@@ -172,6 +173,7 @@ export default function NewSecondHandPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: cycleName,
+          size: cycleSize,
           condition,
           costPrice: parseFloat(costPrice),
           photoUrl: uploadedUrls[0],
@@ -208,13 +210,14 @@ export default function NewSecondHandPage() {
         </div>
 
         <p className="text-xs text-slate-400 mb-6">
-          {cycleName} | {condition} | {new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(parseFloat(costPrice))}
+          {cycleName} | {cycleSize} | {condition}
         </p>
 
         <div className="flex gap-3">
           <Button variant="outline" onClick={() => {
             setCreatedSku("");
             setCycleName("");
+            setCycleSize("");
             setCondition("");
             setCostPrice("");
             setPhotos([]);
@@ -277,6 +280,21 @@ export default function NewSecondHandPage() {
           <label className="block text-sm font-medium text-slate-700 mb-1">Cycle Name *</label>
           <Input value={cycleName} onChange={(e) => setCycleName(e.target.value)}
             placeholder='e.g. "Hero Sprint 26" or "Firefox Road 700c"' />
+        </div>
+
+        {/* Size */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Wheel Size *</label>
+          <div className="grid grid-cols-4 gap-2">
+            {['12"', '16"', '20"', '24"', '26"', '27.5"', '29"'].map((s) => (
+              <button key={s} type="button" onClick={() => setCycleSize(s)}
+                className={`py-2 rounded-lg text-xs font-semibold border-2 transition-all ${
+                  cycleSize === s ? "bg-indigo-100 border-indigo-400 text-indigo-700" : "bg-white border-slate-200 text-slate-500"
+                }`}>
+                {s}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Condition */}
