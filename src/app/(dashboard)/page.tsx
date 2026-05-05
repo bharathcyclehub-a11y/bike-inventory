@@ -596,7 +596,7 @@ function AdminDashboard() {
 
       {/* Primary Actions — SOPs & Tasks */}
       <div className="grid grid-cols-2 gap-3 mt-4">
-        <Link href="/sops/my-checkoffs"
+        <Link href="/sops?action=add"
           className="flex flex-col items-center justify-center gap-2 p-5 rounded-2xl bg-teal-600 text-white shadow-md hover:bg-teal-700 transition-colors">
           <ShieldAlert className="h-7 w-7" />
           <span className="text-sm font-bold">SOPs</span>
