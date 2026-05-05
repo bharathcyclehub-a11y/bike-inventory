@@ -23,6 +23,7 @@ export async function PUT(req: NextRequest) {
           data: {
             reorderLevel: Math.max(0, Number(item.reorderLevel) || 0),
             ...(item.reorderQty !== undefined && { reorderQty: Math.max(0, Number(item.reorderQty) || 0) }),
+            ...(item.reorderVendorId !== undefined && { reorderVendorId: item.reorderVendorId || null }),
           },
           select: { id: true, name: true, reorderLevel: true, reorderQty: true },
         });

@@ -46,7 +46,8 @@ export default function SOPManagementPage() {
 
   const isAdmin = role === "ADMIN";
   const isSupervisor = role === "SUPERVISOR";
-  const canAccess = isAdmin || isSupervisor;
+  const canManage = isAdmin || isSupervisor;
+  const canAccess = true; // All roles can view their assigned SOPs
 
   const [tab, setTab] = useState<"sops" | "compliance">("sops");
 
@@ -70,14 +71,27 @@ export default function SOPManagementPage() {
   const [formFreq, setFormFreq] = useState("SOP_DAILY");
   const [saving, setSaving] = useState(false);
 
-  /* ── Dynamic departments ── */
-  const [departments, setDepartments] = useState<string[]>(SOP_CATEGORIES.filter(c => c !== "All"));
-  useEffect(() => {
+  /* ── Dynamic departments (always from DB, fallback to constants) ── */
+  const [departments, setDepartments] = useState<string[]>([]);
+  const fetchDepartments = useCallback(() => {
     fetch("/api/settings?key=sop_departments")
       .then(r => r.json())
-      .then(res => { if (res.success && Array.isArray(res.data?.value)) setDepartments(res.data.value); })
-      .catch(() => {});
+      .then(res => {
+        if (res.success && Array.isArray(res.data?.value) && res.data.value.length > 0) {
+          setDepartments(res.data.value);
+        } else {
+          setDepartments(SOP_CATEGORIES.filter(c => c !== "All"));
+        }
+      })
+      .catch(() => setDepartments(SOP_CATEGORIES.filter(c => c !== "All")));
   }, []);
+  useEffect(() => { fetchDepartments(); }, [fetchDepartments]);
+  // Refetch when user returns to this tab (e.g. after editing departments in settings)
+  useEffect(() => {
+    const onFocus = () => fetchDepartments();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [fetchDepartments]);
 
   /* ── Violation state ── */
   const [violations, setViolations] = useState<Violation[]>([]);
@@ -365,15 +379,19 @@ export default function SOPManagementPage() {
           {!loading && !error && sops.length === 0 && (
             <div className="text-center py-12">
               <div className="text-4xl mb-3">📋</div>
-              <p className="text-gray-500 mb-4">No SOPs created yet</p>
-              <button
-                onClick={handleSeed}
-                disabled={seeding}
-                className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium disabled:opacity-60"
-              >
-                {seeding && <Loader2 className="w-4 h-4 animate-spin" />}
-                Seed BCH SOPs
-              </button>
+              <p className="text-gray-500 mb-4">
+                {canManage ? "No SOPs created yet" : "No SOPs available yet"}
+              </p>
+              {canManage && (
+                <button
+                  onClick={handleSeed}
+                  disabled={seeding}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium disabled:opacity-60"
+                >
+                  {seeding && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Seed BCH SOPs
+                </button>
+              )}
             </div>
           )}
 
@@ -431,7 +449,7 @@ export default function SOPManagementPage() {
                     {expanded && (
                       <div className="border-t px-3 pb-3 pt-2 space-y-3">
                         {sop.description && (
-                          <p className="text-xs text-gray-600 leading-relaxed">{sop.description}</p>
+                          <p className="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap break-words" style={{ wordBreak: "break-word", overflowWrap: "break-word" }}>{sop.description}</p>
                         )}
                         <div className="flex items-center gap-2 flex-wrap">
                           <button
@@ -447,7 +465,7 @@ export default function SOPManagementPage() {
                           </button>
                           <a
                             href={`https://wa.me/?text=${buildSOPChecklistWhatsApp(
-                              [{ title: sop.title, category: sop.category, checked: false }],
+                              [{ title: sop.title, description: sop.description, category: sop.category, checked: false }],
                               userName,
                             )}`}
                             target="_blank"
@@ -457,6 +475,7 @@ export default function SOPManagementPage() {
                             <Smartphone className="w-3.5 h-3.5" />
                             WhatsApp
                           </a>
+                          {canManage && (
                           <button
                             onClick={() => openEditForm(sop)}
                             className="inline-flex items-center gap-1 px-3 py-1.5 bg-gray-50 text-gray-600 border border-gray-200 rounded-lg text-xs font-medium"
@@ -464,7 +483,8 @@ export default function SOPManagementPage() {
                             <Pencil className="w-3.5 h-3.5" />
                             Edit
                           </button>
-                          {isAdmin && (
+                          )}
+                          {canManage && (
                             <button
                               onClick={() => handleDelete(sop.id)}
                               className="inline-flex items-center gap-1 px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 rounded-lg text-xs font-medium"
@@ -597,7 +617,7 @@ export default function SOPManagementPage() {
       )}
 
       {/* ──────────── FAB (SOPs tab only) ──────────── */}
-      {tab === "sops" && (
+      {tab === "sops" && canManage && (
         <button
           onClick={openAddForm}
           className="fixed above-nav right-4 w-14 h-14 bg-blue-600 rounded-full shadow-lg z-50 flex items-center justify-center text-white active:scale-95 transition-transform"

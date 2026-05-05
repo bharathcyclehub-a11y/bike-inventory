@@ -18,7 +18,13 @@ export async function GET(req: NextRequest) {
     const sortBy = searchParams.get("sortBy") || undefined;
 
     const dateRange = searchParams.get("dateRange") || undefined;
+    const includeService = searchParams.get("includeService") === "true";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: Record<string, unknown> = {};
+    // By default, exclude service invoices from delivery pages
+    if (!includeService) {
+      where.NOT = { invoiceType: "SERVICE" };
+    }
     if (status) {
       where.status = status;
       // Auto-hide: delivered items older than current month unless date filter is set

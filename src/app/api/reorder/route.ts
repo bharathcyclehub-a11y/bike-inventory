@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   try {
     await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
     const { searchParams } = new URL(req.url);
-    const groupBy = searchParams.get("groupBy") || "brand"; // brand | category
+    const groupBy = searchParams.get("groupBy") || "brand"; // brand | category | vendor
     const filter = searchParams.get("filter") || "all"; // all | low | zero
     const brandId = searchParams.get("brandId") || undefined;
     const categoryId = searchParams.get("categoryId") || undefined;
@@ -36,8 +36,11 @@ export async function GET(req: NextRequest) {
         costPrice: true,
         category: { select: { id: true, name: true } },
         brand: { select: { id: true, name: true } },
+        reorderVendor: { select: { id: true, name: true, whatsappNumber: true, phone: true } },
       },
-      orderBy: groupBy === "brand"
+      orderBy: groupBy === "vendor"
+        ? [{ reorderVendor: { name: "asc" } }, { name: "asc" }]
+        : groupBy === "brand"
         ? [{ brand: { name: "asc" } }, { name: "asc" }]
         : [{ category: { name: "asc" } }, { name: "asc" }],
     });
@@ -47,12 +50,23 @@ export async function GET(req: NextRequest) {
       products = products.filter((p) => p.reorderLevel > 0 && p.currentStock <= p.reorderLevel);
     }
 
-    // Group products (handle null brand/category)
-    const groups: Record<string, { id: string; name: string; products: typeof products }> = {};
+    // Group products (handle null brand/category/vendor)
+    const groups: Record<string, { id: string; name: string; whatsappNumber?: string | null; phone?: string | null; products: typeof products }> = {};
     for (const p of products) {
-      const key = groupBy === "brand" ? (p.brand?.id || "unbranded") : (p.category?.id || "uncategorized");
-      const name = groupBy === "brand" ? (p.brand?.name || "Unbranded") : (p.category?.name || "Uncategorized");
-      if (!groups[key]) groups[key] = { id: key, name, products: [] };
+      let key: string, name: string, whatsappNumber: string | null | undefined, phone: string | null | undefined;
+      if (groupBy === "vendor") {
+        key = p.reorderVendor?.id || "unassigned";
+        name = p.reorderVendor?.name || "No Vendor Assigned";
+        whatsappNumber = p.reorderVendor?.whatsappNumber;
+        phone = p.reorderVendor?.phone;
+      } else if (groupBy === "brand") {
+        key = p.brand?.id || "unbranded";
+        name = p.brand?.name || "Unbranded";
+      } else {
+        key = p.category?.id || "uncategorized";
+        name = p.category?.name || "Uncategorized";
+      }
+      if (!groups[key]) groups[key] = { id: key, name, whatsappNumber, phone, products: [] };
       groups[key].products.push(p);
     }
 

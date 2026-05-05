@@ -23,6 +23,7 @@ interface SecondHandItem {
   customerName: string;
   createdAt: string;
   isArchived: boolean;
+  isVerified?: boolean;
   bin: { code: string; name: string } | null;
 }
 
@@ -105,13 +106,22 @@ export default function SecondHandPage() {
           <h1 className="text-lg font-bold text-slate-900">Second-Hand Cycles</h1>
           <p className="text-xs text-slate-500">Exchange inventory</p>
         </div>
-        {canAdd && (
-          <Link href="/second-hand/new">
-            <Button size="sm" className="bg-orange-600 hover:bg-orange-700">
-              <Plus className="h-4 w-4 mr-1" /> Add Exchange
-            </Button>
-          </Link>
-        )}
+        <div className="flex gap-2">
+          {(role === "ADMIN" || role === "SUPERVISOR") && (
+            <Link href="/second-hand/verify">
+              <Button size="sm" variant="outline" className="text-amber-700 border-amber-300">
+                Verify
+              </Button>
+            </Link>
+          )}
+          {canAdd && (
+            <Link href="/second-hand/new">
+              <Button size="sm" className="bg-orange-600 hover:bg-orange-700">
+                <Plus className="h-4 w-4 mr-1" /> Add
+              </Button>
+            </Link>
+          )}
+        </div>
       </div>
 
       {actionError && (
@@ -253,6 +263,11 @@ export default function SecondHandPage() {
                           {c.size && (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-indigo-100 text-indigo-700">
                               {c.size}
+                            </span>
+                          )}
+                          {c.isVerified === false && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">
+                              Pending
                             </span>
                           )}
                           {isAdmin && c.costPrice != null && (

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Share2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,14 +10,19 @@ import { Button } from "@/components/ui/button";
 interface IssueDetail {
   id: string;
   issueNo: string;
+  issueSource: string;
   issueType: string;
   description: string;
   status: string;
   priority: string;
+  photoUrls?: string[];
+  suggestedResolution?: string;
   resolution?: string;
   resolvedAt?: string;
   createdAt: string;
-  vendor: { id: string; name: string; code: string };
+  vendor: { id: string; name: string; code: string } | null;
+  clientName?: string;
+  clientPhone?: string;
   bill?: { id: string; billNo: string; amount: number } | null;
   createdBy: { id: string; name: string };
 }
@@ -90,6 +95,47 @@ export default function VendorIssueDetailPage({
     setUpdating(false);
   }
 
+  async function handleWhatsAppShare() {
+    if (!issue) return;
+    const source = issue.issueSource === "CLIENT"
+      ? `Client: ${issue.clientName || "Unknown"}${issue.clientPhone ? ` (${issue.clientPhone})` : ""}`
+      : `Brand: ${issue.vendor?.name || "Unknown"} (${issue.vendor?.code || ""})`;
+
+    let text = `*Ops Issue ${issue.issueNo}*\n`;
+    text += `Source: ${source}\n`;
+    text += `Type: ${issue.issueType.replace(/_/g, " ")}\n`;
+    text += `Priority: ${issue.priority}\n`;
+    text += `Status: ${issue.status.replace(/_/g, " ")}\n\n`;
+    text += `*Description:*\n${issue.description}\n`;
+    if (issue.suggestedResolution) text += `\n*Suggested Resolution:*\n${issue.suggestedResolution}\n`;
+    if (issue.resolution) text += `\n*Resolution:*\n${issue.resolution}\n`;
+    if (issue.bill) text += `\nBill: ${issue.bill.billNo}\n`;
+    text += `\nCreated: ${new Date(issue.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`;
+
+    // Try native share with images
+    if (issue.photoUrls && issue.photoUrls.length > 0 && navigator.share) {
+      try {
+        const files: File[] = [];
+        for (const url of issue.photoUrls) {
+          const res = await fetch(url);
+          const blob = await res.blob();
+          const ext = url.split(".").pop()?.split("?")[0] || "jpg";
+          files.push(new File([blob], `issue-${issue.issueNo}-${files.length + 1}.${ext}`, { type: blob.type }));
+        }
+        if (navigator.canShare && navigator.canShare({ files })) {
+          await navigator.share({ text, files });
+          return;
+        }
+      } catch { /* fall through */ }
+    }
+
+    // Fallback: WhatsApp text with image links
+    if (issue.photoUrls && issue.photoUrls.length > 0) {
+      text += `\n\n*Photos:*\n${issue.photoUrls.join("\n")}`;
+    }
+    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -121,7 +167,9 @@ export default function VendorIssueDetailPage({
         </Link>
         <div className="flex-1">
           <h1 className="text-lg font-bold text-slate-900">{issue.issueNo}</h1>
-          <p className="text-xs text-slate-500">{issue.vendor.name}</p>
+          <p className="text-xs text-slate-500">
+            {issue.issueSource === "CLIENT" ? `Client: ${issue.clientName || "Unknown"}` : `Brand: ${issue.vendor?.name || "Unknown"}`}
+          </p>
         </div>
         <Badge variant={STATUS_VARIANT[issue.status] || "default"}>
           {issue.status.replace(/_/g, " ")}
@@ -148,8 +196,17 @@ export default function VendorIssueDetailPage({
             </Badge>
           </div>
           <div>
-            <span className="text-xs text-slate-500">Vendor:</span>
-            <p className="text-sm text-slate-900">{issue.vendor.name} ({issue.vendor.code})</p>
+            <span className="text-xs text-slate-500">
+              {issue.issueSource === "CLIENT" ? "Client:" : "Brand:"}
+            </span>
+            {issue.issueSource === "CLIENT" ? (
+              <div>
+                <p className="text-sm text-slate-900">{issue.clientName || "Unknown"}</p>
+                {issue.clientPhone && <p className="text-xs text-slate-500">{issue.clientPhone}</p>}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-900">{issue.vendor?.name} ({issue.vendor?.code})</p>
+            )}
           </div>
           {issue.bill && (
             <div>
@@ -181,6 +238,26 @@ export default function VendorIssueDetailPage({
         </CardContent>
       </Card>
 
+      {/* Photos */}
+      {issue.photoUrls && issue.photoUrls.length > 0 && (
+        <Card className="mb-4">
+          <CardContent className="p-3">
+            <p className="text-xs text-slate-500 mb-2">Photos</p>
+            <div className="flex gap-2 overflow-x-auto">
+              {issue.photoUrls.map((url, i) => (
+                <a key={i} href={url} target="_blank" rel="noopener noreferrer">
+                  <img
+                    src={url}
+                    alt={`Issue photo ${i + 1}`}
+                    className="w-24 h-24 object-cover rounded-lg border border-slate-200"
+                  />
+                </a>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Description */}
       <Card className="mb-4">
         <CardContent className="p-3">
@@ -190,6 +267,18 @@ export default function VendorIssueDetailPage({
           </p>
         </CardContent>
       </Card>
+
+      {/* Suggested Resolution */}
+      {issue.suggestedResolution && (
+        <Card className="mb-4 border-amber-200 bg-amber-50/50">
+          <CardContent className="p-3">
+            <p className="text-xs text-amber-600 font-medium mb-1">Suggested Resolution</p>
+            <p className="text-sm text-slate-800 whitespace-pre-wrap">
+              {issue.suggestedResolution}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Resolution section */}
       {(issue.status === "RESOLVED" || issue.status === "CLOSED") &&
@@ -266,7 +355,7 @@ export default function VendorIssueDetailPage({
               disabled={updating}
               className="w-full bg-blue-600 hover:bg-blue-700"
             >
-              {updating ? "Updating..." : "Start Working"}
+              {updating ? "Updating..." : "In Progress"}
             </Button>
           )}
           {issue.status === "IN_PROGRESS" && (
@@ -302,6 +391,15 @@ export default function VendorIssueDetailPage({
           )}
         </div>
       )}
+      {/* WhatsApp Share */}
+      <Button
+        size="sm"
+        onClick={handleWhatsAppShare}
+        className="w-full bg-green-600 hover:bg-green-700 mb-4"
+      >
+        <Share2 className="w-4 h-4 mr-1.5" />
+        Share on WhatsApp
+      </Button>
     </div>
   );
 }

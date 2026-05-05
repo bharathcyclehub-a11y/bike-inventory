@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Camera, X, Image as ImageIcon } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
@@ -49,6 +49,9 @@ const PRIORITY_COLORS: Record<string, string> = {
 export default function NewVendorIssuePage() {
   const router = useRouter();
 
+  const [issueSource, setIssueSource] = useState<"VENDOR" | "CLIENT">("VENDOR");
+  const [clientName, setClientName] = useState("");
+  const [clientPhone, setClientPhone] = useState("");
   const [vendors, setVendors] = useState<VendorOption[]>([]);
   const [bills, setBills] = useState<BillOption[]>([]);
   const [vendorId, setVendorId] = useState("");
@@ -56,6 +59,13 @@ export default function NewVendorIssuePage() {
   const [priority, setPriority] = useState<string>("MEDIUM");
   const [description, setDescription] = useState("");
   const [billId, setBillId] = useState("");
+  const [suggestedResolution, setSuggestedResolution] = useState("");
+  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [vendorSearch, setVendorSearch] = useState("");
+  const [showVendorDropdown, setShowVendorDropdown] = useState(false);
+  const vendorRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -67,6 +77,45 @@ export default function NewVendorIssuePage() {
       })
       .catch(() => {});
   }, []);
+
+  // Click outside to close vendor dropdown
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (vendorRef.current && !vendorRef.current.contains(e.target as Node)) {
+        setShowVendorDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filteredVendors = vendors.filter(
+    (v) =>
+      v.name.toLowerCase().includes(vendorSearch.toLowerCase()) ||
+      v.code.toLowerCase().includes(vendorSearch.toLowerCase())
+  );
+
+  async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    setUploadingPhoto(true);
+    try {
+      for (const file of Array.from(files)) {
+        const formData = new FormData();
+        formData.append("file", file);
+        const res = await fetch("/api/upload", { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.success && data.data?.url) {
+          setPhotoUrls((prev) => [...prev, data.data.url]);
+        }
+      }
+    } catch {
+      setError("Failed to upload photo");
+    } finally {
+      setUploadingPhoto(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
 
   useEffect(() => {
     if (!vendorId) {
@@ -84,7 +133,9 @@ export default function NewVendorIssuePage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!vendorId || !issueType || !description.trim()) return;
+    if (issueSource === "VENDOR" && !vendorId) return;
+    if (issueSource === "CLIENT" && !clientName.trim()) return;
+    if (!issueType || !description.trim()) return;
 
     setSubmitting(true);
     setError("");
@@ -94,11 +145,16 @@ export default function NewVendorIssuePage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          vendorId,
+          issueSource: issueSource,
+          vendorId: issueSource === "VENDOR" ? vendorId : undefined,
+          clientName: issueSource === "CLIENT" ? clientName.trim() : undefined,
+          clientPhone: issueSource === "CLIENT" ? (clientPhone.trim() || undefined) : undefined,
           issueType,
           description: description.trim(),
           priority,
           billId: billId || undefined,
+          photoUrls: photoUrls.length > 0 ? photoUrls : undefined,
+          suggestedResolution: suggestedResolution.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -117,7 +173,7 @@ export default function NewVendorIssuePage() {
         <Link href="/vendor-issues" className="p-1">
           <ArrowLeft className="h-5 w-5 text-slate-600" />
         </Link>
-        <h1 className="text-lg font-bold text-slate-900">New Issue</h1>
+        <h1 className="text-lg font-bold text-slate-900">New Ops Issue</h1>
       </div>
 
       {error && (
@@ -127,27 +183,98 @@ export default function NewVendorIssuePage() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Vendor */}
+        {/* Issue Source Toggle */}
         <div>
-          <label className="block text-sm font-medium text-slate-700 mb-1">
-            Vendor *
-          </label>
-          <select
-            value={vendorId}
-            onChange={(e) => {
-              setVendorId(e.target.value);
-              setBillId("");
-            }}
-            className="flex h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-          >
-            <option value="">Select vendor...</option>
-            {vendors.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name} ({v.code})
-              </option>
-            ))}
-          </select>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Issue Type</label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => { setIssueSource("VENDOR"); setClientName(""); setClientPhone(""); }}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                issueSource === "VENDOR" ? "bg-orange-600 text-white" : "bg-slate-100 text-slate-600"
+              }`}>
+              Brand Issue
+            </button>
+            <button type="button" onClick={() => { setIssueSource("CLIENT"); setVendorId(""); setVendorSearch(""); setBillId(""); }}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                issueSource === "CLIENT" ? "bg-teal-600 text-white" : "bg-slate-100 text-slate-600"
+              }`}>
+              Client Issue
+            </button>
+          </div>
         </div>
+
+        {/* Client fields (only for CLIENT source) */}
+        {issueSource === "CLIENT" && (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Client Name *</label>
+              <input type="text" placeholder="Customer name..." value={clientName}
+                onChange={(e) => setClientName(e.target.value)}
+                className="flex h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Client Phone (optional)</label>
+              <input type="tel" placeholder="Phone number..." value={clientPhone}
+                onChange={(e) => setClientPhone(e.target.value)}
+                className="flex h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900" />
+            </div>
+          </>
+        )}
+
+        {/* Vendor (searchable) — only for VENDOR source */}
+        {issueSource === "VENDOR" && (
+        <div ref={vendorRef} className="relative">
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            Brand *
+          </label>
+          <input
+            type="text"
+            placeholder="Search brand..."
+            value={vendorSearch}
+            onChange={(e) => {
+              setVendorSearch(e.target.value);
+              setShowVendorDropdown(true);
+              if (!e.target.value) { setVendorId(""); setBillId(""); }
+            }}
+            onFocus={() => setShowVendorDropdown(true)}
+            className="flex h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+          />
+          {vendorId && (
+            <button
+              type="button"
+              onClick={() => { setVendorId(""); setVendorSearch(""); setBillId(""); }}
+              className="absolute right-2 top-8 text-slate-400 hover:text-slate-600"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          )}
+          {showVendorDropdown && filteredVendors.length > 0 && (
+            <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+              {filteredVendors.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  onClick={() => {
+                    setVendorId(v.id);
+                    setVendorSearch(`${v.name} (${v.code})`);
+                    setShowVendorDropdown(false);
+                    setBillId("");
+                  }}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-slate-50 ${
+                    vendorId === v.id ? "bg-slate-100 font-medium" : ""
+                  }`}
+                >
+                  {v.name} <span className="text-slate-400">({v.code})</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {showVendorDropdown && vendorSearch && filteredVendors.length === 0 && (
+            <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg p-3 text-sm text-slate-400">
+              No vendors found
+            </div>
+          )}
+        </div>
+        )}
 
         {/* Issue Type */}
         <div>
@@ -209,8 +336,66 @@ export default function NewVendorIssuePage() {
           />
         </div>
 
+        {/* Photos */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            Photos (optional)
+          </label>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {photoUrls.map((url, i) => (
+              <div key={i} className="relative w-20 h-20">
+                <img src={url} alt="" className="w-20 h-20 object-cover rounded-lg border" />
+                <button
+                  type="button"
+                  onClick={() => setPhotoUrls((prev) => prev.filter((_, idx) => idx !== i))}
+                  className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            capture="environment"
+            onChange={handlePhotoUpload}
+            className="hidden"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadingPhoto}
+          >
+            {uploadingPhoto ? "Uploading..." : (
+              <>
+                <Camera className="w-4 h-4 mr-1" />
+                Add Photo
+              </>
+            )}
+          </Button>
+        </div>
+
+        {/* Suggested Resolution */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            Suggested Resolution (optional)
+          </label>
+          <textarea
+            placeholder="What resolution do you suggest?"
+            value={suggestedResolution}
+            onChange={(e) => setSuggestedResolution(e.target.value)}
+            rows={2}
+            className="flex w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
+          />
+        </div>
+
         {/* Bill (optional, only when vendor selected) */}
-        {vendorId && bills.length > 0 && (
+        {issueSource === "VENDOR" && vendorId && bills.length > 0 && (
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">
               Related Bill (optional)
@@ -233,7 +418,7 @@ export default function NewVendorIssuePage() {
         <Button
           type="submit"
           size="lg"
-          disabled={!vendorId || !issueType || !description.trim() || submitting}
+          disabled={(issueSource === "VENDOR" ? !vendorId : !clientName.trim()) || !issueType || !description.trim() || submitting}
           className="w-full bg-blue-600 hover:bg-blue-700"
         >
           {submitting ? "Creating..." : "Create Issue"}

@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft, Phone, MapPin, Clock, CheckCircle2, Truck,
-  Flag, AlertTriangle, Loader2, Package, Download,
+  Flag, AlertTriangle, Loader2, Package, Download, Wrench,
   MessageCircle, Check, Globe, IndianRupee, ShoppingBag, RotateCcw,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -105,6 +105,23 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   // Free accessories
   const [freeAccessories, setFreeAccessories] = useState("");
   const [reversePickup, setReversePickup] = useState(false);
+
+  // Service invoice confirmation
+  const [showServiceConfirm, setShowServiceConfirm] = useState(false);
+  const markAsService = async () => {
+    setActionLoading(true);
+    try {
+      const res = await fetch(`/api/deliveries/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invoiceType: "SERVICE" }),
+      });
+      const result = await res.json();
+      if (result.success) setData(result.data);
+    } catch { /* silent */ }
+    setActionLoading(false);
+    setShowServiceConfirm(false);
+  };
 
   // Handover confirmation checklist — auto-open if ?action=walkout
   const [showHandover, setShowHandover] = useState<"WALK_OUT" | "DELIVERED" | null>(
@@ -441,16 +458,9 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                   }
                 }
 
-                // Fallback: Android intent to open Add Contact with pre-filled data
-                const intentUrl = `intent://contacts/#Intent;action=android.intent.action.INSERT;type=vnd.android.cursor.dir/contact;S.phone=+91${phone};S.name=${encodeURIComponent(contactName)};end`;
-                const addContactUrl = `https://contacts.google.com/new?name=${encodeURIComponent(contactName)}&phone=+91${phone}`;
-
-                // Try Android intent first, fall back to Google Contacts web
-                try {
-                  window.location.href = intentUrl;
-                } catch {
-                  window.open(addContactUrl, "_blank");
-                }
+                // Fallback: open vCard blob URL — triggers "Open with Contacts" on most mobile browsers
+                const url = URL.createObjectURL(blob);
+                window.open(url, "_blank");
                 setContactSaved(true);
               }}
               className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium"
@@ -1342,6 +1352,50 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
             <CheckCircle2 className="h-4 w-4" /> Mark Delivered
           </button>
+        )}
+
+        {/* Mark as Service — only for PENDING invoices not already tagged */}
+        {data.status === "PENDING" && data.invoiceType !== "SERVICE" && !showServiceConfirm && (
+          <button onClick={() => setShowServiceConfirm(true)} disabled={actionLoading}
+            className="w-full flex items-center justify-center gap-2 bg-purple-100 text-purple-700 border border-purple-200 py-2.5 rounded-lg text-sm font-medium">
+            <Wrench className="h-4 w-4" /> Mark as Service Invoice
+          </button>
+        )}
+
+        {/* Service confirmation dialog */}
+        {showServiceConfirm && (
+          <Card className="border-amber-300 bg-amber-50">
+            <CardContent className="p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-amber-900">Mark as Service Invoice?</p>
+                  <p className="text-xs text-amber-700 mt-1">This invoice will be moved to the Service section and removed from deliveries. This action cannot be undone.</p>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button onClick={markAsService} disabled={actionLoading}
+                  className="flex-1 bg-purple-600 text-white py-2 rounded-lg text-xs font-medium disabled:opacity-50">
+                  {actionLoading ? "Saving..." : "Yes, it's a Service Invoice"}
+                </button>
+                <button onClick={() => setShowServiceConfirm(false)}
+                  className="flex-1 bg-white text-slate-700 border border-slate-200 py-2 rounded-lg text-xs font-medium">
+                  Cancel
+                </button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Service invoice banner */}
+        {data.invoiceType === "SERVICE" && (
+          <Card className="border-purple-200 bg-purple-50">
+            <CardContent className="p-3 text-center">
+              <Wrench className="h-6 w-6 text-purple-600 mx-auto mb-1" />
+              <p className="text-sm font-medium text-purple-900">Service Invoice</p>
+              <p className="text-[10px] text-purple-700">No delivery required. Service billing only.</p>
+            </CardContent>
+          </Card>
         )}
 
         {data.status === "FLAGGED" && (

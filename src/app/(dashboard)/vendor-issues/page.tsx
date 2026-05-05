@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Search, AlertCircle, Plus, Trash2 } from "lucide-react";
+import { Search, AlertCircle, Plus, Trash2, SlidersHorizontal, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -14,12 +14,14 @@ import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 interface IssueItem {
   id: string;
   issueNo: string;
+  issueSource: string;
   issueType: string;
   description: string;
   status: string;
   priority: string;
   createdAt: string;
-  vendor: { name: string };
+  vendor: { name: string } | null;
+  clientName: string | null;
   openCount: number;
   inProgressCount: number;
   resolvedCount: number;
@@ -62,6 +64,7 @@ export default function VendorIssuesPage() {
 
   const [issues, setIssues] = useState<IssueItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sourceFilter, setSourceFilter] = useState("ALL");
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [priorityFilter, setPriorityFilter] = useState("ALL");
   const [search, setSearch] = useState("");
@@ -69,6 +72,14 @@ export default function VendorIssuesPage() {
   const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
+  const [showFilters, setShowFilters] = useState(false);
+
+  const activeFilterCount = [
+    sourceFilter !== "ALL",
+    statusFilter !== "ALL",
+    priorityFilter !== "ALL",
+    dateFilter !== "all",
+  ].filter(Boolean).length;
 
   const openCount = issues[0]?.openCount ?? 0;
   const inProgressCount = issues[0]?.inProgressCount ?? 0;
@@ -78,6 +89,7 @@ export default function VendorIssuesPage() {
     setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
     if (vendorIdParam) params.set("vendorId", vendorIdParam);
+    if (sourceFilter !== "ALL") params.set("issueSource", sourceFilter);
     if (statusFilter !== "ALL") params.set("status", statusFilter);
     if (priorityFilter !== "ALL") params.set("priority", priorityFilter);
     if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
@@ -91,7 +103,7 @@ export default function VendorIssuesPage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [vendorIdParam, statusFilter, priorityFilter, debouncedSearch, dateFrom, dateTo]);
+  }, [vendorIdParam, sourceFilter, statusFilter, priorityFilter, debouncedSearch, dateFrom, dateTo]);
 
   const handleDelete = async (e: React.MouseEvent, issueId: string, issueNo: string) => {
     e.preventDefault();
@@ -110,9 +122,9 @@ export default function VendorIssuesPage() {
   };
 
   return (
-    <div>
+    <div className="pb-24">
       <div className="flex items-center justify-between mb-3">
-        <h1 className="text-lg font-bold text-slate-900">Vendor Issues</h1>
+        <h1 className="text-lg font-bold text-slate-900">Ops Issues</h1>
       </div>
 
       {/* Summary row */}
@@ -141,46 +153,110 @@ export default function VendorIssuesPage() {
         />
       </div>
 
-      {/* Date Filter */}
-      <DateFilter
-        value={dateFilter}
-        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
-        className="mb-2"
-      />
-
-      {/* Status filter chips */}
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-2 pb-1">
-        {STATUS_FILTERS.map((s) => (
+      {/* Filter button */}
+      <div className="flex items-center gap-2 mb-3">
+        <button
+          onClick={() => setShowFilters(!showFilters)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            activeFilterCount > 0
+              ? "bg-blue-600 text-white"
+              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+          }`}
+        >
+          <SlidersHorizontal className="w-3.5 h-3.5" />
+          Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+        </button>
+        {activeFilterCount > 0 && (
           <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              statusFilter === s
-                ? "bg-slate-900 text-white"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
+            onClick={() => {
+              setSourceFilter("ALL");
+              setStatusFilter("ALL");
+              setPriorityFilter("ALL");
+              setDateFilter("all");
+              setDateFrom(undefined);
+              setDateTo(undefined);
+            }}
+            className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-slate-500 hover:text-slate-700 hover:bg-slate-100"
           >
-            {s === "ALL" ? "All" : s.replace(/_/g, " ")}
+            <X className="w-3 h-3" />
+            Clear
           </button>
-        ))}
+        )}
       </div>
 
-      {/* Priority filter chips */}
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
-        {PRIORITY_FILTERS.map((p) => (
-          <button
-            key={p}
-            onClick={() => setPriorityFilter(p)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              priorityFilter === p
-                ? "bg-blue-600 text-white"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            {p === "ALL" ? "All Priority" : p}
-          </button>
-        ))}
-      </div>
+      {/* Collapsible filter panel */}
+      {showFilters && (
+        <div className="bg-slate-50 rounded-xl border border-slate-200 p-3 mb-3 space-y-3">
+          {/* Source */}
+          <div>
+            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Source</p>
+            <div className="flex gap-2">
+              {["ALL", "VENDOR", "CLIENT"].map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setSourceFilter(s)}
+                  className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                    sourceFilter === s
+                      ? s === "VENDOR" ? "bg-orange-600 text-white" : s === "CLIENT" ? "bg-teal-600 text-white" : "bg-slate-900 text-white"
+                      : "bg-white text-slate-600 border border-slate-200"
+                  }`}
+                >
+                  {s === "ALL" ? "All" : s === "VENDOR" ? "Brand" : "Client"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Status */}
+          <div>
+            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Status</p>
+            <div className="flex gap-2 flex-wrap">
+              {STATUS_FILTERS.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setStatusFilter(s)}
+                  className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                    statusFilter === s
+                      ? "bg-slate-900 text-white"
+                      : "bg-white text-slate-600 border border-slate-200"
+                  }`}
+                >
+                  {s === "ALL" ? "All" : s.replace(/_/g, " ")}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Priority */}
+          <div>
+            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Priority</p>
+            <div className="flex gap-2 flex-wrap">
+              {PRIORITY_FILTERS.map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setPriorityFilter(p)}
+                  className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                    priorityFilter === p
+                      ? "bg-blue-600 text-white"
+                      : "bg-white text-slate-600 border border-slate-200"
+                  }`}
+                >
+                  {p === "ALL" ? "All" : p}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Date */}
+          <div>
+            <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Date</p>
+            <DateFilter
+              value={dateFilter}
+              onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+            />
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="space-y-2">
@@ -225,7 +301,11 @@ export default function VendorIssuesPage() {
                         </span>
                       </div>
                       <p className="text-xs text-slate-500 mb-1">
-                        {issue.vendor.name}
+                        {issue.issueSource === "CLIENT" ? (
+                          <><span className="text-teal-600 font-medium">Client:</span> {issue.clientName || "Unknown"}</>
+                        ) : (
+                          <><span className="text-orange-600 font-medium">Brand:</span> {issue.vendor?.name || "Unknown"}</>
+                        )}
                       </p>
                       <p className="text-xs text-slate-600 line-clamp-2">
                         {issue.description}

@@ -54,7 +54,7 @@ export function getPrimaryTabs(role: Role): NavItem[] {
     case "ACCOUNTS_MANAGER":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/vendor-issues", label: "Issues", icon: AlertCircle, key: "vendor-issues" },
+        { href: "/vendor-issues", label: "Ops Issues", icon: AlertCircle, key: "vendor-issues" },
         { href: "/expenses", label: "Expenses", icon: Receipt, key: "expenses" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
@@ -121,6 +121,7 @@ export function getDesktopExtraTabs(role: Role): NavItem[] {
     case "INWARDS_CLERK":
       return [
         { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
+        { href: "/tasks", label: "Tasks", icon: ClipboardList, key: "tasks" },
         { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
       ];
     case "OUTWARDS_CLERK":

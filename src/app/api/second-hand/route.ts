@@ -38,6 +38,9 @@ export async function GET(req: NextRequest) {
     if (status && status !== "ALL") where.status = status;
     if (condition && condition !== "ALL") where.condition = condition;
     if (size && size !== "ALL") where.size = size;
+    const verified = searchParams.get("verified");
+    if (verified === "true") where.isVerified = true;
+    if (verified === "false") where.isVerified = false;
     if (search) {
       where.OR = [
         { name: { contains: search, mode: "insensitive" } },
@@ -52,6 +55,7 @@ export async function GET(req: NextRequest) {
         include: {
           bin: { select: { code: true, name: true } },
           createdBy: { select: { name: true } },
+          verifiedBy: { select: { name: true } },
         },
         orderBy: { createdAt: "desc" },
         skip,

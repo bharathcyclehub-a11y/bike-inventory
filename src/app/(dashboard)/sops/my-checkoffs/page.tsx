@@ -46,6 +46,7 @@ export default function MyCheckoffsPage() {
   const [error, setError] = useState("");
   const [offline, setOffline] = useState(false);
   const [togglingIds, setTogglingIds] = useState<Set<string>>(new Set());
+  const [expandedSopId, setExpandedSopId] = useState<string | null>(null);
 
   /* ── Check online status ── */
   useEffect(() => {
@@ -119,10 +120,17 @@ export default function MyCheckoffsPage() {
     if (!grouped[sop.category]) grouped[sop.category] = [];
     grouped[sop.category].push(sop);
   }
-  // Keep categories in SOP_CATEGORIES order, then any extras
+  // Keep categories in saved department order, then any extras
+  const [deptOrder, setDeptOrder] = useState<string[]>(SOP_CATEGORIES.filter(c => c !== "All"));
+  useEffect(() => {
+    fetch("/api/settings?key=sop_departments")
+      .then(r => r.json())
+      .then(res => { if (res.success && Array.isArray(res.data?.value) && res.data.value.length > 0) setDeptOrder(res.data.value); })
+      .catch(() => {});
+  }, []);
   const orderedCategories = [
-    ...SOP_CATEGORIES.filter((c) => grouped[c]),
-    ...Object.keys(grouped).filter((c) => !SOP_CATEGORIES.includes(c)),
+    ...deptOrder.filter((c) => grouped[c]),
+    ...Object.keys(grouped).filter((c) => !deptOrder.includes(c)),
   ];
 
   /* ── Progress ── */
@@ -250,65 +258,70 @@ export default function MyCheckoffsPage() {
         </div>
       )}
 
-      {/* SOP list grouped by category */}
-      {!loading && !error && orderedCategories.length > 0 && (
-        <div className="px-4 mt-4 space-y-5">
-          {orderedCategories.map((cat) => (
-            <div key={cat}>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">{cat}</p>
-              <div className="space-y-2">
-                {grouped[cat].map((sop) => {
-                  const checked = checkedSopIds.has(sop.id);
-                  const toggling = togglingIds.has(sop.id);
-                  return (
-                    <button
-                      key={sop.id}
-                      onClick={() => handleToggle(sop.id)}
-                      disabled={toggling}
-                      className="w-full flex items-center gap-3 bg-white rounded-xl border shadow-sm p-3 text-left active:bg-gray-50 transition-colors disabled:opacity-70"
-                    >
-                      {/* Checkbox circle */}
-                      <div
-                        className={`w-7 h-7 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-                          checked
-                            ? "bg-teal-500 border-teal-500"
-                            : "border-gray-300 bg-white"
-                        }`}
-                      >
-                        {checked && (
-                          <CheckCircle2 className="w-4 h-4 text-white" />
-                        )}
-                        {toggling && !checked && (
-                          <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
+      {/* SOP list grouped by category — numbered, expandable */}
+      {!loading && !error && orderedCategories.length > 0 && (() => {
+        let globalIndex = 0;
+        return (
+          <div className="px-4 mt-4 space-y-5">
+            {orderedCategories.map((cat) => (
+              <div key={cat}>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">{cat}</p>
+                <div className="space-y-2">
+                  {grouped[cat].map((sop) => {
+                    globalIndex++;
+                    const num = globalIndex;
+                    const checked = checkedSopIds.has(sop.id);
+                    const toggling = togglingIds.has(sop.id);
+                    const isExpanded = expandedSopId === sop.id;
+                    return (
+                      <div key={sop.id} className="bg-white rounded-xl border shadow-sm overflow-hidden">
+                        <div className="flex items-center gap-3 p-3">
+                          {/* Checkbox circle */}
+                          <button
+                            onClick={() => handleToggle(sop.id)}
+                            disabled={toggling}
+                            className={`w-7 h-7 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                              checked ? "bg-teal-500 border-teal-500" : "border-gray-300 bg-white"
+                            }`}
+                          >
+                            {checked && <CheckCircle2 className="w-4 h-4 text-white" />}
+                            {toggling && !checked && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
+                          </button>
+
+                          {/* Content — tap to expand */}
+                          <button
+                            onClick={() => setExpandedSopId(isExpanded ? null : sop.id)}
+                            className="flex-1 min-w-0 text-left"
+                          >
+                            <p className={`text-sm font-medium ${checked ? "text-gray-400 line-through" : "text-gray-900"}`}>
+                              <span className="text-gray-400 mr-1.5">{num}.</span>
+                              {sop.title}
+                            </p>
+                          </button>
+
+                          {/* Category badge */}
+                          <span className="bg-purple-100 text-purple-700 text-[10px] px-2 py-0.5 rounded-full flex-shrink-0">
+                            {sop.category}
+                          </span>
+                        </div>
+
+                        {/* Expanded description */}
+                        {isExpanded && sop.description && (
+                          <div className="px-4 pb-3 pt-0 ml-10">
+                            <p className="text-xs text-gray-500 whitespace-pre-wrap leading-relaxed">
+                              {sop.description}
+                            </p>
+                          </div>
                         )}
                       </div>
-
-                      {/* Content */}
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-sm font-medium ${checked ? "text-gray-400 line-through" : "text-gray-900"}`}>
-                          {sop.title}
-                        </p>
-                        {sop.description && (
-                          <p className="text-xs text-gray-400 mt-0.5 truncate">
-                            {sop.description.length > 80
-                              ? sop.description.slice(0, 80) + "..."
-                              : sop.description}
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Category badge */}
-                      <span className="bg-purple-100 text-purple-700 text-[10px] px-2 py-0.5 rounded-full flex-shrink-0">
-                        {sop.category}
-                      </span>
-                    </button>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        );
+      })()}
     </div>
   );
 }

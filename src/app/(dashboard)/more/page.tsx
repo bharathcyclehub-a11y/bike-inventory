@@ -37,6 +37,7 @@ import {
   ListTodo,
   BookOpenCheck,
   Activity,
+  CheckSquare,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -73,7 +74,7 @@ const MENU_GROUPS: MenuGroup[] = [
     title: "Operations Hub",
     items: [
       { label: "Tasks", icon: ListTodo, href: "/tasks", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"] },
-      { label: "SOPs", icon: BookOpenCheck, href: "/sops", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "SOPs", icon: BookOpenCheck, href: "/sops", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"] },
       { label: "My Check-offs", icon: ClipboardCheck, href: "/sops/my-checkoffs", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"] },
       { label: "Ops Stats", icon: Activity, href: "/ops-stats", roles: ["ADMIN", "SUPERVISOR"] },
     ],
@@ -123,6 +124,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { label: "Price Correction", icon: IndianRupee, href: "/price-correction", roles: ["ADMIN"] },
       { label: "WhatsApp Templates", icon: MessageSquare, href: "/more/whatsapp-templates", roles: ["ADMIN"], featureKey: "whatsapp_templates" },
       { label: "SOP Departments", icon: BookOpenCheck, href: "/more/sop-departments", roles: ["ADMIN"] },
+      { label: "Daily Checklists", icon: CheckSquare, href: "/more/checklists", roles: ["ADMIN"] },
       { label: "Alert Config", icon: Bell, href: "/more/alerts", roles: ["ADMIN"] },
       { label: "Zoho Books Sync", icon: Cloud, href: "/more/zoho", roles: ["ADMIN"], featureKey: "zoho" },
     ],

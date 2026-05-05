@@ -9,19 +9,23 @@ import type { SOPFrequency } from "@prisma/client";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR"]);
+    const user = await requireAuth();
+    const isAdminOrSupervisor = user.role === "ADMIN" || user.role === "SUPERVISOR";
     const { searchParams } = new URL(req.url);
     const category = searchParams.get("category") || undefined;
     const isActive = searchParams.get("isActive");
     const frequency = searchParams.get("frequency") || undefined;
 
-    const where = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const where: any = {
       ...(category && { category }),
       ...(isActive !== null && isActive !== undefined && isActive !== "" && {
         isActive: isActive === "true",
       }),
       ...(frequency && { frequency: frequency as SOPFrequency }),
     };
+
+    // All roles can view all SOPs — check-offs are per-user
 
     const sops = await prisma.sOP.findMany({
       where,

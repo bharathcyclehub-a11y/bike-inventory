@@ -100,7 +100,7 @@ export default function DispatchPage() {
   }
 
   return (
-    <div>
+    <div className="pb-24">
       {actionError && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
           {actionError}

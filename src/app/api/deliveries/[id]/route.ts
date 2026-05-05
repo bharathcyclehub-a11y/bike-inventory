@@ -98,6 +98,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.vehicleNo !== undefined) updateData.vehicleNo = data.vehicleNo;
       if (data.freeAccessories !== undefined) updateData.freeAccessories = data.freeAccessories;
       if (data.reversePickup !== undefined) updateData.reversePickup = data.reversePickup;
+      if (data.invoiceType !== undefined) updateData.invoiceType = data.invoiceType;
 
       // WhatsApp tracking flags
       if (data.whatsAppScheduledSent !== undefined) updateData.whatsAppScheduledSent = data.whatsAppScheduledSent;

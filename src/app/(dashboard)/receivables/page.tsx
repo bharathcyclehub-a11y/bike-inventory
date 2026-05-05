@@ -246,7 +246,7 @@ export default function ReceivablesPage() {
   };
 
   return (
-    <div>
+    <div className="pb-24">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Receivables</h1>
         {canFetch && fetchStep !== "pickDate" && (

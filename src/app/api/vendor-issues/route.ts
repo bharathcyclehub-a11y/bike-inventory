@@ -20,6 +20,7 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status") || undefined;
     const priority = searchParams.get("priority") || undefined;
     const vendorId = searchParams.get("vendorId") || undefined;
+    const issueSource = searchParams.get("issueSource") || undefined;
     const dateFrom = searchParams.get("dateFrom") || undefined;
     const dateTo = searchParams.get("dateTo") || undefined;
 
@@ -37,6 +38,7 @@ export async function GET(req: NextRequest) {
       ...(status && { status: status as never }),
       ...(priority && { priority: priority as never }),
       ...(vendorId && { vendorId }),
+      ...(issueSource && { issueSource: issueSource as never }),
       ...((dateFrom || dateTo) && {
         createdAt: {
           ...(dateFrom && { gte: new Date(dateFrom) }),
@@ -52,11 +54,13 @@ export async function GET(req: NextRequest) {
           select: {
             id: true,
             issueNo: true,
+            issueSource: true,
             issueType: true,
             description: true,
             status: true,
             priority: true,
             createdAt: true,
+            clientName: true,
             vendor: { select: { name: true } },
           },
           orderBy: { createdAt: "desc" },
@@ -89,7 +93,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
     const body = await req.json();
     const data = vendorIssueSchema.parse(body);
 
@@ -112,14 +116,29 @@ export async function POST(req: NextRequest) {
 
     const issueNo = `${prefix}${String(seq).padStart(4, "0")}`;
 
+    const isClient = data.issueSource === "CLIENT";
+
+    // Validate: vendor issues need vendorId, client issues need clientName
+    if (!isClient && !data.vendorId) {
+      return errorResponse("Vendor is required for vendor issues", 400);
+    }
+    if (isClient && !data.clientName) {
+      return errorResponse("Client name is required for client issues", 400);
+    }
+
     const issue = await prisma.vendorIssue.create({
       data: {
-        vendorId: data.vendorId,
+        issueSource: data.issueSource || "VENDOR",
+        vendorId: isClient ? null : data.vendorId,
+        clientName: isClient ? data.clientName : null,
+        clientPhone: isClient ? (data.clientPhone || null) : null,
         issueNo,
         issueType: data.issueType,
         description: data.description,
         priority: data.priority || "MEDIUM",
         billId: data.billId || null,
+        photoUrls: data.photoUrls || [],
+        suggestedResolution: data.suggestedResolution || null,
         createdById: user.id,
       },
       include: { vendor: { select: { name: true } } },

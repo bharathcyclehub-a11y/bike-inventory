@@ -169,7 +169,8 @@ model User {
   reviewedTransfers TransferOrder[]     @relation("TransferReviewedBy")
 
   // Second-hand cycles
-  createdSecondHand SecondHandCycle[]   @relation("SecondHandCreatedBy")
+  createdSecondHand  SecondHandCycle[]   @relation("SecondHandCreatedBy")
+  verifiedSecondHand SecondHandCycle[]   @relation("SecondHandVerifiedBy")
 
   // Inbound shipments
   createdInboundShipments   InboundShipment[] @relation("InboundCreatedBy")
@@ -193,6 +194,9 @@ model User {
   sopCheckOffs       SOPCheckOff[]   @relation("SOPCheckOffs")
   sopViolations      SOPViolation[]  @relation("SOPViolations")
   violationsRecorded SOPViolation[]  @relation("ViolationRecordedBy")
+
+  // Daily Checklists
+  checklistCompletions ChecklistCompletion[] @relation("ChecklistCompletions")
 }
 
 model Category {
@@ -264,6 +268,9 @@ model Product {
   binId         String?
   bin           Bin?           @relation(fields: [binId], references: [id])
 
+  reorderVendorId String?
+  reorderVendor   Vendor?      @relation("ReorderVendor", fields: [reorderVendorId], references: [id])
+
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -277,6 +284,7 @@ model Product {
   @@index([status])
   @@index([categoryId])
   @@index([brandId])
+  @@index([reorderVendorId])
   @@index([type])
   @@index([status, type])
   @@index([status, categoryId])
@@ -457,6 +465,7 @@ model Vendor {
   issues              VendorIssue[]
   suggestedBankTxns   BankTransaction[] @relation("SuggestedVendorTxn")
   confirmedBankTxns   BankTransaction[] @relation("ConfirmedVendorTxn")
+  reorderProducts     Product[]         @relation("ReorderVendor")
 
   @@index([name])
 }
@@ -813,8 +822,11 @@ model CustomerPayment {
 
 model VendorIssue {
   id            String         @id @default(cuid())
-  vendorId      String
-  vendor        Vendor         @relation(fields: [vendorId], references: [id])
+  issueSource   IssueSource    @default(VENDOR)
+  vendorId      String?
+  vendor        Vendor?        @relation(fields: [vendorId], references: [id])
+  clientName    String?
+  clientPhone   String?
   issueNo       String         @unique // ISS-YYYYMM-NNNN
   issueType     IssueType
   description   String
@@ -822,6 +834,8 @@ model VendorIssue {
   priority      IssuePriority  @default(MEDIUM)
   billId        String?
   bill          VendorBill?    @relation(fields: [billId], references: [id])
+  photoUrls           String[]
+  suggestedResolution String?
   resolution    String?
   resolvedAt    DateTime?
   createdById   String
@@ -833,6 +847,12 @@ model VendorIssue {
   @@index([status])
   @@index([priority])
   @@index([createdAt])
+  @@index([issueSource])
+}
+
+enum IssueSource {
+  VENDOR
+  CLIENT
 }
 
 enum DeliveryStatus {
@@ -989,6 +1009,12 @@ model SecondHandCycle {
   notes           String?
   isArchived      Boolean   @default(false)
 
+  // Verification
+  isVerified      Boolean   @default(false)
+  verifiedById    String?
+  verifiedBy      User?     @relation("SecondHandVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedAt      DateTime?
+
   createdById     String
   createdBy       User      @relation("SecondHandCreatedBy", fields: [createdById], references: [id])
   createdAt       DateTime  @default(now())
@@ -997,6 +1023,7 @@ model SecondHandCycle {
   @@index([status])
   @@index([sku])
   @@index([createdAt])
+  @@index([isVerified])
 }
 
 // ─── Transfer Orders (Multi-item bin transfers) ───────────────────────
@@ -1461,6 +1488,36 @@ model SOPViolation {
   @@index([sopId])
   @@index([userId])
   @@index([createdAt])
+}
+
+// ─── DAILY CHECKLISTS (role-based task checklists) ───────
+
+model ChecklistTemplate {
+  id          String   @id @default(cuid())
+  title       String
+  role        Role                        // Which role sees this checklist item
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  completions ChecklistCompletion[]
+
+  @@index([role])
+}
+
+model ChecklistCompletion {
+  id          String   @id @default(cuid())
+  templateId  String
+  template    ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User     @relation("ChecklistCompletions", fields: [userId], references: [id])
+  date        String                      // YYYY-MM-DD
+  completedAt DateTime @default(now())
+
+  @@unique([templateId, userId, date])
+  @@index([userId])
+  @@index([date])
 }
 
 // ─── APP SETTINGS (key-value store) ──────────────────────

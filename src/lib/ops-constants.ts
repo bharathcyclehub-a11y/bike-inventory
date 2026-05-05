@@ -5,12 +5,12 @@ export type TaskStatusType = "PENDING" | "IN_PROGRESS" | "DONE" | "BLOCKED";
 export type TimeSlotType = "MORNING" | "AFTERNOON" | "EVENING";
 export type UpdateCategory = "Sales" | "Staff" | "Ops" | "Issue" | "Win" | "Other";
 
-export const PRIORITY_CONFIG: Record<Priority, { label: string; color: string; bg: string; border: string; dot: string; icon: string }> = {
-  TODAY:      { label: "Today",     color: "text-red-700",    bg: "bg-red-50",    border: "border-red-200",    dot: "bg-red-500",    icon: "🔴" },
-  TOMORROW:   { label: "Tomorrow",  color: "text-orange-700", bg: "bg-orange-50", border: "border-orange-200", dot: "bg-orange-500", icon: "🟠" },
-  THREE_DAYS: { label: "3 Days",    color: "text-yellow-700", bg: "bg-yellow-50", border: "border-yellow-200", dot: "bg-yellow-500", icon: "🟡" },
-  WEEK:       { label: "This Week", color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-200",   dot: "bg-blue-500",   icon: "🔵" },
-  MONTH:      { label: "This Month",color: "text-gray-600",   bg: "bg-gray-50",   border: "border-gray-200",   dot: "bg-gray-400",   icon: "⚪" },
+export const PRIORITY_CONFIG: Record<Priority, { label: string; shortLabel: string; color: string; bg: string; border: string; dot: string; icon: string }> = {
+  TODAY:      { label: "Today",     shortLabel: "Today",  color: "text-red-700",    bg: "bg-red-50",    border: "border-red-200",    dot: "bg-red-500",    icon: "🔴" },
+  TOMORROW:   { label: "Tomorrow",  shortLabel: "Tmrw",   color: "text-orange-700", bg: "bg-orange-50", border: "border-orange-200", dot: "bg-orange-500", icon: "🟠" },
+  THREE_DAYS: { label: "3 Days",    shortLabel: "3 Days", color: "text-yellow-700", bg: "bg-yellow-50", border: "border-yellow-200", dot: "bg-yellow-500", icon: "🟡" },
+  WEEK:       { label: "This Week", shortLabel: "Week",   color: "text-blue-700",   bg: "bg-blue-50",   border: "border-blue-200",   dot: "bg-blue-500",   icon: "🔵" },
+  MONTH:      { label: "This Month",shortLabel: "Month",  color: "text-gray-600",   bg: "bg-gray-50",   border: "border-gray-200",   dot: "bg-gray-400",   icon: "⚪" },
 };
 
 export const STATUS_CONFIG: Record<TaskStatusType, { label: string; border: string; bg: string; text: string }> = {
@@ -109,19 +109,25 @@ export function buildTaskDigestWhatsApp(tasks: { taskNo: string; title: string; 
   return encodeURIComponent(lines.join("\n"));
 }
 
-export function buildSOPChecklistWhatsApp(sops: { title: string; category: string; checked: boolean }[], personName: string): string {
+export function buildSOPChecklistWhatsApp(sops: { title: string; description?: string | null; category: string; checked: boolean }[], personName: string): string {
   const lines = [`📋 *SOP Checklist — ${personName}*`, `📅 ${new Date().toLocaleDateString("en-IN")}`, ""];
   const done = sops.filter(s => s.checked);
   const pending = sops.filter(s => !s.checked);
 
   if (done.length) {
     lines.push(`✅ *Done (${done.length})*`);
-    for (const s of done) lines.push(`  • ${s.title}`);
+    for (const s of done) {
+      lines.push(`  • ${s.title}`);
+      if (s.description) lines.push(`    _${s.description}_`);
+    }
     lines.push("");
   }
   if (pending.length) {
     lines.push(`⬜ *Pending (${pending.length})*`);
-    for (const s of pending) lines.push(`  • ${s.title}`);
+    for (const s of pending) {
+      lines.push(`  • ${s.title}`);
+      if (s.description) lines.push(`    _${s.description}_`);
+    }
   }
 
   return encodeURIComponent(lines.join("\n"));

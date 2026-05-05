@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   Search, AlertTriangle, Package, ChevronDown, ChevronUp,
-  Save, ShoppingCart, Share2, Loader2,
+  Save, ShoppingCart, Share2, Loader2, MessageSquare,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +27,8 @@ interface ReorderProduct {
 interface ProductGroup {
   id: string;
   name: string;
+  whatsappNumber?: string | null;
+  phone?: string | null;
   products: ReorderProduct[];
 }
 
@@ -47,7 +49,7 @@ export default function ReorderDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
-  const [groupBy, setGroupBy] = useState<"brand" | "category">("brand");
+  const [groupBy, setGroupBy] = useState<"brand" | "category" | "vendor">("brand");
   const [filter, setFilter] = useState("all");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [reorderLevels, setReorderLevels] = useState<Record<string, string>>({});
@@ -181,6 +183,23 @@ export default function ReorderDashboardPage() {
     window.open(url, "_blank");
   };
 
+  const shareGroupOnWhatsApp = (group: ProductGroup) => {
+    const lowItems = group.products.filter((p) => p.reorderLevel > 0 && p.currentStock <= p.reorderLevel);
+    const items = lowItems.length > 0 ? lowItems : group.products;
+    let message = `*Bharath Cycle Hub - Reorder*\n`;
+    message += `*${group.name}*\nDate: ${new Date().toLocaleDateString("en-IN")}\n\n`;
+    items.forEach((p, i) => {
+      const qty = p.reorderQty || Math.max(1, p.reorderLevel - p.currentStock);
+      message += `${i + 1}. ${p.name} (${p.sku}) - Qty: ${qty}\n`;
+    });
+    message += `\nTotal: ${items.length} items\n---\nBharath Cycle Hub`;
+    const phone = group.whatsappNumber || group.phone || "";
+    const url = phone
+      ? `https://api.whatsapp.com/send?phone=91${phone.replace(/\D/g, "").slice(-10)}&text=${encodeURIComponent(message)}`
+      : `https://wa.me/?text=${encodeURIComponent(message)}`;
+    window.open(url, "_blank");
+  };
+
   const unsavedCount = Object.keys(reorderLevels).filter((k) => reorderLevels[k] !== "").length;
 
   return (
@@ -238,14 +257,12 @@ export default function ReorderDashboardPage() {
       {/* Group By + Filter */}
       <div className="flex gap-2 mb-3">
         <div className="flex bg-slate-100 rounded-lg p-0.5 shrink-0">
-          <button onClick={() => setGroupBy("brand")}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${groupBy === "brand" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
-            By Brand
-          </button>
-          <button onClick={() => setGroupBy("category")}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${groupBy === "category" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
-            By Category
-          </button>
+          {(["brand", "category", "vendor"] as const).map((g) => (
+            <button key={g} onClick={() => setGroupBy(g)}
+              className={`px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${groupBy === g ? "bg-white text-slate-900 shadow-sm" : "text-slate-500"}`}>
+              {g === "brand" ? "Brand" : g === "category" ? "Category" : "Vendor"}
+            </button>
+          ))}
         </div>
         <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
           {[
@@ -320,6 +337,12 @@ export default function ReorderDashboardPage() {
                     {zeroCount > 0 && <span className="text-red-500 ml-1">({zeroCount} at zero)</span>}
                   </p>
                 </div>
+                {groupBy === "vendor" && group.id !== "unassigned" && (
+                  <button onClick={(e) => { e.stopPropagation(); shareGroupOnWhatsApp(group); }}
+                    className="p-1.5 bg-green-100 rounded-lg mr-1">
+                    <MessageSquare className="h-3.5 w-3.5 text-green-600" />
+                  </button>
+                )}
                 {expandedGroups.has(group.id) ? (
                   <ChevronUp className="h-4 w-4 text-slate-400" />
                 ) : (
