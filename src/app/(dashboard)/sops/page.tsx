@@ -57,6 +57,7 @@ export default function SOPManagementPage() {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [catFilter, setCatFilter] = useState("All");
+  const [freqFilter, setFreqFilter] = useState("All");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [seeding, setSeeding] = useState(false);
 
@@ -236,6 +237,7 @@ export default function SOPManagementPage() {
   /* ── Filtered SOPs ── */
   const filtered = sops.filter((s) => {
     if (catFilter !== "All" && s.category !== catFilter) return false;
+    if (freqFilter !== "All" && s.frequency !== freqFilter) return false;
     if (search && !s.title.toLowerCase().includes(search.toLowerCase())) return false;
     return true;
   });
@@ -287,13 +289,15 @@ export default function SOPManagementPage() {
             onClick={() => {
               let shareSops = sops.filter(s => s.isActive);
               if (catFilter !== "All") shareSops = shareSops.filter(s => s.category === catFilter);
+              if (freqFilter !== "All") shareSops = shareSops.filter(s => s.frequency === freqFilter);
               if (!shareSops.length) return;
               const grouped: Record<string, SOP[]> = {};
               for (const s of shareSops) {
                 if (!grouped[s.category]) grouped[s.category] = [];
                 grouped[s.category].push(s);
               }
-              const lines = [`📋 *BCH SOPs${catFilter !== "All" ? ` — ${catFilter}` : ""}*`, ""];
+              const freqLabel = freqFilter !== "All" ? ` (${FREQUENCY_LABELS[freqFilter] || freqFilter})` : "";
+              const lines = [`📋 *BCH SOPs${catFilter !== "All" ? ` — ${catFilter}` : ""}${freqLabel}*`, ""];
               for (const [cat, items] of Object.entries(grouped)) {
                 lines.push(`*${cat}*`);
                 items.forEach((s, i) => {
@@ -345,6 +349,23 @@ export default function SOPManagementPage() {
                 }`}
               >
                 {c}
+              </button>
+            ))}
+          </div>
+
+          {/* Frequency chips */}
+          <div className="flex gap-2 overflow-x-auto pb-2 mt-2 scrollbar-hide">
+            {["All", "SOP_DAILY", "SOP_WEEKLY", "SOP_MONTHLY"].map((f) => (
+              <button
+                key={f}
+                onClick={() => setFreqFilter(f)}
+                className={`whitespace-nowrap px-3 py-1 text-xs rounded-full transition-colors ${
+                  freqFilter === f
+                    ? "bg-indigo-600 text-white"
+                    : "bg-gray-100 text-gray-500"
+                }`}
+              >
+                {f === "All" ? "All Freq" : FREQUENCY_LABELS[f] || f}
               </button>
             ))}
           </div>
