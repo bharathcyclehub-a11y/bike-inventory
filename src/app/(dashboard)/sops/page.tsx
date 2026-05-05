@@ -190,6 +190,7 @@ export default function SOPManagementPage() {
   };
 
   const openAddForm = () => {
+    fetchDepartments(); // always refresh in case user just added a new one
     setEditingSop(null);
     setFormTitle("");
     setFormDesc("");
