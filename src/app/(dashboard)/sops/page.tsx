@@ -22,6 +22,7 @@ interface SOP {
   category: string;
   frequency: string;
   isActive: boolean;
+  assignees?: { id: string; userId: string; user: { id: string; name: string } }[];
   _count?: { assignments?: number };
 }
 
@@ -70,7 +71,21 @@ export default function SOPManagementPage() {
   const [formDesc, setFormDesc] = useState("");
   const [formCat, setFormCat] = useState("Sales");
   const [formFreq, setFormFreq] = useState("SOP_DAILY");
+  const [formAssigneeIds, setFormAssigneeIds] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+
+  /* ── Staff list for assignee picker ── */
+  const [staffList, setStaffList] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    fetch("/api/users")
+      .then(r => r.json())
+      .then(res => {
+        if (res.success && Array.isArray(res.data)) {
+          setStaffList(res.data.map((u: { id: string; name: string }) => ({ id: u.id, name: u.name })));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   /* ── Dynamic departments (always from DB, fallback to constants) ── */
   const [departments, setDepartments] = useState<string[]>([]);
@@ -87,11 +102,16 @@ export default function SOPManagementPage() {
       .catch(() => setDepartments(SOP_CATEGORIES.filter(c => c !== "All")));
   }, []);
   useEffect(() => { fetchDepartments(); }, [fetchDepartments]);
-  // Refetch when user returns to this tab (e.g. after editing departments in settings)
+  // Refetch when user returns to this tab (covers SPA navigation + tab switch)
   useEffect(() => {
     const onFocus = () => fetchDepartments();
+    const onVisible = () => { if (document.visibilityState === "visible") fetchDepartments(); };
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [fetchDepartments]);
 
   /* ── Violation state ── */
@@ -175,6 +195,7 @@ export default function SOPManagementPage() {
     setFormDesc("");
     setFormCat("Sales");
     setFormFreq("SOP_DAILY");
+    setFormAssigneeIds([]);
     setShowForm(true);
   };
 
@@ -184,6 +205,7 @@ export default function SOPManagementPage() {
     setFormDesc(sop.description || "");
     setFormCat(sop.category);
     setFormFreq(sop.frequency);
+    setFormAssigneeIds(sop.assignees?.map(a => a.userId) || []);
     setShowForm(true);
   };
 
@@ -195,7 +217,7 @@ export default function SOPManagementPage() {
     if (!formDesc.trim()) { setFormError("Description is required"); return; }
     setSaving(true);
     try {
-      const body = { title: formTitle.trim(), description: formDesc.trim(), category: formCat, frequency: formFreq };
+      const body = { title: formTitle.trim(), description: formDesc.trim(), category: formCat, frequency: formFreq, assigneeIds: formAssigneeIds };
       const url = editingSop ? `/api/sops/${editingSop.id}` : "/api/sops";
       const method = editingSop ? "PATCH" : "POST";
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -737,6 +759,29 @@ export default function SOPManagementPage() {
                       {label}
                     </label>
                   ))}
+                </div>
+              </div>
+
+              {/* Assign to staff */}
+              <div>
+                <label className="text-xs font-medium text-gray-600 mb-2 block">Assign To</label>
+                <div className="flex flex-wrap gap-2">
+                  {staffList.map((s) => {
+                    const selected = formAssigneeIds.includes(s.id);
+                    return (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => setFormAssigneeIds(selected ? formAssigneeIds.filter(id => id !== s.id) : [...formAssigneeIds, s.id])}
+                        className={`px-3 py-1.5 text-xs rounded-full transition-colors ${
+                          selected ? "bg-green-600 text-white" : "bg-gray-100 text-gray-500"
+                        }`}
+                      >
+                        {s.name}
+                      </button>
+                    );
+                  })}
+                  {staffList.length === 0 && <p className="text-xs text-gray-400">No team members found</p>}
                 </div>
               </div>
 
