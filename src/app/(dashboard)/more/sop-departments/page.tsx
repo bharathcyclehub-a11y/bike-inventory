@@ -104,14 +104,14 @@ export default function SOPDepartmentsPage() {
           {/* Add New */}
           <div className="flex gap-2 mb-4">
             <Input
-              placeholder="New department name..."
+              placeholder="Type department name & tap Add"
               value={newDept}
               onChange={(e) => setNewDept(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleAdd()}
               className="text-sm"
             />
-            <Button onClick={handleAdd} size="sm" variant="outline" disabled={!newDept.trim()}>
-              <Plus className="h-4 w-4" />
+            <Button onClick={handleAdd} size="sm" disabled={!newDept.trim() || saving} className="bg-blue-600 text-white hover:bg-blue-700 px-4">
+              <Plus className="h-4 w-4 mr-1" /> Add
             </Button>
           </div>
 
