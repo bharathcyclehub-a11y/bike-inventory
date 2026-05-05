@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Search, AlertCircle, Plus, Trash2, SlidersHorizontal, X } from "lucide-react";
+import { Search, AlertCircle, Plus, Trash2, SlidersHorizontal, X, Share2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -73,13 +73,25 @@ export default function VendorIssuesPage() {
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
   const [showFilters, setShowFilters] = useState(false);
+  const [brandFilter, setBrandFilter] = useState("ALL");
 
   const activeFilterCount = [
     sourceFilter !== "ALL",
     statusFilter !== "ALL",
     priorityFilter !== "ALL",
     dateFilter !== "all",
+    brandFilter !== "ALL",
   ].filter(Boolean).length;
+
+  // Unique brand names from fetched issues
+  const brandNames = Array.from(
+    new Set(issues.filter(i => i.vendor?.name).map(i => i.vendor!.name))
+  ).sort();
+
+  // Client-side brand filtering
+  const displayIssues = brandFilter === "ALL"
+    ? issues
+    : issues.filter(i => i.vendor?.name === brandFilter);
 
   const openCount = issues[0]?.openCount ?? 0;
   const inProgressCount = issues[0]?.inProgressCount ?? 0;
@@ -105,6 +117,31 @@ export default function VendorIssuesPage() {
       .finally(() => setLoading(false));
   }, [vendorIdParam, sourceFilter, statusFilter, priorityFilter, debouncedSearch, dateFrom, dateTo]);
 
+  // WhatsApp share — filtered issues with overdue days
+  const shareIssuesWhatsApp = () => {
+    const toShare = displayIssues.filter(i => i.status !== "CLOSED");
+    if (!toShare.length) return;
+    const today = new Date();
+    const lines: string[] = [];
+    const heading = brandFilter !== "ALL" ? `⚠️ *${brandFilter} — Open Issues*` : "⚠️ *Ops Issues Summary*";
+    lines.push(heading);
+    lines.push(`📅 ${today.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}`);
+    lines.push("");
+    toShare.forEach((issue, i) => {
+      const created = new Date(issue.createdAt);
+      const diffDays = Math.floor((today.getTime() - created.getTime()) / 86400000);
+      const overdue = diffDays > 0 ? ` (${diffDays}d overdue)` : "";
+      const source = issue.issueSource === "CLIENT" ? `Client: ${issue.clientName || "Unknown"}` : `Brand: ${issue.vendor?.name || "Unknown"}`;
+      lines.push(`${i + 1}. *[${issue.issueNo}]* ${issue.issueType.replace(/_/g, " ")}`);
+      lines.push(`   ${source}${overdue}`);
+      lines.push(`   ${issue.description.slice(0, 80)}${issue.description.length > 80 ? "..." : ""}`);
+      lines.push(`   Status: ${issue.status.replace(/_/g, " ")} | Priority: ${issue.priority}`);
+      lines.push("");
+    });
+    lines.push(`📊 *Total: ${toShare.length} open issues*`);
+    window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
+  };
+
   const handleDelete = async (e: React.MouseEvent, issueId: string, issueNo: string) => {
     e.preventDefault();
     e.stopPropagation();
@@ -125,6 +162,13 @@ export default function VendorIssuesPage() {
     <div className="pb-24">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Ops Issues</h1>
+        <button
+          onClick={shareIssuesWhatsApp}
+          className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center active:scale-95 transition-transform shadow"
+          title="Share issues on WhatsApp"
+        >
+          <Share2 className="w-4 h-4 text-white" />
+        </button>
       </div>
 
       {/* Summary row */}
@@ -172,6 +216,7 @@ export default function VendorIssuesPage() {
               setSourceFilter("ALL");
               setStatusFilter("ALL");
               setPriorityFilter("ALL");
+              setBrandFilter("ALL");
               setDateFilter("all");
               setDateFrom(undefined);
               setDateTo(undefined);
@@ -255,6 +300,34 @@ export default function VendorIssuesPage() {
               onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
             />
           </div>
+
+          {/* Brand */}
+          {brandNames.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-1.5">Brand</p>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => setBrandFilter("ALL")}
+                  className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                    brandFilter === "ALL" ? "bg-slate-900 text-white" : "bg-white text-slate-600 border border-slate-200"
+                  }`}
+                >
+                  All
+                </button>
+                {brandNames.map((b) => (
+                  <button
+                    key={b}
+                    onClick={() => setBrandFilter(b)}
+                    className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                      brandFilter === b ? "bg-orange-600 text-white" : "bg-white text-slate-600 border border-slate-200"
+                    }`}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -281,7 +354,7 @@ export default function VendorIssuesPage() {
         </div>
       ) : (
         <div className="space-y-2">
-          {issues.map((issue) => (
+          {displayIssues.map((issue) => (
             <Link key={issue.id} href={`/vendor-issues/${issue.id}`}>
               <Card className="hover:border-slate-300 transition-colors mb-2">
                 <CardContent className="p-3">
@@ -324,6 +397,10 @@ export default function VendorIssuesPage() {
                   <div className="flex items-center justify-between mt-1.5">
                     <p className="text-[10px] text-slate-400">
                       {new Date(issue.createdAt).toLocaleDateString("en-IN")}
+                      {issue.status !== "CLOSED" && issue.status !== "RESOLVED" && (() => {
+                        const days = Math.floor((Date.now() - new Date(issue.createdAt).getTime()) / 86400000);
+                        return days > 0 ? <span className="text-red-500 font-medium ml-1">({days}d overdue)</span> : null;
+                      })()}
                     </p>
                     {isAdmin && (
                       <button
@@ -339,7 +416,7 @@ export default function VendorIssuesPage() {
             </Link>
           ))}
 
-          {issues.length === 0 && (
+          {displayIssues.length === 0 && (
             <div className="text-center py-12">
               <AlertCircle className="h-8 w-8 text-slate-300 mx-auto mb-2" />
               <p className="text-sm text-slate-400">No issues found</p>
