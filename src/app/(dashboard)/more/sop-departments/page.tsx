@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, Trash2, Loader2, GripVertical, Save } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Loader2, GripVertical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -30,36 +30,38 @@ export default function SOPDepartmentsPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const handleAdd = () => {
-    const name = newDept.trim();
-    if (!name) return;
-    if (departments.includes(name)) return;
-    setDepartments([...departments, name]);
-    setNewDept("");
-    setSaved(false);
-  };
-
-  const handleRemove = (idx: number) => {
-    setDepartments(departments.filter((_, i) => i !== idx));
-    setSaved(false);
-  };
-
-  const handleSave = async () => {
+  const saveDepartments = async (deps: string[]) => {
     setSaving(true);
     try {
       const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: "sop_departments", value: departments }),
+        body: JSON.stringify({ key: "sop_departments", value: deps }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
       setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      setTimeout(() => setSaved(false), 2000);
     } catch {
       alert("Failed to save");
     }
     setSaving(false);
+  };
+
+  const handleAdd = () => {
+    const name = newDept.trim();
+    if (!name) return;
+    if (departments.includes(name)) return;
+    const updated = [...departments, name];
+    setDepartments(updated);
+    setNewDept("");
+    saveDepartments(updated);
+  };
+
+  const handleRemove = (idx: number) => {
+    const updated = departments.filter((_, i) => i !== idx);
+    setDepartments(updated);
+    saveDepartments(updated);
   };
 
   return (
@@ -113,14 +115,13 @@ export default function SOPDepartmentsPage() {
             </Button>
           </div>
 
-          {/* Save Button */}
-          <Button onClick={handleSave} disabled={saving} className="w-full">
-            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
-            {saved ? "Saved!" : "Save Departments"}
-          </Button>
-
           {saved && (
-            <p className="text-xs text-green-600 text-center mt-2">Departments saved. Changes will appear in the SOP page.</p>
+            <p className="text-xs text-green-600 text-center mt-2">Saved! Changes will appear in the SOP page.</p>
+          )}
+          {saving && (
+            <div className="flex items-center justify-center gap-2 text-xs text-slate-400 mt-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving...
+            </div>
           )}
         </>
       )}
