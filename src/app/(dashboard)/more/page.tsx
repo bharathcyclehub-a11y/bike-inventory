@@ -111,7 +111,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { label: "Barcode Scanner", icon: QrCode, href: "/scanner", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "CUSTOM"], featureKey: "barcode" },
       { label: "Label Designer", icon: Tag, href: "/more/label-designer", roles: ["ADMIN"], featureKey: "barcode" },
       { label: "Reorder Dashboard", icon: RefreshCw, href: "/reorder", roles: ["ADMIN", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "reorder" },
-      { label: "Outward", icon: Truck, href: "/deliveries", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "CUSTOM"], featureKey: "deliveries" },
+      { label: "Outward", icon: Truck, href: "/deliveries", roles: ["ADMIN", "SUPERVISOR", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "CUSTOM"], featureKey: "deliveries" },
       { label: "Second-Hand Cycles", icon: Bike, href: "/second-hand", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "ACCOUNTS_MANAGER", "SALES_MANAGER", "CUSTOM"], featureKey: "second_hand" },
     ],
   },

@@ -71,7 +71,7 @@ export function getPrimaryTabs(role: Role): NavItem[] {
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
-        { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
+        { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
