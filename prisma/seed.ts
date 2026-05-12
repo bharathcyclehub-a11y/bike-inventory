@@ -11,8 +11,8 @@ async function main() {
     { name: "Syed Ibrahim", email: "syed@bikeinventory.local", role: "ADMIN" as const, accessCode: "SYED123" },
     { name: "Srinu", email: "srinu@bikeinventory.local", role: "SUPERVISOR" as const, accessCode: "SRINU123" },
     { name: "Sravan", email: "sravan@bikeinventory.local", role: "ACCOUNTS_MANAGER" as const, accessCode: "SRAVAN123" },
-    { name: "Nithin", email: "nithin@bikeinventory.local", role: "INWARDS_CLERK" as const, accessCode: "NITHIN123" },
-    { name: "Ranjitha", email: "ranjitha@bikeinventory.local", role: "OUTWARDS_CLERK" as const, accessCode: "RANJITHA123" },
+    { name: "Nithin", email: "nithin@bikeinventory.local", role: "INWARDS_EXECUTIVE" as const, accessCode: "NITHIN123" },
+    { name: "Ranjitha", email: "ranjitha@bikeinventory.local", role: "OUTWARDS_EXECUTIVE" as const, accessCode: "RANJITHA123" },
     { name: "Abhi Gowda", email: "abhi@bikeinventory.local", role: "PURCHASE_MANAGER" as const, accessCode: "ABHI123" },
   ];
 
@@ -159,8 +159,8 @@ async function main() {
   console.log(`Created ${serialCount} serial items`);
 
   // Create sample transactions
-  const nithin = users[3]; // INWARDS_CLERK
-  const ranjitha = users[4]; // OUTWARDS_CLERK
+  const nithin = users[3]; // INWARDS_EXECUTIVE
+  const ranjitha = users[4]; // OUTWARDS_EXECUTIVE
 
   const txns = [
     { type: "INWARD" as const, productId: products[3].id, quantity: 20, previousStock: 25, newStock: 45, referenceNo: "INV-2024-0312", userId: nithin.id },

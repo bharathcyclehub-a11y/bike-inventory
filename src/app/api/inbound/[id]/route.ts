@@ -29,6 +29,7 @@ export async function GET(
             preBooking: { select: { id: true, customerName: true, status: true } },
           },
         },
+        vendorBill: { select: { vendorId: true } },
         preBookings: {
           select: { id: true, customerName: true, customerPhone: true, status: true, productName: true },
         },
@@ -49,7 +50,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK", "PURCHASE_MANAGER"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_EXECUTIVE", "PURCHASE_MANAGER"]);
     const { id } = await params;
     const body = await req.json();
 

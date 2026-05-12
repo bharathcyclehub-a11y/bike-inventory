@@ -17,7 +17,7 @@ interface BrandItem {
 export default function BrandsPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const isAdmin = role === "ADMIN";
+  const isAdmin = role === "ADMIN" || role === "CEO";
 
   const [brands, setBrands] = useState<BrandItem[]>([]);
   const [loading, setLoading] = useState(true);

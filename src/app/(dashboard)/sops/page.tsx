@@ -7,6 +7,7 @@ import {
   Search, Plus, ChevronDown, ChevronUp, Trash2, Pencil,
   AlertTriangle, Smartphone, Loader2, ShieldAlert, X, Share2,
 } from "lucide-react";
+import Link from "next/link";
 import { usePermissions } from "@/lib/use-permissions";
 import {
   SOP_CATEGORIES, FREQUENCY_LABELS, todayStr,
@@ -45,7 +46,7 @@ export default function SOPManagementPage() {
   const userName = session?.user?.name || "Admin";
   const { canView } = usePermissions(role);
 
-  const isAdmin = role === "ADMIN";
+  const isAdmin = role === "CEO" || role === "ADMIN";
   const isSupervisor = role === "SUPERVISOR";
   const canManage = isAdmin || isSupervisor;
   const canAccess = true; // All roles can view their assigned SOPs
@@ -183,7 +184,7 @@ export default function SOPManagementPage() {
   const handleSeed = async () => {
     setSeeding(true);
     try {
-      const res = await fetch("/api/sops/seed", { method: "POST" });
+      const res = await fetch("/api/sops/seed-all", { method: "POST" });
       if (res.ok) fetchSops();
     } catch {}
     setSeeding(false);
@@ -337,6 +338,16 @@ export default function SOPManagementPage() {
           >
             <Share2 className="h-4 w-4" />
           </button>
+          {canManage && (
+            <button
+              onClick={handleSeed}
+              disabled={seeding}
+              className="px-3 py-2 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs font-medium disabled:opacity-50"
+              title="Seed/sync all 150 SOPs"
+            >
+              {seeding ? <Loader2 className="h-4 w-4 animate-spin" /> : "Seed"}
+            </button>
+          )}
         </div>
         {/* Tabs */}
         <div className="flex gap-1 mt-2">
@@ -353,6 +364,18 @@ export default function SOPManagementPage() {
               {t === "sops" ? "SOPs" : "Compliance"}
             </button>
           ))}
+          <div className="flex gap-1.5 ml-auto">
+            {canManage && (
+              <Link href="/sops/staff-checkoffs"
+                className="px-3 py-2 text-xs font-medium rounded-lg bg-teal-100 text-teal-700 hover:bg-teal-200">
+                Staff
+              </Link>
+            )}
+            <Link href="/sops/dashboard"
+              className="px-3 py-2 text-xs font-medium rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200">
+              Dashboard
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -433,7 +456,7 @@ export default function SOPManagementPage() {
                   className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-medium disabled:opacity-60"
                 >
                   {seeding && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Seed BCH SOPs
+                  Seed All 150 SOPs
                 </button>
               )}
             </div>

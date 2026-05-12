@@ -42,7 +42,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE"]);
     const { id } = await params;
     const body = await req.json();
 

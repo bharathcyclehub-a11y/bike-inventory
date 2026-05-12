@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Camera, X, Image as ImageIcon } from "lucide-react";
+import { ArrowLeft, Camera, X, Image as ImageIcon, Search, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 
@@ -68,6 +68,25 @@ export default function NewVendorIssuePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  // Zoho client search
+  const [zohoSearching, setZohoSearching] = useState(false);
+  const [zohoResults, setZohoResults] = useState<Array<{ id: string; name: string; phone: string | null; email: string | null; city: string | null }>>([]);
+  const [showZohoResults, setShowZohoResults] = useState(false);
+
+  const searchZohoClient = async () => {
+    if (clientName.trim().length < 2) return;
+    setZohoSearching(true);
+    try {
+      const res = await fetch(`/api/zoho/search-contacts?q=${encodeURIComponent(clientName.trim())}`);
+      const json = await res.json();
+      if (json.success) {
+        setZohoResults(json.data || []);
+        setShowZohoResults(true);
+      }
+    } catch { /* ignore */ }
+    setZohoSearching(false);
+  };
 
   useEffect(() => {
     fetch("/api/vendors?limit=100")
@@ -207,9 +226,36 @@ export default function NewVendorIssuePage() {
           <>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Client Name *</label>
-              <input type="text" placeholder="Customer name..." value={clientName}
-                onChange={(e) => setClientName(e.target.value)}
-                className="flex h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900" />
+              <div className="flex gap-2">
+                <input type="text" placeholder="Customer name..." value={clientName}
+                  onChange={(e) => { setClientName(e.target.value); setShowZohoResults(false); }}
+                  className="flex h-10 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900" />
+                <button type="button" onClick={searchZohoClient} disabled={zohoSearching || clientName.trim().length < 2}
+                  className="h-10 px-3 rounded-lg border border-blue-300 bg-blue-50 text-blue-700 text-xs font-medium disabled:opacity-40 flex items-center gap-1">
+                  {zohoSearching ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+                  Zoho
+                </button>
+              </div>
+              {showZohoResults && (
+                <div className="mt-1.5 border rounded-lg bg-white shadow-lg max-h-40 overflow-y-auto">
+                  {zohoResults.length === 0 ? (
+                    <p className="text-xs text-slate-400 p-3 text-center">No contacts found in Zoho</p>
+                  ) : zohoResults.map(c => (
+                    <button key={c.id} type="button"
+                      onClick={() => {
+                        setClientName(c.name);
+                        if (c.phone) setClientPhone(c.phone);
+                        setShowZohoResults(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-blue-50 border-b last:border-b-0">
+                      <p className="font-medium text-slate-800">{c.name}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {c.phone || "No phone"}{c.city ? ` · ${c.city}` : ""}
+                      </p>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Client Phone (optional)</label>

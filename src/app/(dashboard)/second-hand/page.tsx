@@ -50,8 +50,8 @@ function formatINR(n: number) {
 export default function SecondHandPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAdd = ["ADMIN", "OUTWARDS_CLERK"].includes(role);
-  const isAdmin = role === "ADMIN";
+  const canAdd = ["ADMIN", "CEO", "OUTWARDS_EXECUTIVE"].includes(role);
+  const isAdmin = role === "ADMIN" || role === "CEO";
 
   const [cycles, setCycles] = useState<SecondHandItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -107,7 +107,7 @@ export default function SecondHandPage() {
           <p className="text-xs text-slate-500">Exchange inventory</p>
         </div>
         <div className="flex gap-2">
-          {(role === "ADMIN" || role === "SUPERVISOR") && (
+          {(role === "CEO" || role === "ADMIN" || role === "SUPERVISOR") && (
             <Link href="/second-hand/verify">
               <Button size="sm" variant="outline" className="text-amber-700 border-amber-300">
                 Verify

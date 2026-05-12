@@ -9,12 +9,16 @@ datasource db {
 }
 
 enum Role {
+  CEO
   ADMIN
   SUPERVISOR
   PURCHASE_MANAGER
   ACCOUNTS_MANAGER
-  INWARDS_CLERK
-  OUTWARDS_CLERK
+  INWARDS_EXECUTIVE
+  OUTWARDS_EXECUTIVE
+  STORE_MANAGER
+  SALES_MANAGER
+  SERVICE_MANAGER
   CUSTOM
 }
 
@@ -1435,10 +1439,12 @@ model SOP {
   description String       @db.Text
   category    String
   frequency   SOPFrequency @default(SOP_DAILY)
+  timeSlots   String[]     @default(["MORNING", "AFTERNOON", "EVENING"]) // Which time slots this SOP appears in
   isActive    Boolean      @default(true)
   createdById String
   createdBy   User         @relation("SOPCreatedBy", fields: [createdById], references: [id])
   assignees   SOPAssignee[]
+  roleAssignments SOPRoleAssignment[]
   checkOffs   SOPCheckOff[]
   violations  SOPViolation[]
   createdAt   DateTime     @default(now())
@@ -1446,6 +1452,16 @@ model SOP {
 
   @@index([isActive])
   @@index([category])
+}
+
+model SOPRoleAssignment {
+  id     String @id @default(cuid())
+  sopId  String
+  sop    SOP    @relation(fields: [sopId], references: [id], onDelete: Cascade)
+  role   Role
+
+  @@unique([sopId, role])
+  @@index([role])
 }
 
 model SOPAssignee {
@@ -1466,9 +1482,10 @@ model SOPCheckOff {
   userId    String
   user      User     @relation("SOPCheckOffs", fields: [userId], references: [id])
   date      String
+  timeSlot  String   @default("MORNING") // MORNING, AFTERNOON, EVENING
   checkedAt DateTime @default(now())
 
-  @@unique([sopId, userId, date])
+  @@unique([sopId, userId, date, timeSlot])
   @@index([sopId])
   @@index([userId])
   @@index([date])

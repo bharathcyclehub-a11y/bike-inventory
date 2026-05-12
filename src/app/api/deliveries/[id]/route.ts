@@ -8,7 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE"]);
     const { id } = await params;
 
     const delivery = await prisma.delivery.findUnique({
@@ -45,7 +45,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE"]);
     const { id } = await params;
     const body = await req.json();
     const data = deliveryUpdateSchema.parse(body);
@@ -128,9 +128,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           updateData.flagResolvedBy = user.id;
         }
 
-        // Stock deduction on WALK_OUT or DELIVERED
-        if (data.status === "WALK_OUT" || data.status === "DELIVERED") {
+        // Mark delivered timestamp
+        if (data.status === "DELIVERED") {
           updateData.deliveredAt = new Date();
+        }
+
+        // Stock deduction on WALK_OUT, PACKED, or SCHEDULED
+        if (data.status === "WALK_OUT" || data.status === "PACKED" || data.status === "SCHEDULED") {
+          if (data.status === "WALK_OUT") updateData.deliveredAt = new Date();
 
           // Idempotency: skip if stock already deducted for this invoice
           const alreadyDeducted = await tx.inventoryTransaction.findFirst({

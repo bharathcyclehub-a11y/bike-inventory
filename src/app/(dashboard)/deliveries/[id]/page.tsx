@@ -1249,14 +1249,20 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       {/* Action Buttons */}
       <div className="space-y-2">
         {data.status === "PENDING" && !showSchedule && !showHandover && (
-          <div className="flex gap-2">
+          <div className="space-y-2">
             {!contactSaved && data.customerPhone ? (
               <p className="text-xs text-amber-600 font-medium py-2">Save customer contact above to proceed</p>
             ) : (
-              <button onClick={() => setShowSchedule(true)}
-                className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
-                Schedule Delivery
-              </button>
+              <div className="flex gap-2">
+                <button onClick={() => setShowSchedule(true)}
+                  className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium">
+                  Schedule Delivery
+                </button>
+                <button onClick={() => setShowHandover("WALK_OUT")}
+                  className="flex-1 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4" /> Walk-out
+                </button>
+              </div>
             )}
           </div>
         )}

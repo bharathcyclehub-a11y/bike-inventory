@@ -4,7 +4,7 @@ import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Phone, CheckCircle2, Calendar, Truck, MapPin, RotateCcw, Save, Trash2, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Loader2, Phone, CheckCircle2, Calendar, Truck, MapPin, RotateCcw, Save, Trash2, ShieldCheck, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -58,6 +58,8 @@ interface Shipment {
   createdAt: string;
   lineItems: LineItem[];
   preBookings: { id: string; customerName: string; customerPhone: string | null; status: string; productName: string }[];
+  vendorBillId: string | null;
+  vendorBill: { vendorId: string } | null;
 }
 
 function formatINR(n: number) {
@@ -73,8 +75,8 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const isAdmin = role === "ADMIN";
-  const canDeliver = ["ADMIN", "SUPERVISOR", "INWARDS_CLERK"].includes(role);
+  const isAdmin = role === "ADMIN" || role === "CEO";
+  const canDeliver = ["ADMIN", "CEO", "SUPERVISOR", "INWARDS_EXECUTIVE"].includes(role);
   const canApprove = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
 
   const [shipment, setShipment] = useState<Shipment | null>(null);
@@ -86,6 +88,11 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const [approveLoading, setApproveLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<{ shipmentNo: string; deliveredCount: number } | null>(null);
   const [actionError, setActionError] = useState("");
+  const [issueModal, setIssueModal] = useState<{ lineItem: LineItem; } | null>(null);
+  const [issueType, setIssueType] = useState<"SHORTAGE" | "DAMAGE" | "WRONG_ITEM" | "QUALITY">("SHORTAGE");
+  const [issueNotes, setIssueNotes] = useState("");
+  const [issueQty, setIssueQty] = useState(0);
+  const [issueSaving, setIssueSaving] = useState(false);
 
   // Per-item bin selections: lineItemId → array of binIds (one per unit)
   const [binSelections, setBinSelections] = useState<Record<string, string[]>>({});
@@ -293,6 +300,37 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       }
     } catch (e) { setActionError(e instanceof Error ? e.message : "Delete failed"); }
     finally { setActionLoading(false); }
+  };
+
+  const handleReportIssue = async () => {
+    if (!issueModal || !shipment) return;
+    setIssueSaving(true);
+    try {
+      const description = `[INBOUND] ${issueModal.lineItem.productName} — ${issueType === "SHORTAGE" ? `Short by ${issueQty} units` : issueType === "DAMAGE" ? `${issueQty} unit(s) damaged` : issueType === "WRONG_ITEM" ? `Wrong item received` : `Quality issue`}${issueNotes ? ` — ${issueNotes}` : ""} | Bill: ${shipment.billNo} | Shipment: ${shipment.shipmentNo}`;
+
+      const res = await fetch("/api/vendor-issues", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vendorId: shipment.vendorBill?.vendorId || undefined,
+          issueType,
+          description,
+          priority: issueType === "SHORTAGE" || issueType === "DAMAGE" ? "HIGH" : "MEDIUM",
+          billId: shipment.vendorBillId || undefined,
+        }),
+      }).then((r) => r.json());
+
+      if (res.success) {
+        setIssueModal(null);
+        setIssueNotes("");
+        setIssueQty(0);
+        setActionError("");
+        alert(`Issue reported: ${res.data.issueNo}. Sravan will be notified.`);
+      } else {
+        setActionError(res.error || "Failed to report issue");
+      }
+    } catch (e) { setActionError(e instanceof Error ? e.message : "Failed to report issue"); }
+    finally { setIssueSaving(false); }
   };
 
   // Render bin selectors for a line item (one per unit)
@@ -626,6 +664,17 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                 renderBinSelectors(li, "amber")
               )}
 
+              {/* Report Issue button */}
+              {canDeliver && shipment.status !== "DELIVERED" && (
+                <button
+                  onClick={() => { setIssueModal({ lineItem: li }); setIssueQty(1); }}
+                  className="mt-2 flex items-center gap-1.5 text-xs text-red-600 hover:text-red-700 font-medium"
+                >
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  Report Issue
+                </button>
+              )}
+
               {/* Pre-booked customer */}
               {li.preBookedCustomerName && (
                 <div className="mt-2 bg-purple-50 rounded-lg p-2 flex items-center justify-between">
@@ -664,6 +713,60 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           <Trash2 className="h-3.5 w-3.5" />
           {deliveredCount > 0 ? "Delete & Reverse Stock" : "Delete Shipment"}
         </button>
+      )}
+      {/* Issue Report Modal */}
+      {issueModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900">Report Issue</h3>
+              <button onClick={() => setIssueModal(null)} className="text-slate-400 text-lg">&times;</button>
+            </div>
+
+            <p className="text-sm text-slate-600">{issueModal.lineItem.productName} (Qty: {issueModal.lineItem.quantity})</p>
+
+            <div>
+              <label className="text-xs font-medium text-slate-700 mb-1 block">Issue Type</label>
+              <div className="grid grid-cols-2 gap-2">
+                {(["SHORTAGE", "DAMAGE", "WRONG_ITEM", "QUALITY"] as const).map((t) => (
+                  <button key={t} onClick={() => setIssueType(t)}
+                    className={`py-2 px-3 rounded-lg text-xs font-medium border transition-colors ${issueType === t ? "bg-red-50 border-red-300 text-red-700" : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                    {t === "SHORTAGE" ? "Shortage" : t === "DAMAGE" ? "Damage" : t === "WRONG_ITEM" ? "Wrong Item" : "Quality"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {(issueType === "SHORTAGE" || issueType === "DAMAGE") && (
+              <div>
+                <label className="text-xs font-medium text-slate-700 mb-1 block">
+                  {issueType === "SHORTAGE" ? "Units short" : "Units damaged"}
+                </label>
+                <input type="number" min={1} max={issueModal.lineItem.quantity} value={issueQty}
+                  onChange={(e) => setIssueQty(parseInt(e.target.value) || 0)}
+                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm" />
+              </div>
+            )}
+
+            <div>
+              <label className="text-xs font-medium text-slate-700 mb-1 block">Notes (optional)</label>
+              <textarea value={issueNotes} onChange={(e) => setIssueNotes(e.target.value)}
+                placeholder="Describe the issue..."
+                className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm h-20 resize-none" />
+            </div>
+
+            <div className="flex gap-2">
+              <button onClick={() => setIssueModal(null)}
+                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50">
+                Cancel
+              </button>
+              <button onClick={handleReportIssue} disabled={issueSaving}
+                className="flex-1 py-2.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50">
+                {issueSaving ? "Reporting..." : "Report Issue"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Search, Loader2, Cloud, Download, Truck, AlertTriangle, CheckCircle2,
-  Clock, Package, Flag, Trash2, Phone,
+  Clock, Package, Flag, Trash2, Phone, SlidersHorizontal, ChevronDown, ChevronUp,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -99,12 +99,13 @@ export default function DeliveriesPage() {
   const role = (session?.user as { role?: string })?.role || "";
   const { canFetch } = usePermissions(role);
   const canFetchInvoices = canFetch("deliveries");
-  const isAdmin = role === "ADMIN";
+  const isAdmin = role === "ADMIN" || role === "CEO";
 
   const [deliveries, setDeliveries] = useState<DeliveryItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("PENDING");
+  const searchParams = useSearchParams();
+  const [filter, setFilter] = useState(searchParams.get("status") || "PENDING");
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
 
@@ -130,6 +131,7 @@ export default function DeliveriesPage() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showOutstation, setShowOutstation] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
 
   const [dateRange, setDateRange] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState<string | undefined>();
@@ -658,24 +660,24 @@ export default function DeliveriesPage() {
         ))}
       </div>
 
-      {/* Hub Navigation: 3 delivery types + dispatch + prebook */}
-      <div className="grid grid-cols-3 gap-2 mb-2">
-        <Link href="/deliveries/walkout"
-          className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-green-50 text-green-700 border-green-200 hover:bg-green-100">
-          <CheckCircle2 className="h-5 w-5" />
-          Walk-out
-        </Link>
-        <Link href="/deliveries/blr"
-          className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100">
-          <Truck className="h-5 w-5" />
-          Bangalore
-        </Link>
-        <Link href="/deliveries/outstation"
-          className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100">
-          <Package className="h-5 w-5" />
-          Outstation
-        </Link>
-      </div>
+      {/* Collapsible Filters */}
+      <button
+        onClick={() => setShowFilters(!showFilters)}
+        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition-colors mb-2 border ${
+          showFilters || dateRange !== "all"
+            ? "bg-slate-900 text-white border-slate-900"
+            : "bg-slate-100 text-slate-600 border-slate-200"
+        }`}
+      >
+        <span className="flex items-center gap-1.5">
+          <SlidersHorizontal className="h-3.5 w-3.5" />
+          Filters
+          {dateRange !== "all" && <Badge variant="warning" className="text-[9px] ml-1">Active</Badge>}
+        </span>
+        {showFilters ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+      </button>
+
+      {/* Always-visible: Prebooked + Batch Dispatch */}
       <div className="flex gap-2 mb-2">
         <Link href="/deliveries/dispatch"
           className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors border bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100">
@@ -693,16 +695,38 @@ export default function DeliveriesPage() {
         </button>
       </div>
 
-      {/* Date Range Filter */}
-      <DateFilter
-        value={dateRange as DateRangeKey}
-        onChange={(key, from, to) => {
-          setDateRange(key);
-          setDateFrom(from);
-          setDateTo(to);
-        }}
-        className="mb-2"
-      />
+      {showFilters && (
+        <div className="space-y-2 mb-2 animate-in slide-in-from-top-2 duration-200">
+          {/* Hub Navigation: 3 delivery types */}
+          <div className="grid grid-cols-3 gap-2">
+            <Link href="/deliveries/walkout"
+              className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-green-50 text-green-700 border-green-200 hover:bg-green-100">
+              <CheckCircle2 className="h-5 w-5" />
+              Walk-out
+            </Link>
+            <Link href="/deliveries/blr"
+              className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100">
+              <Truck className="h-5 w-5" />
+              Bangalore
+            </Link>
+            <Link href="/deliveries/outstation"
+              className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100">
+              <Package className="h-5 w-5" />
+              Outstation
+            </Link>
+          </div>
+
+          {/* Date Range Filter */}
+          <DateFilter
+            value={dateRange as DateRangeKey}
+            onChange={(key, from, to) => {
+              setDateRange(key);
+              setDateFrom(from);
+              setDateTo(to);
+            }}
+          />
+        </div>
+      )}
 
       {/* Local search */}
       <div className="relative mb-2">
@@ -1018,7 +1042,7 @@ export default function DeliveriesPage() {
                       <button onClick={() => handleMarkReady(d.id)}
                         className="flex-1 bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Mark Ready</button>
                     )}
-                    {role === "ADMIN" && (
+                    {(role === "ADMIN" || role === "CEO") && (
                       <button onClick={() => handleDelete(d.id)} disabled={deleting === d.id}
                         className="bg-slate-100 text-slate-500 px-2 py-1.5 rounded-md text-xs hover:bg-red-50 hover:text-red-600 disabled:opacity-50">
                         {deleting === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}

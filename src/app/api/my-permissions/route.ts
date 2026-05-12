@@ -17,9 +17,9 @@ const DEFAULT_PERMISSIONS: RolePermissions = {
     fetch: ["deliveries", "inbound", "bills", "vendors", "stock"].includes(f.key),
   }])),
   PURCHASE_MANAGER: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
-    view: ["dashboard", "stock", "inbound", "vendors", "purchase_orders", "reorder", "barcode", "reports", "bills"].includes(f.key),
-    create: ["inbound", "purchase_orders", "vendors"].includes(f.key),
-    edit: ["inbound", "purchase_orders", "vendors", "reorder"].includes(f.key),
+    view: ["dashboard", "stock", "inbound", "vendors", "purchase_orders", "reorder", "barcode", "reports", "bills", "vendor_issues"].includes(f.key),
+    create: ["inbound", "purchase_orders", "vendors", "vendor_issues"].includes(f.key),
+    edit: ["inbound", "purchase_orders", "vendors", "reorder", "vendor_issues"].includes(f.key),
     delete: false,
     approve: ["purchase_orders", "inbound"].includes(f.key),
     fetch: ["inbound", "vendors", "stock"].includes(f.key),
@@ -32,21 +32,45 @@ const DEFAULT_PERMISSIONS: RolePermissions = {
     approve: ["expenses", "bills"].includes(f.key),
     fetch: ["bills"].includes(f.key),
   }])),
-  INWARDS_CLERK: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
-    view: ["dashboard", "stock", "inbound", "transfers", "stock_audit", "barcode"].includes(f.key),
-    create: ["transfers", "stock_audit"].includes(f.key),
-    edit: ["inbound", "stock_audit", "transfers"].includes(f.key),
+  INWARDS_EXECUTIVE: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
+    view: ["dashboard", "stock", "inbound", "deliveries", "transfers", "stock_audit", "barcode"].includes(f.key),
+    create: ["deliveries", "transfers", "stock_audit"].includes(f.key),
+    edit: ["inbound", "deliveries", "stock_audit", "transfers"].includes(f.key),
     delete: false,
     approve: ["inbound"].includes(f.key),
-    fetch: ["stock"].includes(f.key),
+    fetch: ["stock", "deliveries"].includes(f.key),
   }])),
-  OUTWARDS_CLERK: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
-    view: ["dashboard", "stock", "inbound", "deliveries", "barcode"].includes(f.key),
-    create: false,
+  OUTWARDS_EXECUTIVE: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
+    view: ["dashboard", "stock", "inbound", "deliveries", "barcode", "second_hand"].includes(f.key),
+    create: ["deliveries"].includes(f.key),
     edit: ["deliveries"].includes(f.key),
     delete: false,
     approve: ["deliveries"].includes(f.key),
     fetch: ["deliveries"].includes(f.key),
+  }])),
+  STORE_MANAGER: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
+    view: ["dashboard", "stock", "inbound", "deliveries", "vendors", "bills", "expenses", "stock_audit", "reports", "barcode", "vendor_issues", "customers", "transfers", "team"].includes(f.key),
+    create: ["deliveries", "stock_audit", "vendor_issues", "expenses", "transfers"].includes(f.key),
+    edit: ["deliveries", "stock", "stock_audit", "vendors", "bills", "vendor_issues"].includes(f.key),
+    delete: false,
+    approve: ["deliveries", "stock_audit"].includes(f.key),
+    fetch: ["deliveries", "inbound", "vendors", "stock", "bills"].includes(f.key),
+  }])),
+  SALES_MANAGER: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
+    view: ["dashboard", "stock", "deliveries", "reports", "barcode", "customers", "second_hand"].includes(f.key),
+    create: ["deliveries", "customers"].includes(f.key),
+    edit: ["deliveries", "customers"].includes(f.key),
+    delete: false,
+    approve: ["deliveries"].includes(f.key),
+    fetch: ["deliveries", "stock"].includes(f.key),
+  }])),
+  SERVICE_MANAGER: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
+    view: ["dashboard", "stock", "inbound", "vendor_issues", "stock_audit", "barcode", "reports"].includes(f.key),
+    create: ["vendor_issues", "stock_audit"].includes(f.key),
+    edit: ["vendor_issues", "stock_audit"].includes(f.key),
+    delete: false,
+    approve: false,
+    fetch: ["stock"].includes(f.key),
   }])),
 };
 
@@ -56,10 +80,10 @@ export async function GET() {
     const session = await getServerSession();
     if (!session?.user) return errorResponse("Not authenticated", 401);
 
-    const role = (session.user as { role?: string }).role || "INWARDS_CLERK";
+    const role = (session.user as { role?: string }).role || "INWARDS_EXECUTIVE";
 
-    // Admin always has full access
-    if (role === "ADMIN") {
+    // Admin/CEO always has full access
+    if (role === "ADMIN" || role === "CEO") {
       return successResponse({ role, permissions: DEFAULT_PERMISSIONS.ADMIN });
     }
 

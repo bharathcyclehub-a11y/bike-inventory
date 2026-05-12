@@ -252,6 +252,21 @@ export class ZohoClient {
 
   // ---- Pull/Import from Zoho ----
 
+  async searchContacts(searchText: string, contactType?: string) {
+    const typeParam = contactType ? `&contact_type=${contactType}` : "";
+    return this.apiCall<{
+      contacts: Array<{
+        contact_id: string;
+        contact_name: string;
+        contact_type: string;
+        email?: string;
+        phone?: string;
+        mobile?: string;
+        billing_address?: { city?: string; state?: string; address?: string };
+      }>;
+    }>("GET", `/contacts?search_text=${encodeURIComponent(searchText)}${typeParam}&per_page=10`);
+  }
+
   async listContacts(page = 1, lastModifiedTime?: string) {
     // Zoho expects ISO 8601 with timezone, + must be URL-encoded as %2B
     const modifiedParam = lastModifiedTime ? `&last_modified_time=${encodeURIComponent(lastModifiedTime + "T00:00:00+0530")}` : "";

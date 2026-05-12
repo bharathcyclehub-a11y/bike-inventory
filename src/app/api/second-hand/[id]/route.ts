@@ -53,7 +53,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth(["ADMIN", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "OUTWARDS_EXECUTIVE"]);
     const { id } = await params;
     const body = await req.json();
     const data = updateSchema.parse(body);

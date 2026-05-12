@@ -40,7 +40,7 @@ type SortKey = "name" | "value" | "count" | "stock";
 export default function BrandStockPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string } | undefined)?.role;
-  const isAdmin = role === "ADMIN";
+  const isAdmin = role === "ADMIN" || role === "CEO";
   const [brands, setBrands] = useState<BrandStock[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());

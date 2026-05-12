@@ -8,12 +8,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const ROLES = [
+  { value: "CEO", label: "CEO — Full access, SOP compliance oversight" },
   { value: "ADMIN", label: "Admin — Full access" },
-  { value: "SUPERVISOR", label: "Supervisor — View all, manage stock" },
+  { value: "SUPERVISOR", label: "Ops Manager — View all, manage stock" },
   { value: "PURCHASE_MANAGER", label: "Purchase Manager — Reorder, POs, vendors" },
-  { value: "ACCOUNTS_MANAGER", label: "Accounts Manager — Expenses, bills, payments, audit" },
-  { value: "INWARDS_CLERK", label: "Inventory & Receiving Lead — Verify inwards, stock count" },
-  { value: "OUTWARDS_CLERK", label: "Sales & Dispatch Lead — Verify outwards, stock count" },
+  { value: "ACCOUNTS_MANAGER", label: "Finance Head — Expenses, bills, payments, audit" },
+  { value: "INWARDS_EXECUTIVE", label: "Inwards Executive — Verify inwards, stock count" },
+  { value: "OUTWARDS_EXECUTIVE", label: "Outwards Executive — Verify outwards, stock count" },
+  { value: "STORE_MANAGER", label: "Store Manager — Deliveries, stock, SOPs, vendors" },
+  { value: "SALES_MANAGER", label: "Sales Manager — Deliveries, stock, SOPs" },
+  { value: "SERVICE_MANAGER", label: "Service Manager — Stock, SOPs, issues" },
   { value: "CUSTOM", label: "Custom Role — Pick permissions" },
 ];
 
@@ -44,7 +48,7 @@ export default function NewTeamMemberPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("INWARDS_CLERK");
+  const [role, setRole] = useState("INWARDS_EXECUTIVE");
   const [accessCode, setAccessCode] = useState("");
   const [customRoleName, setCustomRoleName] = useState("");
   const [permissions, setPermissions] = useState<Record<string, Perm>>(

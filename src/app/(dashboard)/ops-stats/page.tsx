@@ -112,7 +112,7 @@ function LoadingSkeleton() {
 export default function OpsStatsPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const isAllowed = role === "ADMIN" || role === "SUPERVISOR";
+  const isAllowed = role === "CEO" || role === "ADMIN" || role === "SUPERVISOR";
 
   const [data, setData] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);

@@ -22,12 +22,17 @@ interface User {
 }
 
 const ROLE_LABELS: Record<string, string> = {
+  CEO: "CEO",
   ADMIN: "Owner / Director",
-  SUPERVISOR: "Store Supervisor",
+  SUPERVISOR: "Ops Manager",
   PURCHASE_MANAGER: "Purchase Manager",
-  ACCOUNTS_MANAGER: "Accounts Manager",
-  INWARDS_CLERK: "Inventory & Receiving Lead",
-  OUTWARDS_CLERK: "Sales & Dispatch Lead",
+  ACCOUNTS_MANAGER: "Finance Head",
+  INWARDS_EXECUTIVE: "Inwards Executive",
+  OUTWARDS_EXECUTIVE: "Outwards Executive",
+  STORE_MANAGER: "Store Manager",
+  SALES_MANAGER: "Sales Manager",
+  SERVICE_MANAGER: "Service Manager",
+  CUSTOM: "Custom Role",
 };
 
 export default function NewStockAuditPage() {

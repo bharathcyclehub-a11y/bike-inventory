@@ -45,7 +45,7 @@ Thank you!
 
 export async function GET() {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE"]);
 
     const config = await prisma.alertConfig.findUnique({ where: { id: "singleton" } });
     const templates = (config?.whatsappTemplates as Record<string, string>) || {};

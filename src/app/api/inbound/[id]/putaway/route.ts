@@ -11,7 +11,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_EXECUTIVE"]);
     const { id } = await params;
     const body = await req.json();
     const items: Array<{ lineItemId: string; binId: string }> = body.items || [];

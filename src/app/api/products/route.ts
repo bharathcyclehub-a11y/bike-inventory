@@ -17,7 +17,7 @@ export async function GET(req: NextRequest) {
     const { page, limit, skip, sortBy, sortOrder, search, searchParams } =
       parseSearchParams(req.url);
 
-    const isAdmin = user.role === "ADMIN";
+    const isAdmin = user.role === "ADMIN" || user.role === "CEO";
 
     const categoryId = searchParams.get("categoryId") || undefined;
     const brandId = searchParams.get("brandId") || undefined;

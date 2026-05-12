@@ -64,7 +64,7 @@
 | name | String | |
 | email | String | Unique |
 | password | String | bcrypt hashed |
-| role | Enum | ADMIN, SUPERVISOR, MANAGER, INWARDS_CLERK, OUTWARDS_CLERK |
+| role | Enum | ADMIN, SUPERVISOR, MANAGER, INWARDS_EXECUTIVE, OUTWARDS_EXECUTIVE |
 | accessCode | String | Unique, for login |
 | isActive | Boolean | Default true |
 
@@ -550,8 +550,8 @@
 | ADMIN | Full access — all features, user management |
 | SUPERVISOR | Most features — reports, audits, approvals |
 | MANAGER | Products, POs, vendors, reports |
-| INWARDS_CLERK | Inward transactions only |
-| OUTWARDS_CLERK | Outward transactions only |
+| INWARDS_EXECUTIVE | Inward transactions only |
+| OUTWARDS_EXECUTIVE | Outward transactions only |
 
 ### Protection
 - API routes use `requireAuth(['ADMIN', 'MANAGER'])` for role-based access

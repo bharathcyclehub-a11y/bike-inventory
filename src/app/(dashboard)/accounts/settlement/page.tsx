@@ -43,8 +43,8 @@ type FetchStep = "idle" | "connecting" | "fetching" | "creating" | "done" | "err
 export default function SettlementListPage() {
   const { data: session, status: sessionStatus } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAccess = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
-  const isAdmin = role === "ADMIN";
+  const canAccess = ["ADMIN", "CEO", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const isAdmin = role === "ADMIN" || role === "CEO";
 
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [loading, setLoading] = useState(true);

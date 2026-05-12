@@ -8,11 +8,11 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"]);
     const { id } = await params;
 
     // Clerks/Mechanic can only view their assigned stock counts
-    if (["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role)) {
+    if (["INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"].includes(user.role)) {
       const check = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
       if (!check) return errorResponse("Stock count not found", 404);
       if (check.assignedToId !== user.id) return errorResponse("You can only access stock counts assigned to you", 403);
@@ -56,7 +56,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"]);
     const { id } = await params;
     const body = await req.json();
     const data = stockCountUpdateSchema.parse(body);
@@ -65,7 +65,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     if (!existing) return errorResponse("Stock count not found", 404);
 
     // Clerks/Mechanic can only update their assigned stock counts
-    if (["INWARDS_CLERK", "OUTWARDS_CLERK"].includes(user.role)) {
+    if (["INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"].includes(user.role)) {
       if (existing.assignedToId !== user.id) return errorResponse("You can only update stock counts assigned to you", 403);
     }
 

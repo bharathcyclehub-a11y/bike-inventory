@@ -24,7 +24,7 @@ const createSchema = z.object({
 export async function GET(req: NextRequest) {
   try {
     const user = await requireAuth();
-    const isAdmin = user.role === "ADMIN";
+    const isAdmin = user.role === "ADMIN" || user.role === "CEO";
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status");
     const search = searchParams.get("search");
@@ -77,7 +77,7 @@ export async function GET(req: NextRequest) {
 // POST: Create second-hand cycle
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "OUTWARDS_EXECUTIVE"]);
     const body = await req.json();
     const data = createSchema.parse(body);
 

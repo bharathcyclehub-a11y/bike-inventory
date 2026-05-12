@@ -201,6 +201,82 @@ function ShareDailyReport() {
   );
 }
 
+function InwardsEODReport() {
+  const [sharing, setSharing] = useState(false);
+
+  const handleShare = async () => {
+    setSharing(true);
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      const dateStr = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+
+      const [inwardsRes, transfersRes, inboundRes] = await Promise.all([
+        fetch(`/api/inventory/inwards?dateFrom=${today}&limit=100&mine=true`).then(r => r.json()),
+        fetch(`/api/transfers?dateFrom=${today}&limit=100`).then(r => r.json()),
+        fetch(`/api/inventory/inwards?dateFrom=${today}&limit=100`).then(r => r.json()),
+      ]);
+
+      const inwards = inwardsRes.success ? (inwardsRes.data || []) : [];
+      const transfers = transfersRes.success ? (transfersRes.data || []) : [];
+      const allInwards = inboundRes.success ? (inboundRes.data || []) : [];
+
+      const totalInwardQty = inwards.reduce((s: number, t: { quantity: number }) => s + t.quantity, 0);
+      const totalAllInwardQty = allInwards.reduce((s: number, t: { quantity: number }) => s + t.quantity, 0);
+
+      let msg = `📥 *Inwards EOD Report — ${dateStr}*\n\n`;
+
+      // Inwards summary
+      msg += `📦 *My Inwards:* ${inwards.length} entries (${totalInwardQty} units)\n`;
+      msg += `📦 *Total Inwards:* ${allInwards.length} entries (${totalAllInwardQty} units)\n`;
+      msg += `🔄 *Transfers:* ${transfers.length} today\n\n`;
+
+      // Inward details
+      if (inwards.length > 0) {
+        msg += `*Inward Details:*\n`;
+        for (const t of inwards.slice(0, 15)) {
+          const name = t.product?.name || "Unknown";
+          const qty = t.quantity;
+          const ref = t.referenceNo ? ` (${t.referenceNo})` : "";
+          msg += `• ${name} × ${qty}${ref}\n`;
+        }
+        if (inwards.length > 15) msg += `... +${inwards.length - 15} more\n`;
+        msg += `\n`;
+      }
+
+      // Transfer details
+      if (transfers.length > 0) {
+        msg += `*Transfer Details:*\n`;
+        for (const t of transfers.slice(0, 10)) {
+          const no = t.transferNo || t.id?.slice(0, 8);
+          const status = t.status || "PENDING";
+          msg += `• ${no}: ${status}\n`;
+        }
+        if (transfers.length > 10) msg += `... +${transfers.length - 10} more\n`;
+        msg += `\n`;
+      }
+
+      if (inwards.length === 0 && transfers.length === 0) {
+        msg += `_No inward entries or transfers recorded today._\n\n`;
+      }
+
+      msg += `— Bharath Cycle Hub App`;
+      window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`, "_blank");
+    } catch {
+      alert("Failed to load report data");
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  return (
+    <button onClick={handleShare} disabled={sharing}
+      className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50 w-full justify-center mb-2">
+      {sharing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
+      {sharing ? "Loading..." : "Share Inwards EOD Report"}
+    </button>
+  );
+}
+
 function DailyChecklistWidget() {
   const [items, setItems] = useState<Array<{
     id: string; title: string; completions: Array<{ id: string }>;
@@ -283,7 +359,7 @@ function SOPCheckoffWidget() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/api/sops?isActive=true").then(r => r.json()),
+      fetch("/api/sops?isActive=true&forMyRole=true").then(r => r.json()),
       fetch(`/api/sops/compliance?date=${today}`).then(r => r.json()),
     ]).then(([sopsRes, compRes]) => {
       if (sopsRes.success) setSops(sopsRes.data ?? []);
@@ -949,6 +1025,7 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
   return (
     <>
       <ShareDailyReport />
+      {type === "inward" && <InwardsEODReport />}
       <div className="grid grid-cols-2 gap-3">
         <DashboardCard label={`My ${label} Today`} value={totalQty} icon={Icon} trend={{ direction: "up", value: `${transactions.length} entries` }} color={type === "inward" ? "bg-blue-100 text-blue-600" : "bg-orange-100 text-orange-600"} />
         <DashboardCard label="Total Entries" value={transactions.length} icon={Package} color="bg-slate-100 text-slate-700" />
@@ -1031,7 +1108,7 @@ function OutwardsClerkDashboard() {
           </Link>
         )}
         {stats.prebooked > 0 && (
-          <Link href="/deliveries">
+          <Link href="/deliveries?status=PREBOOKED">
             <DashboardCard label="Prebooked" value={stats.prebooked} icon={Package} color="bg-purple-100 text-purple-700" />
           </Link>
         )}
@@ -1145,7 +1222,7 @@ function AccountsManagerDashboard() {
 
 export default function DashboardPage() {
   const { data: session } = useSession();
-  const role = ((session?.user as { role?: string })?.role || "INWARDS_CLERK") as Role;
+  const role = ((session?.user as { role?: string })?.role || "INWARDS_EXECUTIVE") as Role;
   const userName = session?.user?.name || "User";
 
   return (
@@ -1157,12 +1234,61 @@ export default function DashboardPage() {
         </p>
       </div>
 
+      {/* Morning SOP Nudge — shows for all roles */}
+      <SOPNudgeBanner />
+
+      {role === "CEO" && <AdminDashboard />}
       {role === "ADMIN" && <AdminDashboard />}
       {role === "SUPERVISOR" && <SupervisorDashboard />}
       {role === "PURCHASE_MANAGER" && <PurchaseManagerDashboard />}
       {role === "ACCOUNTS_MANAGER" && <AccountsManagerDashboard />}
-      {role === "INWARDS_CLERK" && <ClerkDashboard type="inward" />}
-      {role === "OUTWARDS_CLERK" && <OutwardsClerkDashboard />}
+      {role === "INWARDS_EXECUTIVE" && <ClerkDashboard type="inward" />}
+      {role === "OUTWARDS_EXECUTIVE" && <OutwardsClerkDashboard />}
+      {role === "STORE_MANAGER" && <SupervisorDashboard />}
+      {role === "SALES_MANAGER" && <OutwardsClerkDashboard />}
+      {role === "SERVICE_MANAGER" && <ClerkDashboard type="inward" />}
+      {role === "CUSTOM" && <ClerkDashboard type="inward" />}
+    </div>
+  );
+}
+
+/* ── SOP Morning Nudge Banner ────────────────────────── */
+function SOPNudgeBanner() {
+  const [pending, setPending] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    Promise.all([
+      fetch("/api/sops?isActive=true&forMyRole=true").then(r => r.json()),
+      fetch(`/api/sops/compliance?date=${today}`).then(r => r.json()),
+    ]).then(([sopsRes, compRes]) => {
+      const sops = sopsRes.success ? (sopsRes.data ?? []) : [];
+      const dailySops = sops.filter((s: { frequency: string }) => s.frequency === "SOP_DAILY");
+      const checkedIds = new Set((compRes.success ? compRes.data ?? [] : []).map((c: { sopId: string }) => c.sopId));
+      const pendingCount = dailySops.filter((s: { id: string }) => !checkedIds.has(s.id)).length;
+      setPending(pendingCount);
+      setTotal(dailySops.length);
+    }).catch(() => {});
+  }, []);
+
+  if (pending === 0 || dismissed || total === 0) return null;
+
+  return (
+    <div className="mb-3 p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-center gap-2">
+      <ShieldAlert className="h-5 w-5 text-amber-600 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-semibold text-amber-800">
+          {pending} SOP{pending > 1 ? "s" : ""} pending today
+        </p>
+        <p className="text-[10px] text-amber-600">{total - pending}/{total} done — tap to check off</p>
+      </div>
+      <Link href="/sops/my-checkoffs"
+        className="px-2.5 py-1 bg-amber-600 text-white text-[10px] font-bold rounded-lg shrink-0">
+        Check Off
+      </Link>
+      <button onClick={() => setDismissed(true)} className="text-amber-400 text-xs ml-1">✕</button>
     </div>
   );
 }

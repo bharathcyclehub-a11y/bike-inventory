@@ -7,8 +7,8 @@ import { ArrowLeft, Plus, Trash2, Loader2, X, CheckSquare } from "lucide-react";
 
 const ROLES = [
   { value: "SUPERVISOR", label: "Supervisor" },
-  { value: "INWARDS_CLERK", label: "Inwards Clerk" },
-  { value: "OUTWARDS_CLERK", label: "Outwards Clerk" },
+  { value: "INWARDS_EXECUTIVE", label: "Inwards Executive" },
+  { value: "OUTWARDS_EXECUTIVE", label: "Outwards Executive" },
   { value: "PURCHASE_MANAGER", label: "Purchase Manager" },
   { value: "ACCOUNTS_MANAGER", label: "Accounts Manager" },
 ];
@@ -24,7 +24,7 @@ interface Template {
 export default function ChecklistManagementPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const isAdmin = role === "ADMIN";
+  const isAdmin = role === "ADMIN" || role === "CEO";
 
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);

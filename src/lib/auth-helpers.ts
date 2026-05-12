@@ -48,7 +48,10 @@ export async function requireAuth(roles?: Role[]) {
   }
 
   if (roles && roles.length > 0 && !roles.includes(user.role)) {
-    throw new AuthError("Insufficient permissions", 403);
+    // CEO has all ADMIN permissions — if ADMIN is in allowed roles, CEO passes too
+    if (!(user.role === "CEO" && roles.includes("ADMIN"))) {
+      throw new AuthError("Insufficient permissions", 403);
+    }
   }
 
   return user;

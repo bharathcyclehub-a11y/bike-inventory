@@ -59,7 +59,7 @@ function clearDraft() {
 export default function NewTransferOrderPage() {
   const router = useRouter();
   const { data: session } = useSession();
-  const isAdmin = (session?.user as { role?: string })?.role === "ADMIN";
+  const isAdmin = ["ADMIN", "CEO"].includes((session?.user as { role?: string })?.role || "");
 
   const [bins, setBins] = useState<Bin[]>([]);
   const [items, setItems] = useState<TransferItem[]>([]);

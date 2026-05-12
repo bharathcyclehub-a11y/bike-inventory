@@ -116,8 +116,8 @@ export const userSchema = z.object({
     "SUPERVISOR",
     "PURCHASE_MANAGER",
     "ACCOUNTS_MANAGER",
-    "INWARDS_CLERK",
-    "OUTWARDS_CLERK",
+    "INWARDS_EXECUTIVE",
+    "OUTWARDS_EXECUTIVE",
     "CUSTOM",
   ]),
   accessCode: z.string().min(1, "Access code is required"),
@@ -387,7 +387,9 @@ export const sopSchema = z.object({
   description: z.string().min(1, "Description is required"),
   category: z.string().min(1, "Category is required"),
   frequency: z.enum(["SOP_DAILY", "SOP_WEEKLY", "SOP_MONTHLY"]),
+  timeSlots: z.array(z.enum(["MORNING", "AFTERNOON", "EVENING"])).optional(),
   assigneeIds: z.array(z.string()).optional(),
+  roleIds: z.array(z.string()).optional(),
 });
 
 export const sopUpdateSchema = sopSchema.partial().extend({
@@ -397,6 +399,7 @@ export const sopUpdateSchema = sopSchema.partial().extend({
 export const sopCheckOffSchema = z.object({
   sopId: z.string().min(1, "SOP ID is required"),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  timeSlot: z.enum(["MORNING", "AFTERNOON", "EVENING"]).optional(),
 });
 
 export const sopViolationSchema = z.object({

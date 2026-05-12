@@ -20,7 +20,7 @@ export function usePermissions(role: string) {
   );
 
   useEffect(() => {
-    if (!role || role === "ADMIN") return; // Admin has everything
+    if (!role || role === "ADMIN" || role === "CEO") return; // Admin has everything
     if (cachedPermissions?.role === role) {
       setPermissions(cachedPermissions.perms);
       return;
@@ -42,32 +42,32 @@ export function usePermissions(role: string) {
   }, [role]);
 
   const canView = (feature: string) => {
-    if (role === "ADMIN") return true;
+    if (role === "ADMIN" || role === "CEO") return true;
     return permissions?.[feature]?.view ?? true;
   };
 
   const canCreate = (feature: string) => {
-    if (role === "ADMIN") return true;
+    if (role === "ADMIN" || role === "CEO") return true;
     return permissions?.[feature]?.create ?? false;
   };
 
   const canEdit = (feature: string) => {
-    if (role === "ADMIN") return true;
+    if (role === "ADMIN" || role === "CEO") return true;
     return permissions?.[feature]?.edit ?? false;
   };
 
   const canDelete = (feature: string) => {
-    if (role === "ADMIN") return true;
+    if (role === "ADMIN" || role === "CEO") return true;
     return permissions?.[feature]?.delete ?? false;
   };
 
   const canApprove = (feature: string) => {
-    if (role === "ADMIN") return true;
+    if (role === "ADMIN" || role === "CEO") return true;
     return permissions?.[feature]?.approve ?? false;
   };
 
   const canFetch = (feature: string) => {
-    if (role === "ADMIN") return true;
+    if (role === "ADMIN" || role === "CEO") return true;
     return permissions?.[feature]?.fetch ?? false;
   };
 

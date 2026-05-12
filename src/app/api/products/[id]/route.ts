@@ -13,7 +13,7 @@ export async function GET(
   try {
     const user = await requireAuth();
     const { id } = await params;
-    const isAdmin = user.role === "ADMIN";
+    const isAdmin = user.role === "ADMIN" || user.role === "CEO";
 
     const product = await prisma.product.findUnique({
       where: { id },

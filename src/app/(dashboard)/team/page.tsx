@@ -22,19 +22,23 @@ interface TeamUser {
 }
 
 const ROLE_CONFIG: Record<string, { label: string; icon: typeof Shield; color: "danger" | "warning" | "info" | "success" | "default" }> = {
+  CEO: { label: "CEO", icon: ShieldCheck, color: "danger" },
   ADMIN: { label: "Owner / Director", icon: ShieldCheck, color: "danger" },
-  SUPERVISOR: { label: "Store Supervisor", icon: Shield, color: "warning" },
+  SUPERVISOR: { label: "Ops Manager", icon: Shield, color: "warning" },
   PURCHASE_MANAGER: { label: "Purchase Manager", icon: UserCog, color: "info" },
-  ACCOUNTS_MANAGER: { label: "Accounts Manager", icon: UserCog, color: "info" },
-  INWARDS_CLERK: { label: "Inventory & Receiving Lead", icon: PackagePlus, color: "success" },
-  OUTWARDS_CLERK: { label: "Sales & Dispatch Lead", icon: PackageMinus, color: "default" },
+  ACCOUNTS_MANAGER: { label: "Finance Head", icon: UserCog, color: "info" },
+  INWARDS_EXECUTIVE: { label: "Inwards Executive", icon: PackagePlus, color: "success" },
+  OUTWARDS_EXECUTIVE: { label: "Outwards Executive", icon: PackageMinus, color: "default" },
+  STORE_MANAGER: { label: "Store Manager", icon: Shield, color: "warning" },
+  SALES_MANAGER: { label: "Sales Manager", icon: UserCog, color: "info" },
+  SERVICE_MANAGER: { label: "Service Manager", icon: UserCog, color: "success" },
   CUSTOM: { label: "Custom", icon: UserCog, color: "info" },
 };
 
 export default function TeamPage() {
   const { data: session } = useSession();
   const user = session?.user as { role?: string } | undefined;
-  const isAdmin = user?.role === "ADMIN";
+  const isAdmin = user?.role === "ADMIN" || user?.role === "CEO";
   const [members, setMembers] = useState<TeamUser[]>([]);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
@@ -96,40 +100,64 @@ export default function TeamPage() {
           <Users className="h-12 w-12 text-slate-300 mx-auto mb-3" />
           <p className="text-sm text-slate-500">No team members found</p>
         </div>
-      ) : (
-        <div className="space-y-2">
-          {members.map((m) => {
-            const rc = ROLE_CONFIG[m.role] || ROLE_CONFIG.INWARDS_CLERK;
-            const Icon = rc.icon;
-            return (
-              <Link key={m.id} href={`/team/${m.id}`}>
-                <Card className={`${!m.isActive ? "opacity-50" : ""}`}>
-                  <CardContent className="p-3 flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
-                      <Icon className="h-5 w-5 text-slate-500" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-semibold text-slate-900 truncate">{m.name}</p>
-                        {!m.isActive && <Badge variant="danger" className="text-[9px]">Inactive</Badge>}
-                      </div>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <Badge variant={rc.color} className="text-[9px]">{m.role === "CUSTOM" && m.customRoleName ? m.customRoleName : rc.label}</Badge>
-                        <span className="text-[10px] text-slate-400">{m._count.transactions} transactions</span>
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className="text-[10px] text-slate-400">
-                        {new Date(m.createdAt).toLocaleDateString("en-IN")}
-                      </p>
-                    </div>
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
-        </div>
-      )}
+      ) : ((() => {
+        // Group members by role for segregated view
+        const ROLE_ORDER = ["CEO", "ADMIN", "SUPERVISOR", "STORE_MANAGER", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "CUSTOM"];
+        const grouped: Record<string, TeamUser[]> = {};
+        for (const m of members) {
+          if (!grouped[m.role]) grouped[m.role] = [];
+          grouped[m.role].push(m);
+        }
+        const orderedRoles = [...ROLE_ORDER.filter(r => grouped[r]), ...Object.keys(grouped).filter(r => !ROLE_ORDER.includes(r))];
+
+        return (
+          <div className="space-y-4">
+            {orderedRoles.map(role => {
+              const rc = ROLE_CONFIG[role] || ROLE_CONFIG.INWARDS_EXECUTIVE;
+              const Icon = rc.icon;
+              return (
+                <div key={role}>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <Icon className="h-3.5 w-3.5 text-slate-400" />
+                    <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">{rc.label}</p>
+                    <Badge variant={rc.color} className="text-[9px]">{grouped[role].length}</Badge>
+                  </div>
+                  <div className="space-y-1.5">
+                    {grouped[role].map(m => (
+                      <Link key={m.id} href={`/team/${m.id}`}>
+                        <Card className={`${!m.isActive ? "opacity-50" : ""}`}>
+                          <CardContent className="p-3 flex items-center gap-3">
+                            <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center shrink-0">
+                              <Icon className="h-5 w-5 text-slate-500" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <p className="text-sm font-semibold text-slate-900 truncate">{m.name}</p>
+                                {!m.isActive && <Badge variant="danger" className="text-[9px]">Inactive</Badge>}
+                              </div>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                {m.role === "CUSTOM" && m.customRoleName && (
+                                  <Badge variant={rc.color} className="text-[9px]">{m.customRoleName}</Badge>
+                                )}
+                                <span className="text-[10px] text-slate-400">{m._count.transactions} transactions</span>
+                              </div>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-[10px] text-slate-400">
+                                {new Date(m.createdAt).toLocaleDateString("en-IN")}
+                              </p>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })())}
     </div>
   );
 }

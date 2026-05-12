@@ -45,29 +45,37 @@ const APP_FEATURES = [
 ];
 
 const ROLES = [
+  { value: "CEO", label: "CEO" },
   { value: "ADMIN", label: "Owner / Director" },
-  { value: "SUPERVISOR", label: "Store Supervisor" },
+  { value: "SUPERVISOR", label: "Ops Manager" },
   { value: "PURCHASE_MANAGER", label: "Purchase Manager" },
-  { value: "ACCOUNTS_MANAGER", label: "Accounts Manager" },
-  { value: "INWARDS_CLERK", label: "Inventory & Receiving Lead" },
-  { value: "OUTWARDS_CLERK", label: "Sales & Dispatch Lead" },
+  { value: "ACCOUNTS_MANAGER", label: "Finance Head" },
+  { value: "INWARDS_EXECUTIVE", label: "Inwards Executive" },
+  { value: "OUTWARDS_EXECUTIVE", label: "Outwards Executive" },
+  { value: "STORE_MANAGER", label: "Store Manager" },
+  { value: "SALES_MANAGER", label: "Sales Manager" },
+  { value: "SERVICE_MANAGER", label: "Service Manager" },
   { value: "CUSTOM", label: "Custom Role" },
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
+  CEO: ["Full access to all features", "SOP compliance dashboard", "Team performance", "P&L review", "Approve bills", "All reports"],
   ADMIN: ["Full access to all features", "Manage team & roles", "Zoho sync", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Bin management", "Settings"],
   SUPERVISOR: ["View all data", "Manage stock", "Team view", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Approve transfers"],
   PURCHASE_MANAGER: ["Reorder dashboard", "Purchase Orders", "Vendors", "Stock view", "AI Insights", "Barcode Scanner", "WhatsApp PO share"],
   ACCOUNTS_MANAGER: ["Expenses", "Accounts", "Bills & Payments", "Record Payments", "Receivables", "Stock Audit"],
-  INWARDS_CLERK: ["Verify Zoho inwards (putaway)", "Stock Count", "Stock view (no cost price)", "Barcode Scanner"],
-  OUTWARDS_CLERK: ["Verify Zoho outwards (dispatch)", "Stock Count", "Stock view (no cost price)", "Barcode Scanner"],
+  INWARDS_EXECUTIVE: ["Verify Zoho inwards (putaway)", "Stock Count", "Stock view (no cost price)", "Barcode Scanner"],
+  OUTWARDS_EXECUTIVE: ["Verify Zoho outwards (dispatch)", "Stock Count", "Stock view (no cost price)", "Barcode Scanner"],
+  STORE_MANAGER: ["Deliveries", "Stock view", "SOPs", "Vendors", "Accounts", "Team view", "Reports"],
+  SALES_MANAGER: ["Deliveries", "Stock view", "SOPs", "Vendors", "Reports"],
+  SERVICE_MANAGER: ["Stock view", "SOPs", "Vendor Issues", "Deliveries"],
 };
 
 export default function EditTeamMemberPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: session } = useSession();
   const currentUser = session?.user as { role?: string; userId?: string } | undefined;
-  const isAdmin = currentUser?.role === "ADMIN";
+  const isAdmin = currentUser?.role === "ADMIN" || currentUser?.role === "CEO";
   const router = useRouter();
 
   const [user, setUser] = useState<UserDetail | null>(null);

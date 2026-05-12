@@ -8,7 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"]);
+    await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER"]);
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status") || undefined;
     const area = searchParams.get("area") || undefined;
@@ -27,8 +27,8 @@ export async function GET(req: NextRequest) {
     }
     if (status) {
       where.status = status;
-      // Auto-hide: delivered items older than current month unless date filter is set
-      if (status === "DELIVERED" && !date && !dateRange) {
+      // Auto-hide: delivered/walkout items older than current month unless date filter is set
+      if ((status === "DELIVERED" || status === "WALK_OUT") && !date && !dateRange) {
         const now = new Date();
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         where.deliveredAt = { gte: startOfMonth };
@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "OUTWARDS_CLERK"]);
+    const user = await requireAuth(["ADMIN", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE"]);
     const body = await req.json();
     const data = deliveryCreateSchema.parse(body);
 

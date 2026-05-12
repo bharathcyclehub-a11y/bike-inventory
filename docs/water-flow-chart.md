@@ -14,8 +14,8 @@
 | Srinu | Supervisor | SUPERVISOR | Home, Accounts, Vendors, Bills, More | Approve delivery expenses, audit oversight, bill follow-ups |
 | Abhi Gowda | Purchase Manager | PURCHASE_MANAGER | Home, Stock, Reorder, POs, More | Set reorder levels, create POs, share POs to Syed, enter tracking links |
 | Sravan | Accounts Manager | ACCOUNTS_MANAGER | Home, Expenses, Accounts, Audit, More | 20+ expenses/day, payment recording, audit creation |
-| Nithin | Inwards Clerk | INWARDS_CLERK | Home, Verify, Stock Count, Stock, More | Verify Zoho inwards, physical receipt, putaway to bins |
-| Ranjitha | Outwards Clerk | OUTWARDS_CLERK | Home, Deliveries, Stock Count, Stock, More | Verify Zoho outwards, dispatch, delivery expense, second-hand bike intake |
+| Nithin | Inwards Clerk | INWARDS_EXECUTIVE | Home, Verify, Stock Count, Stock, More | Verify Zoho inwards, physical receipt, putaway to bins |
+| Ranjitha | Outwards Clerk | OUTWARDS_EXECUTIVE | Home, Deliveries, Stock Count, Stock, More | Verify Zoho outwards, dispatch, delivery expense, second-hand bike intake |
 
 ### Access Control Summary
 
@@ -93,19 +93,19 @@
 |          FRONTEND: Appears in Nithin's "Verify" tab (yellow)   |
 |                                                                 |
 |  STEP 2: Nithin physically checks goods received               |
-|          WHO: Nithin (INWARDS_CLERK)                           |
+|          WHO: Nithin (INWARDS_EXECUTIVE)                           |
 |          WHAT HE SEES: List of unverified items with qty/vendor|
 |          WHAT HE DOES: Checks physical items match             |
 |                                                                 |
 |  STEP 3: Nithin taps "Confirm Receipt"                        |
-|          WHO: Nithin (INWARDS_CLERK)                           |
+|          WHO: Nithin (INWARDS_EXECUTIVE)                           |
 |          WHAT CHANGES: Product.currentStock += qty             |
 |                        Transaction marked [VERIFIED]           |
 |          FRONTEND: Item moves from "Unverified" to "Verified" |
 |          CONTROL: Admin can see who verified, when             |
 |                                                                 |
 |  STEP 4: Nithin does putaway (assigns bin)                    |
-|          WHO: Nithin (INWARDS_CLERK)                           |
+|          WHO: Nithin (INWARDS_EXECUTIVE)                           |
 |          WHAT CHANGES: Product.binId = selected bin            |
 |          FRONTEND: Stock page shows item in correct bin        |
 |                                                                 |
@@ -133,12 +133,12 @@
 |          FRONTEND: Appears in Ranjitha's "Deliveries" tab      |
 |                                                                 |
 |  STEP 2: Ranjitha verifies items dispatched                   |
-|          WHO: Ranjitha (OUTWARDS_CLERK)                        |
+|          WHO: Ranjitha (OUTWARDS_EXECUTIVE)                        |
 |          WHAT SHE SEES: Invoice items, qty, customer details   |
 |          WHAT SHE DOES: Checks items physically handed over    |
 |                                                                 |
 |  STEP 3: Ranjitha taps "Verify Dispatch"                      |
-|          WHO: Ranjitha (OUTWARDS_CLERK)                        |
+|          WHO: Ranjitha (OUTWARDS_EXECUTIVE)                        |
 |          WHAT CHANGES: Product.currentStock -= qty             |
 |                        Delivery.status = VERIFIED              |
 |          FRONTEND: Item moves to "Verified" section            |
@@ -147,7 +147,7 @@
 |          VERIFIED -> SCHEDULED -> OUT_FOR_DELIVERY             |
 |                                                                 |
 |  * STEP 5: Ranjitha marks "DELIVERED"                         |
-|          WHO: Ranjitha (OUTWARDS_CLERK)                        |
+|          WHO: Ranjitha (OUTWARDS_EXECUTIVE)                        |
 |          APP PROMPTS: "What was the delivery expense?"         |
 |          WHAT SHE ENTERS:                                      |
 |            - Delivery expense amount (Rs.)                     |
@@ -398,12 +398,12 @@
 |          WHERE: Shop floor                                     |
 |                                                                 |
 |  STEP 2: Ranjitha inspects the bicycle                        |
-|          WHO: Ranjitha (OUTWARDS_CLERK)                        |
+|          WHO: Ranjitha (OUTWARDS_EXECUTIVE)                        |
 |          WHAT SHE CHECKS: Frame, wheels, brakes, gears, tyres |
 |          DECISION: Accept or reject                            |
 |                                                                 |
 |  STEP 3: Ranjitha records intake in app                       |
-|          WHO: Ranjitha (OUTWARDS_CLERK)                        |
+|          WHO: Ranjitha (OUTWARDS_EXECUTIVE)                        |
 |          WHAT SHE ENTERS:                                      |
 |            - Seller name                                       |
 |            - Seller phone number                               |
@@ -646,12 +646,12 @@ PURCHASE CYCLE (4 people):
   Approves PO         -> Syed (ADMIN)
   Sends to vendor     -> Syed (ADMIN) -- only Syed talks to vendors
   Enters tracking     -> Abhi (PURCHASE_MANAGER)
-  Receives goods      -> Nithin (INWARDS_CLERK)
+  Receives goods      -> Nithin (INWARDS_EXECUTIVE)
   Records payment     -> Sravan (ACCOUNTS_MANAGER)
 
 SALES + DELIVERY CYCLE (3 people):
   Bills in Zoho       -> Zoho POS (system/cashier)
-  Verifies dispatch   -> Ranjitha (OUTWARDS_CLERK)
+  Verifies dispatch   -> Ranjitha (OUTWARDS_EXECUTIVE)
   Records del. cost   -> Ranjitha (at delivery time)
   Approves del. cost  -> Srinu (SUPERVISOR)
   Reviews financials  -> Syed (ADMIN via reports)
@@ -1024,7 +1024,7 @@ RELIABILITY SCORE:
 +---------------------------------------------------+
 ```
 
-### Nithin (INWARDS_CLERK) — Verify Tab
+### Nithin (INWARDS_EXECUTIVE) — Verify Tab
 
 ```
 +---------------------------------------------------+
@@ -1053,7 +1053,7 @@ RELIABILITY SCORE:
 +---------------------------------------------------+
 ```
 
-### Ranjitha (OUTWARDS_CLERK) — Deliveries Tab
+### Ranjitha (OUTWARDS_EXECUTIVE) — Deliveries Tab
 
 ```
 +---------------------------------------------------+

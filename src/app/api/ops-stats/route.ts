@@ -189,13 +189,28 @@ export async function GET() {
     }
 
     // ── SOP expected check-offs today ───────────────────────────
-    // Daily SOPs assigned to active users = expected daily count
+    // Count = (daily SOPs with role assignments × users with that role) + individual assignments
     const dailySopAssignees = await prisma.sOPAssignee.count({
       where: {
         sop: { isActive: true, frequency: "SOP_DAILY" },
         user: { isActive: true },
       },
     });
+
+    // Also count role-based: each daily SOP's roles × active users with those roles
+    const dailyRoleSOPs = await prisma.sOPRoleAssignment.findMany({
+      where: { sop: { isActive: true, frequency: "SOP_DAILY" } },
+      select: { role: true },
+    });
+    const roleCountMap: Record<string, number> = {};
+    for (const ra of dailyRoleSOPs) {
+      roleCountMap[ra.role] = (roleCountMap[ra.role] || 0) + 1;
+    }
+    let roleBasedExpected = 0;
+    for (const u of activeUsers) {
+      roleBasedExpected += roleCountMap[u.role] || 0;
+    }
+    const totalExpected = Math.max(dailySopAssignees, roleBasedExpected);
 
     // ── Response ────────────────────────────────────────────────
 
@@ -211,7 +226,7 @@ export async function GET() {
       sop: {
         totalActiveSOPs: activeSOPs,
         todayCheckOffs,
-        todayExpected: dailySopAssignees,
+        todayExpected: totalExpected,
         weekViolations,
         mostViolatedSop,
       },

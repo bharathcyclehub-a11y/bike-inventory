@@ -26,14 +26,17 @@ interface FeaturePermission {
 type RolePermissions = Record<string, Record<string, FeaturePermission>>;
 
 const ROLE_LABELS: Record<string, string> = {
-  SUPERVISOR: "Supervisor",
+  SUPERVISOR: "Ops Manager",
   PURCHASE_MANAGER: "Purchase Mgr",
-  ACCOUNTS_MANAGER: "Accounts Mgr",
-  INWARDS_CLERK: "Inventory Lead",
-  OUTWARDS_CLERK: "Dispatch Lead",
+  ACCOUNTS_MANAGER: "Finance Head",
+  INWARDS_EXECUTIVE: "Inwards Executive",
+  OUTWARDS_EXECUTIVE: "Outwards Executive",
+  STORE_MANAGER: "Store Manager",
+  SALES_MANAGER: "Sales Manager",
+  SERVICE_MANAGER: "Service Manager",
 };
 
-const EDITABLE_ROLES = ["SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK"];
+const EDITABLE_ROLES = ["SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER"];
 
 export default function PermissionsPage() {
   const [permissions, setPermissions] = useState<RolePermissions>({});

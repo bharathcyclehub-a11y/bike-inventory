@@ -7,7 +7,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE"]);
     const { id } = await params;
     const body = await req.json();
     const reason = body.reason as string;

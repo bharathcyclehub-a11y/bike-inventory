@@ -64,7 +64,7 @@ function agingColor(dateStr: string) {
 export default function PreBookingsPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canCreate = ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK"].includes(role);
+  const canCreate = ["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE"].includes(role);
   const canMatch = ["ADMIN", "SUPERVISOR"].includes(role);
 
   const [preBookings, setPreBookings] = useState<PreBooking[]>([]);

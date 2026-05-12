@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
 // POST: Create a transfer request
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_EXECUTIVE"]);
     const body = await req.json();
     const data = transferSchema.parse(body);
 

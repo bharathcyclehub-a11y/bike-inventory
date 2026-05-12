@@ -50,8 +50,8 @@ export default function SecondHandDetailPage({ params }: { params: Promise<{ id:
   const { id } = use(params);
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const isAdmin = role === "ADMIN";
-  const canSell = ["ADMIN", "OUTWARDS_CLERK"].includes(role);
+  const isAdmin = role === "ADMIN" || role === "CEO";
+  const canSell = ["ADMIN", "CEO", "OUTWARDS_EXECUTIVE"].includes(role);
 
   const [cycle, setCycle] = useState<SecondHandDetail | null>(null);
   const [loading, setLoading] = useState(true);

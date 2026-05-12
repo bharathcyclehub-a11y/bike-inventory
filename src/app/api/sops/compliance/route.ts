@@ -19,11 +19,17 @@ export async function GET(req: NextRequest) {
     await requireAuth();
     const { searchParams } = new URL(req.url);
     const date = searchParams.get("date") || todayDateString();
+    const timeSlot = searchParams.get("timeSlot") || undefined;
+    const userId = searchParams.get("userId") || undefined;
 
     const checkOffs = await prisma.sOPCheckOff.findMany({
-      where: { date },
+      where: {
+        date,
+        ...(timeSlot && { timeSlot }),
+        ...(userId && { userId }),
+      },
       include: {
-        sop: { select: { id: true, title: true, category: true, frequency: true } },
+        sop: { select: { id: true, title: true, category: true, frequency: true, timeSlots: true } },
         user: { select: { id: true, name: true } },
       },
     });
@@ -42,23 +48,28 @@ export async function POST(req: NextRequest) {
     const data = sopCheckOffSchema.parse(body);
 
     const date = data.date || todayDateString();
+    const timeSlot = data.timeSlot || "MORNING";
+
+    // Admin/CEO can check off on behalf of another user
+    const isAdmin = user.role === "ADMIN" || user.role === "CEO";
+    const targetUserId = (isAdmin && body.targetUserId) ? body.targetUserId : user.id;
 
     // Toggle logic: if exists, remove; if not, create
     const existing = await prisma.sOPCheckOff.findFirst({
-      where: { sopId: data.sopId, userId: user.id, date },
+      where: { sopId: data.sopId, userId: targetUserId, date, timeSlot },
     });
 
     if (existing) {
       await prisma.sOPCheckOff.delete({ where: { id: existing.id } });
-
-      return successResponse({ checked: false, sopId: data.sopId, date });
+      return successResponse({ checked: false, sopId: data.sopId, date, timeSlot });
     }
 
     const checkOff = await prisma.sOPCheckOff.create({
       data: {
         sopId: data.sopId,
-        userId: user.id,
+        userId: targetUserId,
         date,
+        timeSlot,
         checkedAt: new Date(),
       },
     });
@@ -72,7 +83,7 @@ export async function POST(req: NextRequest) {
       where: { date: { lt: cutoffDate } },
     });
 
-    return successResponse({ checked: true, sopId: data.sopId, date, id: checkOff.id });
+    return successResponse({ checked: true, sopId: data.sopId, date, timeSlot, id: checkOff.id });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to toggle check-off", 400);

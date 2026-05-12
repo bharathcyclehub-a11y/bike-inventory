@@ -25,7 +25,7 @@ function abbreviate(text: string): string {
 export default function BinsPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const isAdmin = role === "ADMIN";
+  const isAdmin = role === "ADMIN" || role === "CEO";
 
   const [bins, setBins] = useState<Bin[]>([]);
   const [loading, setLoading] = useState(true);

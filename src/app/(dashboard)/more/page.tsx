@@ -60,12 +60,16 @@ interface MenuGroup {
 }
 
 const ROLE_LABELS: Record<Role, string> = {
+  CEO: "CEO",
   ADMIN: "Owner / Director",
-  SUPERVISOR: "Store Supervisor",
+  SUPERVISOR: "Ops Manager",
   PURCHASE_MANAGER: "Purchase Manager",
-  ACCOUNTS_MANAGER: "Accounts Manager",
-  INWARDS_CLERK: "Inventory & Receiving Lead",
-  OUTWARDS_CLERK: "Sales & Dispatch Lead",
+  ACCOUNTS_MANAGER: "Finance Head",
+  INWARDS_EXECUTIVE: "Inwards Executive",
+  OUTWARDS_EXECUTIVE: "Outwards Executive",
+  STORE_MANAGER: "Store Manager",
+  SALES_MANAGER: "Sales Manager",
+  SERVICE_MANAGER: "Service Manager",
   CUSTOM: "Custom Role",
 };
 
@@ -73,20 +77,21 @@ const MENU_GROUPS: MenuGroup[] = [
   {
     title: "Operations Hub",
     items: [
-      { label: "Tasks", icon: ListTodo, href: "/tasks", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"] },
-      { label: "SOPs", icon: BookOpenCheck, href: "/sops", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"] },
-      { label: "My Check-offs", icon: ClipboardCheck, href: "/sops/my-checkoffs", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"] },
-      { label: "Ops Stats", icon: Activity, href: "/ops-stats", roles: ["ADMIN", "SUPERVISOR"] },
+      { label: "Tasks", icon: ListTodo, href: "/tasks", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "CUSTOM"] },
+      { label: "SOPs", icon: BookOpenCheck, href: "/sops", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "CUSTOM"] },
+      { label: "My Check-offs", icon: ClipboardCheck, href: "/sops/my-checkoffs", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "CUSTOM"] },
+      { label: "SOP Dashboard", icon: Activity, href: "/sops/dashboard", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "CUSTOM"] },
+      { label: "Ops Stats", icon: Activity, href: "/ops-stats", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER"] },
     ],
   },
   {
     title: "Accounts",
     items: [
-      { label: "Accounts Dashboard", icon: IndianRupee, href: "/accounts", roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER", "CUSTOM"], featureKey: "bills" },
-      { label: "Bills & Payments", icon: FileText, href: "/bills", roles: ["ADMIN", "SUPERVISOR", "CUSTOM"], featureKey: "bills" },
-      { label: "Record Payment", icon: CreditCard, href: "/payments/new", roles: ["ADMIN", "SUPERVISOR", "CUSTOM"], featureKey: "bills" },
-      { label: "Receivables", icon: HandCoins, href: "/receivables", roles: ["ADMIN", "SUPERVISOR", "CUSTOM"], featureKey: "customers" },
-      { label: "Expenses", icon: Receipt, href: "/expenses", roles: ["ADMIN", "SUPERVISOR", "CUSTOM"], featureKey: "expenses" },
+      { label: "Accounts Dashboard", icon: IndianRupee, href: "/accounts", roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER", "STORE_MANAGER", "CUSTOM"], featureKey: "bills" },
+      { label: "Bills & Payments", icon: FileText, href: "/bills", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER", "CUSTOM"], featureKey: "bills" },
+      { label: "Record Payment", icon: CreditCard, href: "/payments/new", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER", "CUSTOM"], featureKey: "bills" },
+      { label: "Receivables", icon: HandCoins, href: "/receivables", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER", "CUSTOM"], featureKey: "customers" },
+      { label: "Expenses", icon: Receipt, href: "/expenses", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER", "CUSTOM"], featureKey: "expenses" },
     ],
   },
   {
@@ -94,7 +99,7 @@ const MENU_GROUPS: MenuGroup[] = [
     items: [
       { label: "Vendors", icon: Building2, href: "/vendors", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "vendors" },
       { label: "Purchase Orders", icon: ShoppingCart, href: "/purchase-orders", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "purchase_orders" },
-      { label: "Vendor Issues", icon: AlertCircle, href: "/vendor-issues", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "CUSTOM"], featureKey: "vendor_issues" },
+      { label: "Vendor Issues", icon: AlertCircle, href: "/vendor-issues", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SERVICE_MANAGER", "CUSTOM"], featureKey: "vendor_issues" },
       { label: "Inbound Tracking", icon: Truck, href: "/inbound", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "inbound" },
     ],
   },
@@ -102,21 +107,21 @@ const MENU_GROUPS: MenuGroup[] = [
     title: "Operations",
     items: [
       { label: "Transfers", icon: ArrowRightLeft, href: "/transfers", roles: ["ADMIN", "SUPERVISOR", "CUSTOM"], featureKey: "transfers" },
-      { label: "Stock Audit", icon: ClipboardCheck, href: "/stock-audit", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"], featureKey: "stock_audit" },
-      { label: "Barcode Scanner", icon: QrCode, href: "/scanner", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_CLERK", "OUTWARDS_CLERK", "CUSTOM"], featureKey: "barcode" },
+      { label: "Stock Audit", icon: ClipboardCheck, href: "/stock-audit", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "CUSTOM"], featureKey: "stock_audit" },
+      { label: "Barcode Scanner", icon: QrCode, href: "/scanner", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "CUSTOM"], featureKey: "barcode" },
       { label: "Label Designer", icon: Tag, href: "/more/label-designer", roles: ["ADMIN"], featureKey: "barcode" },
       { label: "Reorder Dashboard", icon: RefreshCw, href: "/reorder", roles: ["ADMIN", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "reorder" },
-      { label: "Deliveries", icon: Truck, href: "/deliveries", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "CUSTOM"], featureKey: "deliveries" },
-      { label: "Second-Hand Cycles", icon: Bike, href: "/second-hand", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "ACCOUNTS_MANAGER", "CUSTOM"], featureKey: "second_hand" },
+      { label: "Outward", icon: Truck, href: "/deliveries", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "CUSTOM"], featureKey: "deliveries" },
+      { label: "Second-Hand Cycles", icon: Bike, href: "/second-hand", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "ACCOUNTS_MANAGER", "SALES_MANAGER", "CUSTOM"], featureKey: "second_hand" },
     ],
   },
   {
     title: "Admin",
     items: [
-      { label: "Activity Log", icon: ClipboardList, href: "/activity", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "INWARDS_CLERK", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "CUSTOM"] },
-      { label: "Team Management", icon: Users, href: "/team", roles: ["ADMIN", "SUPERVISOR", "CUSTOM"], featureKey: "team" },
-      { label: "Reports", icon: BarChart3, href: "/reports", roles: ["ADMIN", "SUPERVISOR", "CUSTOM"], featureKey: "reports" },
-      { label: "Service Revenue", icon: Wrench, href: "/service-revenue", roles: ["ADMIN"] },
+      { label: "Activity Log", icon: ClipboardList, href: "/activity", roles: ["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "CUSTOM"] },
+      { label: "Team Management", icon: Users, href: "/team", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER", "CUSTOM"], featureKey: "team" },
+      { label: "Reports", icon: BarChart3, href: "/reports", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER", "SALES_MANAGER", "CUSTOM"], featureKey: "reports" },
+      { label: "Service Revenue", icon: Wrench, href: "/service-revenue", roles: ["ADMIN", "SERVICE_MANAGER"] },
       { label: "AI Insights", icon: Brain, href: "/ai", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "reorder" },
       { label: "Bins & Locations", icon: Warehouse, href: "/more/bins", roles: ["ADMIN"] },
       { label: "Brand Management", icon: Settings, href: "/more/brands", roles: ["ADMIN"] },
@@ -127,6 +132,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { label: "Daily Checklists", icon: CheckSquare, href: "/more/checklists", roles: ["ADMIN"] },
       { label: "Alert Config", icon: Bell, href: "/more/alerts", roles: ["ADMIN"] },
       { label: "Zoho Books Sync", icon: Cloud, href: "/more/zoho", roles: ["ADMIN"], featureKey: "zoho" },
+      { label: "App Logic", icon: Activity, href: "/more/app-logic", roles: ["ADMIN"] },
     ],
   },
 ];
@@ -134,7 +140,7 @@ const MENU_GROUPS: MenuGroup[] = [
 export default function MorePage() {
   const { data: session } = useSession();
   const user = session?.user as { name?: string; role?: string; userId?: string } | undefined;
-  const role = (user?.role || "INWARDS_CLERK") as Role;
+  const role = (user?.role || "INWARDS_EXECUTIVE") as Role;
   const { canView } = usePermissions(role);
   const [syncClearing, setSyncClearing] = useState(false);
   const [syncResult, setSyncResult] = useState("");
@@ -186,9 +192,10 @@ export default function MorePage() {
       <div className="space-y-2">
         {MENU_GROUPS.map((group) => {
           const visibleItems = group.items.filter((item) => {
-            if (!item.roles.includes(role)) return false;
-            // For non-admin roles, also check saved permissions
-            if (role !== "ADMIN" && item.featureKey && !canView(item.featureKey)) return false;
+            // CEO inherits all ADMIN menu access
+            const effectiveRole = role === "CEO" ? "ADMIN" : role;
+            if (!item.roles.includes(effectiveRole)) return false;
+            if (effectiveRole !== "ADMIN" && item.featureKey && !canView(item.featureKey)) return false;
             return true;
           });
           if (visibleItems.length === 0) return null;
@@ -241,7 +248,7 @@ export default function MorePage() {
       </div>
 
       {/* Admin: Clear Stuck Syncs */}
-      {role === "ADMIN" && (
+      {(role === "ADMIN" || role === "CEO") && (
         <div className="mt-4 px-4 py-3 bg-slate-50 rounded-lg">
           <div className="flex items-center justify-between">
             <div>

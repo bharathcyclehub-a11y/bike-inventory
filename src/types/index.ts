@@ -1,10 +1,14 @@
 export type Role =
+  | "CEO"
   | "ADMIN"
   | "SUPERVISOR"
   | "PURCHASE_MANAGER"
   | "ACCOUNTS_MANAGER"
-  | "INWARDS_CLERK"
-  | "OUTWARDS_CLERK"
+  | "INWARDS_EXECUTIVE"
+  | "OUTWARDS_EXECUTIVE"
+  | "STORE_MANAGER"
+  | "SALES_MANAGER"
+  | "SERVICE_MANAGER"
   | "CUSTOM";
 
 export type TransactionType = "INWARD" | "OUTWARD" | "TRANSFER" | "ADJUSTMENT";

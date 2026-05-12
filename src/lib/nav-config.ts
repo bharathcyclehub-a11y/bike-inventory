@@ -27,11 +27,19 @@ export interface NavItem {
 // Primary tabs shown in bottom nav (mobile) and sidebar main section (desktop)
 export function getPrimaryTabs(role: Role): NavItem[] {
   switch (role) {
+    case "CEO":
+      return [
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/sops", label: "SOPs", icon: ClipboardList, key: "sops" },
+        { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
+        { href: "/team", label: "Team", icon: Users, key: "team" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
     case "ADMIN":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
-        { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
+        { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
@@ -59,7 +67,7 @@ export function getPrimaryTabs(role: Role): NavItem[] {
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
-    case "INWARDS_CLERK":
+    case "INWARDS_EXECUTIVE":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
@@ -67,12 +75,36 @@ export function getPrimaryTabs(role: Role): NavItem[] {
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
-    case "OUTWARDS_CLERK":
+    case "OUTWARDS_EXECUTIVE":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
-        { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
+        { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
+    case "STORE_MANAGER":
+      return [
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+        { href: "/sops", label: "SOPs", icon: ClipboardList, key: "sops" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
+    case "SALES_MANAGER":
+      return [
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+        { href: "/sops", label: "SOPs", icon: ClipboardList, key: "sops" },
+        { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
+      ];
+    case "SERVICE_MANAGER":
+      return [
+        { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+        { href: "/sops", label: "SOPs", icon: ClipboardList, key: "sops" },
+        { href: "/vendor-issues", label: "Issues", icon: AlertCircle, key: "issues" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "CUSTOM":
@@ -89,6 +121,14 @@ export function getPrimaryTabs(role: Role): NavItem[] {
 // Extra sidebar items visible only on desktop (items not already in primary tabs)
 export function getDesktopExtraTabs(role: Role): NavItem[] {
   switch (role) {
+    case "CEO":
+      return [
+        { href: "/sops/dashboard", label: "SOP Dashboard", icon: ClipboardList, key: "sop-dashboard" },
+        { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
+        { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+        { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+      ];
     case "ADMIN":
       return [
         { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
@@ -101,7 +141,7 @@ export function getDesktopExtraTabs(role: Role): NavItem[] {
       ];
     case "SUPERVISOR":
       return [
-        { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
+        { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
         { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
         { href: "/barcode", label: "Barcode Labels", icon: QrCode, key: "barcode" },
         { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
@@ -118,15 +158,34 @@ export function getDesktopExtraTabs(role: Role): NavItem[] {
         { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
         { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
       ];
-    case "INWARDS_CLERK":
+    case "INWARDS_EXECUTIVE":
       return [
-        { href: "/deliveries", label: "Deliveries", icon: Truck, key: "deliveries" },
+        { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
         { href: "/tasks", label: "Tasks", icon: ClipboardList, key: "tasks" },
         { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
       ];
-    case "OUTWARDS_CLERK":
+    case "OUTWARDS_EXECUTIVE":
       return [
         { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+      ];
+    case "STORE_MANAGER":
+      return [
+        { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
+        { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+        { href: "/team", label: "Team", icon: Users, key: "team" },
+        { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
+      ];
+    case "SALES_MANAGER":
+      return [
+        { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
+        { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
+        { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
+      ];
+    case "SERVICE_MANAGER":
+      return [
+        { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
         { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
       ];
     default:

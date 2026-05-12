@@ -24,7 +24,7 @@ interface Cycle {
 export default function SecondHandVerifyPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canVerify = role === "ADMIN" || role === "SUPERVISOR";
+  const canVerify = role === "CEO" || role === "ADMIN" || role === "SUPERVISOR";
 
   const [cycles, setCycles] = useState<Cycle[]>([]);
   const [loading, setLoading] = useState(true);

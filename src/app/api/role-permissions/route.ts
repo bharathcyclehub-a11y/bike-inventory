@@ -41,6 +41,7 @@ export type RolePermissions = Record<string, Record<string, FeaturePermission>>;
 
 // Default permissions per role
 const DEFAULT_PERMISSIONS: RolePermissions = {
+  CEO: Object.fromEntries(APP_FEATURES.map(f => [f.key, { view: true, create: true, edit: true, delete: true, approve: true, fetch: true }])),
   ADMIN: Object.fromEntries(APP_FEATURES.map(f => [f.key, { view: true, create: true, edit: true, delete: true, approve: true, fetch: true }])),
   SUPERVISOR: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
     view: true,
@@ -66,7 +67,7 @@ const DEFAULT_PERMISSIONS: RolePermissions = {
     approve: ["expenses", "bills"].includes(f.key),
     fetch: ["bills"].includes(f.key),
   }])),
-  INWARDS_CLERK: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
+  INWARDS_EXECUTIVE: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
     view: ["dashboard", "stock", "inbound", "transfers", "stock_audit", "barcode"].includes(f.key),
     create: ["transfers", "stock_audit"].includes(f.key),
     edit: ["inbound", "stock_audit", "transfers"].includes(f.key),
@@ -74,13 +75,37 @@ const DEFAULT_PERMISSIONS: RolePermissions = {
     approve: ["inbound"].includes(f.key),
     fetch: ["stock"].includes(f.key),
   }])),
-  OUTWARDS_CLERK: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
+  OUTWARDS_EXECUTIVE: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
     view: ["dashboard", "stock", "inbound", "deliveries", "barcode"].includes(f.key),
     create: false,
     edit: ["deliveries"].includes(f.key),
     delete: false,
     approve: ["deliveries"].includes(f.key),
     fetch: ["deliveries"].includes(f.key),
+  }])),
+  STORE_MANAGER: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
+    view: true,
+    create: ["deliveries", "transfers", "stock_audit", "vendor_issues", "expenses", "customers"].includes(f.key),
+    edit: ["stock", "deliveries", "transfers", "inbound", "stock_audit", "vendors", "bills", "vendor_issues"].includes(f.key),
+    delete: false,
+    approve: ["deliveries", "stock_audit", "transfers", "inbound"].includes(f.key),
+    fetch: ["deliveries", "inbound", "bills", "vendors", "stock"].includes(f.key),
+  }])),
+  SALES_MANAGER: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
+    view: ["dashboard", "stock", "deliveries", "barcode", "reports", "vendor_issues", "customers", "second_hand"].includes(f.key),
+    create: ["deliveries", "customers", "vendor_issues"].includes(f.key),
+    edit: ["deliveries", "customers"].includes(f.key),
+    delete: false,
+    approve: ["deliveries"].includes(f.key),
+    fetch: ["deliveries", "stock"].includes(f.key),
+  }])),
+  SERVICE_MANAGER: Object.fromEntries(APP_FEATURES.map(f => [f.key, {
+    view: ["dashboard", "stock", "vendor_issues", "barcode", "reports"].includes(f.key),
+    create: ["vendor_issues"].includes(f.key),
+    edit: ["vendor_issues"].includes(f.key),
+    delete: false,
+    approve: false,
+    fetch: ["stock"].includes(f.key),
   }])),
 };
 

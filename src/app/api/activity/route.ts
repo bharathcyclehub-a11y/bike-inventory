@@ -8,11 +8,11 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 // GET: Fetch activity log for a user (or all users for ADMIN)
 export async function GET(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_CLERK", "INWARDS_CLERK", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "CUSTOM"]);
+    const user = await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "CUSTOM"]);
     const { searchParams } = new URL(req.url);
     const targetUserId = searchParams.get("userId");
     const dateStr = searchParams.get("date"); // YYYY-MM-DD
-    const isAdmin = user.role === "ADMIN" || user.role === "SUPERVISOR";
+    const isAdmin = user.role === "ADMIN" || user.role === "CEO" || user.role === "SUPERVISOR";
 
     // Non-admins can only see their own activity
     const userId = isAdmin && targetUserId ? targetUserId : user.id;

@@ -128,7 +128,7 @@ export default function TasksPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role ?? "";
   const userId = (session?.user as { userId?: string })?.userId ?? "";
-  const isAdmin = role === "ADMIN" || role === "SUPERVISOR";
+  const isAdmin = role === "CEO" || role === "ADMIN" || role === "SUPERVISOR";
 
   /* ── State ─────────────────────────────────────────── */
 

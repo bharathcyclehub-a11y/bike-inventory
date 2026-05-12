@@ -14,7 +14,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
  */
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER", "OUTWARDS_CLERK"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE"]);
     const { invoiceIds } = (await req.json()) as { invoiceIds: string[] };
 
     if (!invoiceIds || invoiceIds.length === 0) {

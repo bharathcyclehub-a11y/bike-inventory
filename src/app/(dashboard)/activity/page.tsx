@@ -56,7 +56,7 @@ function formatDate(d: Date) {
 export default function ActivityPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const isAdmin = role === "ADMIN" || role === "SUPERVISOR";
+  const isAdmin = role === "CEO" || role === "ADMIN" || role === "SUPERVISOR";
 
   const [date, setDate] = useState(new Date());
   const [activities, setActivities] = useState<Activity[]>([]);
