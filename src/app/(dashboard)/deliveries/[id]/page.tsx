@@ -11,6 +11,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { ActionConfirmation } from "@/components/ui/action-confirmation";
 
 interface DeliveryData {
   id: string;
@@ -139,6 +140,19 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
   // Page tab: actions (default) vs details
   const [activeTab, setActiveTab] = useState<"actions" | "details">("actions");
 
+  // Confirmation modal state
+  const [confirmation, setConfirmation] = useState<{
+    type: "success" | "warning" | "error" | "info";
+    title: string;
+    referenceId: string;
+    items?: Array<{ label: string; value: string }>;
+    details?: string;
+  } | null>(null);
+
+  // Flag modal state
+  const [flagModalOpen, setFlagModalOpen] = useState(false);
+  const [flagReasonInput, setFlagReasonInput] = useState("");
+
   const fetchData = () => {
     fetch(`/api/deliveries/${id}`)
       .then((r) => r.json())
@@ -180,6 +194,33 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         body: JSON.stringify({ status, ...extra }),
       });
       fetchData();
+      if (data) {
+        if (status === "OUT_FOR_DELIVERY") {
+          setConfirmation({
+            type: "success",
+            title: "Dispatched!",
+            referenceId: data.invoiceNo,
+            items: [
+              { label: "Customer", value: data.customerName },
+              { label: "Area", value: data.customerArea || "N/A" },
+              { label: "Courier", value: extra?.courierName as string || data.courierName || "Direct" },
+            ],
+            details: "Send WhatsApp to customer for tracking",
+          });
+        } else {
+          const statusLabel = status === "WALK_OUT" ? "Walk-out" : status === "IN_TRANSIT" ? "In Transit" : status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, " ");
+          setConfirmation({
+            type: "success",
+            title: "Status Updated",
+            referenceId: data.invoiceNo,
+            items: [
+              { label: "Customer", value: data.customerName },
+              { label: "New Status", value: statusLabel },
+              { label: "Items", value: `${data.lineItems?.length || 0} items` },
+            ],
+          });
+        }
+      }
     } catch (e) { setActionError(e instanceof Error ? e.message : "Action failed"); }
     finally { setActionLoading(false); }
   };
@@ -216,9 +257,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
     finally { setActionLoading(false); }
   };
 
-  const handleFlag = async () => {
-    const reason = prompt("Flag reason:");
-    if (!reason) return;
+  const handleFlag = async (reason: string) => {
     const res = await fetch(`/api/deliveries/${id}/flag`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -229,6 +268,8 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       const phone = result.data.alertPhones[0].replace(/\D/g, "");
       window.open(`https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(result.data.whatsappMessage)}`, "_blank");
     }
+    setFlagModalOpen(false);
+    setFlagReasonInput("");
     fetchData();
   };
 
@@ -403,7 +444,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           {activeSteps.map((step, i) => (
             <div key={step} className="flex-1">
               <div className={`h-1.5 rounded-full ${i <= stepIdx ? (isOuts ? "bg-amber-500" : "bg-blue-500") : "bg-slate-200"}`} />
-              <p className={`text-[8px] mt-0.5 text-center ${i <= stepIdx ? (isOuts ? "text-amber-600 font-medium" : "text-blue-600 font-medium") : "text-slate-400"}`}>
+              <p className={`text-[11px] mt-0.5 text-center ${i <= stepIdx ? (isOuts ? "text-amber-600 font-medium" : "text-blue-600 font-medium") : "text-slate-400"}`}>
                 {step === "OUT_FOR_DELIVERY" ? "Out" : step === "IN_TRANSIT" ? "Transit" : step.charAt(0) + step.slice(1).toLowerCase().replace(/_/g, " ")}
               </p>
             </div>
@@ -417,7 +458,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           {BANGALORE_STEPS.map((step, i) => (
             <div key={step} className="flex-1">
               <div className={`h-1.5 rounded-full ${i === 0 ? "bg-blue-500" : "bg-slate-200"}`} />
-              <p className={`text-[8px] mt-0.5 text-center ${i === 0 ? "text-blue-600 font-medium" : "text-slate-400"}`}>
+              <p className={`text-[11px] mt-0.5 text-center ${i === 0 ? "text-blue-600 font-medium" : "text-slate-400"}`}>
                 {step.charAt(0) + step.slice(1).toLowerCase()}
               </p>
             </div>
@@ -438,7 +479,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
       {["PENDING"].includes(data.status) && data.customerPhone && !contactSaved && (
         <Card className="mb-3 border-blue-200 bg-blue-50">
           <CardContent className="p-3">
-            <p className="text-[10px] text-blue-700 font-medium mb-1.5">Save the contact before proceeding</p>
+            <p className="text-xs text-blue-700 font-medium mb-1.5">Save the contact before proceeding</p>
             <button
               onClick={async () => {
                 const phone = data.customerPhone!.replace(/\D/g, "").slice(-10);
@@ -488,7 +529,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             )}
           </div>
           {data.alternatePhone && (
-            <p className="text-[10px] text-slate-500">Alt: {data.alternatePhone}</p>
+            <p className="text-xs text-slate-500">Alt: {data.alternatePhone}</p>
           )}
           {data.customerAddress && (
             <div className="flex items-start gap-1.5">
@@ -497,7 +538,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             </div>
           )}
           {(data.customerArea || data.customerPincode) && (
-            <p className="text-[10px] text-slate-500">
+            <p className="text-xs text-slate-500">
               {data.customerArea ? `Area: ${data.customerArea}` : ""}
               {data.customerPincode ? ` | Pincode: ${data.customerPincode}` : ""}
             </p>
@@ -513,7 +554,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               {isOuts ? "Outstation Delivery Details" : "Delivery Details"}
             </p>
             <div>
-              <label className="text-[10px] text-slate-500">{isOuts ? "Delivery Address *" : "Pincode *"}</label>
+              <label className="text-xs text-slate-500">{isOuts ? "Delivery Address *" : "Pincode *"}</label>
               {isOuts ? (
                 <textarea
                   value={editAddress}
@@ -535,7 +576,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             </div>
             {isOuts && (
               <div>
-                <label className="text-[10px] text-slate-500">Alternate Phone</label>
+                <label className="text-xs text-slate-500">Alternate Phone</label>
                 <Input
                   value={editAltPhone}
                   onChange={(e) => setEditAltPhone(e.target.value)}
@@ -581,12 +622,12 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               <IndianRupee className="h-4 w-4 text-red-600 shrink-0" />
               <div className="flex-1">
                 <p className="text-xs font-semibold text-red-900">Payment Pending</p>
-                <p className="text-[10px] text-red-700">
+                <p className="text-xs text-red-700">
                   Balance: {formatINR(data.paymentStatus.balance)} of {formatINR(data.paymentStatus.totalAmount)}
                   {data.paymentStatus.paidAmount > 0 && ` (Paid: ${formatINR(data.paymentStatus.paidAmount)})`}
                 </p>
               </div>
-              <Link href="/receivables" className="text-[10px] text-red-600 underline shrink-0">View</Link>
+              <Link href="/receivables" className="text-xs text-red-600 underline shrink-0">View</Link>
             </div>
           </CardContent>
         </Card>
@@ -613,15 +654,15 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           <CardContent className="p-3 space-y-2">
             <p className="text-xs font-semibold text-slate-700">Update Courier Info</p>
             <div>
-              <label className="text-[10px] text-slate-500">Courier Name</label>
+              <label className="text-xs text-slate-500">Courier Name</label>
               <Input value={courierName} onChange={(e) => setCourierName(e.target.value)} placeholder="e.g. DTDC, BlueDart" className="text-xs" />
             </div>
             <div>
-              <label className="text-[10px] text-slate-500">Tracking Number</label>
+              <label className="text-xs text-slate-500">Tracking Number</label>
               <Input value={courierTrackingNo} onChange={(e) => setCourierTrackingNo(e.target.value)} placeholder="Tracking ID" className="text-xs" />
             </div>
             <div>
-              <label className="text-[10px] text-slate-500">Courier Cost</label>
+              <label className="text-xs text-slate-500">Courier Cost</label>
               <Input type="number" value={courierCost} onChange={(e) => setCourierCost(e.target.value)} placeholder="0" className="text-xs" />
             </div>
             <button onClick={async () => {
@@ -645,7 +686,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                 <div key={i} className="flex items-center justify-between">
                   <div>
                     <p className="text-xs text-slate-900">{item.name}</p>
-                    <p className="text-[10px] text-slate-400">{item.sku} | Qty: {item.quantity}</p>
+                    <p className="text-xs text-slate-400">{item.sku} | Qty: {item.quantity}</p>
                   </div>
                   {item.rate > 0 && <p className="text-xs font-medium text-slate-700">{formatINR(item.rate * item.quantity)}</p>}
                 </div>
@@ -665,7 +706,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                 <p className="text-xs text-slate-700">{data.freeAccessories}</p>
                 <button
                   onClick={() => setEditingAccessories(true)}
-                  className="text-[10px] text-blue-600 font-medium"
+                  className="text-xs text-blue-600 font-medium"
                 >
                   Edit
                 </button>
@@ -719,7 +760,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               <div>
                 <p className="text-sm font-medium text-red-900">Flagged</p>
                 <p className="text-xs text-red-700">{data.flagReason}</p>
-                {data.flaggedAt && <p className="text-[10px] text-red-500 mt-0.5">{new Date(data.flaggedAt).toLocaleString("en-IN")}</p>}
+                {data.flaggedAt && <p className="text-xs text-red-500 mt-0.5">{new Date(data.flaggedAt).toLocaleString("en-IN")}</p>}
               </div>
             </div>
           </CardContent>
@@ -735,7 +776,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               <div>
                 <p className="text-sm font-medium text-purple-900">Prebooked</p>
                 {data.expectedReadyDate && <p className="text-xs text-purple-700">Expected ready: {new Date(data.expectedReadyDate).toLocaleDateString("en-IN")}</p>}
-                {data.prebookNotes && <p className="text-[10px] text-purple-600 mt-0.5">{data.prebookNotes}</p>}
+                {data.prebookNotes && <p className="text-xs text-purple-600 mt-0.5">{data.prebookNotes}</p>}
               </div>
             </div>
           </CardContent>
@@ -770,13 +811,13 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
             {/* Auto-populated: Invoice Number */}
             <div>
-              <label className="text-[10px] text-slate-500">Invoice Number</label>
+              <label className="text-xs text-slate-500">Invoice Number</label>
               <div className="text-xs font-medium text-slate-900 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">{data.invoiceNo}</div>
             </div>
 
             {/* Auto-populated: Product Name */}
             <div>
-              <label className="text-[10px] text-slate-500">Product Name</label>
+              <label className="text-xs text-slate-500">Product Name</label>
               <div className="text-xs font-medium text-slate-900 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
                 {data.lineItems?.map((i) => i.name).join(", ") || "—"}
               </div>
@@ -784,7 +825,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
             {/* Auto-populated: Sales Person */}
             <div>
-              <label className="text-[10px] text-slate-500">Sales Person</label>
+              <label className="text-xs text-slate-500">Sales Person</label>
               <div className="text-xs font-medium text-slate-900 bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
                 {data.salesPerson || "—"}
               </div>
@@ -792,7 +833,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
             {/* Alternate Phone */}
             <div>
-              <label className="text-[10px] text-slate-500">Alternate Phone</label>
+              <label className="text-xs text-slate-500">Alternate Phone</label>
               <Input
                 value={editAltPhone}
                 onChange={(e) => setEditAltPhone(e.target.value)}
@@ -806,7 +847,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             {!isOutstation && (
               <>
                 <div>
-                  <label className="text-[10px] text-slate-500">Pincode *</label>
+                  <label className="text-xs text-slate-500">Pincode *</label>
                   <Input
                     value={editPincode}
                     onChange={(e) => setEditPincode(e.target.value)}
@@ -817,7 +858,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-500">Free Accessories</label>
+                  <label className="text-xs text-slate-500">Free Accessories</label>
                   <Input
                     value={freeAccessories}
                     onChange={(e) => setFreeAccessories(e.target.value)}
@@ -841,7 +882,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             {isOutstation && (
               <>
                 <div>
-                  <label className="text-[10px] text-slate-500">Delivery Address *</label>
+                  <label className="text-xs text-slate-500">Delivery Address *</label>
                   <textarea
                     value={editAddress}
                     onChange={(e) => setEditAddress(e.target.value)}
@@ -851,7 +892,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] text-slate-500">Free Accessories</label>
+                  <label className="text-xs text-slate-500">Free Accessories</label>
                   <Input
                     value={freeAccessories}
                     onChange={(e) => setFreeAccessories(e.target.value)}
@@ -864,7 +905,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
             {/* Estimated Delivery Date */}
             <div>
-              <label className="text-[10px] text-slate-500">Estimated Delivery *</label>
+              <label className="text-xs text-slate-500">Estimated Delivery *</label>
               <div className="grid grid-cols-3 gap-1.5 mt-1">
                 {[
                   { label: "Today", days: 0 },
@@ -889,7 +930,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                 })}
               </div>
               {schedDate && (
-                <p className={`text-[10px] mt-1 ${isOutstation ? "text-amber-600" : "text-blue-600"}`}>
+                <p className={`text-xs mt-1 ${isOutstation ? "text-amber-600" : "text-blue-600"}`}>
                   Selected: {new Date(schedDate + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
                 </p>
               )}
@@ -897,7 +938,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
             {/* Delivery Notes */}
             <div>
-              <label className="text-[10px] text-slate-500">Delivery Notes</label>
+              <label className="text-xs text-slate-500">Delivery Notes</label>
               <Input value={delNotes} onChange={(e) => setDelNotes(e.target.value)} placeholder="Landmark, instructions..." className="text-xs" />
             </div>
 
@@ -928,6 +969,16 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                       body: JSON.stringify(payload),
                     });
                     setShowSchedule(false);
+                    setConfirmation({
+                      type: "success",
+                      title: "Delivery Scheduled",
+                      referenceId: data?.invoiceNo || "",
+                      items: [
+                        { label: "Customer", value: data?.customerName || "" },
+                        { label: "Delivery Date", value: new Date(schedDate).toLocaleDateString("en-IN") },
+                        { label: "Type", value: isOutstation ? "Outstation" : "Bangalore" },
+                      ],
+                    });
                     // Auto-trigger WhatsApp scheduled message
                     if (data?.customerPhone) {
                       const date = new Date(schedDate).toLocaleDateString("en-IN");
@@ -981,7 +1032,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                       const val = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
                       return (
                         <button key={opt.label} type="button" onClick={() => setNewDate(val)}
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-medium transition-colors ${
+                          className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
                             newDate === val ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
                           }`}>
                           {opt.label}
@@ -990,7 +1041,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                     })}
                   </div>
                   {newDate && (
-                    <p className="text-[10px] text-blue-600">
+                    <p className="text-xs text-blue-600">
                       {new Date(newDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}
                     </p>
                   )}
@@ -1015,11 +1066,11 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                     Delivery: <span className="font-medium">{new Date(data.scheduledDate).toLocaleDateString("en-IN")}</span>
                     {data.deliveryNotes && ` — ${data.deliveryNotes}`}
                   </p>
-                  {canEditDate && <span className="text-[10px] text-blue-500 ml-auto">tap to change</span>}
+                  {canEditDate && <span className="text-xs text-blue-500 ml-auto">tap to change</span>}
                 </div>
               )}
-              {data.dispatchedAt && <p className="text-[10px] text-slate-500 ml-6 mt-0.5">Dispatched: {new Date(data.dispatchedAt).toLocaleString("en-IN")}</p>}
-              {data.deliveredAt && <p className="text-[10px] text-green-600 ml-6 mt-0.5">Delivered: {new Date(data.deliveredAt).toLocaleString("en-IN")}</p>}
+              {data.dispatchedAt && <p className="text-xs text-slate-500 ml-6 mt-0.5">Dispatched: {new Date(data.dispatchedAt).toLocaleString("en-IN")}</p>}
+              {data.deliveredAt && <p className="text-xs text-green-600 ml-6 mt-0.5">Delivered: {new Date(data.deliveredAt).toLocaleString("en-IN")}</p>}
             </CardContent>
           </Card>
         );
@@ -1093,7 +1144,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         <Card className="mb-3 border-green-300 bg-green-50 ring-2 ring-green-300">
           <CardContent className="p-3 space-y-2">
             <p className="text-xs font-semibold text-green-900">Dispatched! Send WhatsApp to customer?</p>
-            <p className="text-[10px] text-green-700">
+            <p className="text-xs text-green-700">
               {data.vehicleNo && `Vehicle: ${data.vehicleNo}`}
               {data.vehicleNo && data.courierTrackingNo && " | "}
               {data.courierTrackingNo && `Tracking: ${data.courierTrackingNo}`}
@@ -1127,13 +1178,13 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             {data.paymentStatus?.hasPending && (
               <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg p-2">
                 <AlertTriangle className="h-4 w-4 text-red-600 shrink-0" />
-                <p className="text-[10px] text-red-700 font-medium">Payment pending: {formatINR(data.paymentStatus.balance)} balance</p>
+                <p className="text-xs text-red-700 font-medium">Payment pending: {formatINR(data.paymentStatus.balance)} balance</p>
               </div>
             )}
 
             {/* Line items — each must be checked */}
             <div className="space-y-1.5">
-              <p className="text-[10px] text-green-800 font-semibold uppercase">Items</p>
+              <p className="text-xs text-green-800 font-semibold uppercase">Items</p>
               {(data.lineItems || []).map((item, i) => {
                 const key = `item-${i}`;
                 return (
@@ -1150,14 +1201,14 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                     />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-slate-900 truncate">{item.name}</p>
-                      <p className="text-[10px] text-slate-500">{item.sku} | Qty: {item.quantity}</p>
+                      <p className="text-xs text-slate-500">{item.sku} | Qty: {item.quantity}</p>
                     </div>
                     <CheckCircle2 className={`h-4 w-4 shrink-0 ${checkedItems.has(key) ? "text-green-600" : "text-slate-200"}`} />
                   </label>
                 );
               })}
               {(!data.lineItems || data.lineItems.length === 0) && (
-                <p className="text-[10px] text-slate-400 italic">No line items on this invoice</p>
+                <p className="text-xs text-slate-400 italic">No line items on this invoice</p>
               )}
             </div>
 
@@ -1171,7 +1222,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               />
               <div className="flex-1">
                 <p className="text-xs font-medium text-slate-900">Free accessories handed over</p>
-                <p className="text-[10px] text-slate-500">
+                <p className="text-xs text-slate-500">
                   {data.freeAccessories || freeAccessories || "None specified"}
                 </p>
               </div>
@@ -1188,7 +1239,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               />
               <div className="flex-1">
                 <p className="text-xs font-medium text-slate-900">Confirmed with sales person</p>
-                <p className="text-[10px] text-slate-500">
+                <p className="text-xs text-slate-500">
                   {data.salesPerson || "—"}
                 </p>
               </div>
@@ -1204,12 +1255,46 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
                 <div className="flex gap-2">
                   <button
                     onClick={async () => {
-                      if (showHandover === "WALK_OUT") {
-                        await updateStatus("WALK_OUT");
-                      } else {
-                        await updateStatus("DELIVERED");
-                        if (data.customerPhone) sendDeliveredWhatsApp();
-                      }
+                      setActionLoading(true);
+                      try {
+                        if (showHandover === "WALK_OUT") {
+                          await fetch(`/api/deliveries/${id}`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ status: "WALK_OUT" }),
+                          });
+                          setConfirmation({
+                            type: "success",
+                            title: "Walk-out Complete",
+                            referenceId: data.invoiceNo,
+                            items: [
+                              { label: "Customer", value: data.customerName },
+                              { label: "Status", value: "Walk-out" },
+                              { label: "Items", value: `${data.lineItems?.length || 0} items` },
+                            ],
+                            details: "Customer took the cycle. Stock deducted.",
+                          });
+                        } else {
+                          await fetch(`/api/deliveries/${id}`, {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ status: "DELIVERED" }),
+                          });
+                          if (data.customerPhone) sendDeliveredWhatsApp();
+                          setConfirmation({
+                            type: "success",
+                            title: "Delivered!",
+                            referenceId: data.invoiceNo,
+                            items: [
+                              { label: "Customer", value: data.customerName },
+                              { label: "Status", value: "Delivered" },
+                              { label: "Items", value: `${data.lineItems?.length || 0} items` },
+                            ],
+                          });
+                        }
+                        fetchData();
+                      } catch (e) { setActionError(e instanceof Error ? e.message : "Action failed"); }
+                      finally { setActionLoading(false); }
                       setShowHandover(null);
                       setCheckedItems(new Set());
                       setAccessoriesConfirmed(false);
@@ -1288,21 +1373,21 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             <CardContent className="p-3 space-y-2">
               <p className="text-xs font-semibold text-slate-700">Dispatch Details (Outstation)</p>
               <div>
-                <label className="text-[10px] text-slate-500">Courier / Delivery Person *</label>
+                <label className="text-xs text-slate-500">Courier / Delivery Person *</label>
                 <Input value={courierName} onChange={(e) => setCourierName(e.target.value)} placeholder="e.g. DTDC, BlueDart" className="text-xs" />
               </div>
               <div>
-                <label className="text-[10px] text-slate-500">Tracking Number</label>
+                <label className="text-xs text-slate-500">Tracking Number</label>
                 <Input value={courierTrackingNo} onChange={(e) => setCourierTrackingNo(e.target.value)} placeholder="Tracking ID" className="text-xs" />
               </div>
               <div>
-                <label className="text-[10px] text-slate-500">Delivery Cost (₹)</label>
+                <label className="text-xs text-slate-500">Delivery Cost (₹)</label>
                 <Input type="number" value={courierCost} onChange={(e) => setCourierCost(e.target.value)} placeholder="0" className="text-xs" inputMode="numeric" />
               </div>
               <div className="flex gap-2">
                 <button
                   onClick={async () => {
-                    if (!courierName.trim()) { alert("Please enter courier name"); return; }
+                    if (!courierName.trim()) { setActionError("Please enter courier name"); return; }
                     await updateStatus("OUT_FOR_DELIVERY", {
                       courierName: courierName.trim(),
                       courierTrackingNo: courierTrackingNo.trim() || undefined,
@@ -1399,7 +1484,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             <CardContent className="p-3 text-center">
               <Wrench className="h-6 w-6 text-purple-600 mx-auto mb-1" />
               <p className="text-sm font-medium text-purple-900">Service Invoice</p>
-              <p className="text-[10px] text-purple-700">No delivery required. Service billing only.</p>
+              <p className="text-xs text-purple-700">No delivery required. Service billing only.</p>
             </CardContent>
           </Card>
         )}
@@ -1423,7 +1508,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             <CardContent className="p-3 text-center">
               <CheckCircle2 className="h-6 w-6 text-green-600 mx-auto mb-1" />
               <p className="text-sm font-medium text-green-900">Delivered</p>
-              {data.deliveredAt && <p className="text-[10px] text-green-700">{new Date(data.deliveredAt).toLocaleString("en-IN")}</p>}
+              {data.deliveredAt && <p className="text-xs text-green-700">{new Date(data.deliveredAt).toLocaleString("en-IN")}</p>}
             </CardContent>
           </Card>
         )}
@@ -1433,12 +1518,57 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
             <CardContent className="p-3 text-center">
               <CheckCircle2 className="h-6 w-6 text-green-600 mx-auto mb-1" />
               <p className="text-sm font-medium text-green-900">Walk-out Complete</p>
-              <p className="text-[10px] text-green-700">Customer took the cycle. Stock deducted.</p>
+              <p className="text-xs text-green-700">Customer took the cycle. Stock deducted.</p>
             </CardContent>
           </Card>
         )}
       </div>
       </>)}
+
+      {/* Flag Reason Modal */}
+      {flagModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => { setFlagModalOpen(false); setFlagReasonInput(""); }} />
+          <div className="relative w-full max-w-md bg-white rounded-t-2xl p-5 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-900">Flag {data.invoiceNo}</h3>
+            <p className="text-sm text-slate-600 mt-1">Enter the reason for flagging this delivery.</p>
+            <textarea
+              value={flagReasonInput}
+              onChange={(e) => setFlagReasonInput(e.target.value)}
+              placeholder="e.g. Customer not reachable, wrong address..."
+              className="w-full mt-3 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400 resize-none"
+              rows={3}
+              autoFocus
+            />
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => handleFlag(flagReasonInput)}
+                disabled={!flagReasonInput.trim()}
+                className="flex-1 h-12 bg-red-600 text-white rounded-xl font-semibold disabled:opacity-50"
+              >
+                Flag Delivery
+              </button>
+              <button
+                onClick={() => { setFlagModalOpen(false); setFlagReasonInput(""); }}
+                className="flex-1 h-12 bg-slate-100 text-slate-700 rounded-xl font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Action Confirmation */}
+      <ActionConfirmation
+        open={!!confirmation}
+        onClose={() => setConfirmation(null)}
+        type={confirmation?.type || "success"}
+        title={confirmation?.title || ""}
+        referenceId={confirmation?.referenceId || ""}
+        items={confirmation?.items}
+        details={confirmation?.details}
+      />
 
       {/* Extra padding so buttons aren't hidden behind bottom nav */}
       <div className="h-20" />

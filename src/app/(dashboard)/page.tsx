@@ -107,11 +107,11 @@ function MyTasksWidget() {
             <div className="flex items-center gap-2.5 py-2 px-2 rounded-lg hover:bg-blue-50 transition-colors">
               <div className={`w-2 h-2 rounded-full shrink-0 ${priorityDot[task.priority] || "bg-gray-400"}`} />
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-slate-800 truncate">{task.title}</p>
+                <p className="text-base text-slate-800 truncate">{task.title}</p>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-[10px] text-slate-400 font-mono">{task.taskNo}</span>
+                  <span className="text-xs text-slate-400 font-mono">{task.taskNo}</span>
                   {task.status !== "PENDING" && (
-                    <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${statusBg[task.status] || ""}`}>
+                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${statusBg[task.status] || ""}`}>
                       {task.status === "IN_PROGRESS" ? "In Progress" : task.status === "BLOCKED" ? "Blocked" : task.status}
                     </span>
                   )}
@@ -321,9 +321,9 @@ function DailyChecklistWidget() {
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-1.5">
             <CheckSquare className="h-4 w-4 text-indigo-600" />
-            <p className="text-xs font-semibold text-indigo-800">Today&apos;s Checklist</p>
+            <p className="text-base font-semibold text-indigo-800">Today&apos;s Checklist</p>
           </div>
-          <span className="text-[10px] font-medium text-indigo-600">{done}/{items.length}</span>
+          <span className="text-sm font-semibold text-indigo-600">{done}/{items.length}</span>
         </div>
         <div className="space-y-1.5">
           {items.map((item) => {
@@ -338,7 +338,7 @@ function DailyChecklistWidget() {
                 }`}>
                   {isDone && <CheckCircle2 className="h-3 w-3 text-white" />}
                 </div>
-                <span className={`text-xs ${isDone ? "text-green-700 line-through" : "text-slate-700"}`}>
+                <span className={`text-sm ${isDone ? "text-green-700 line-through" : "text-slate-700"}`}>
                   {item.title}
                 </span>
               </button>
@@ -402,9 +402,9 @@ function SOPCheckoffWidget() {
         <div className="flex items-center justify-between mb-2">
           <Link href="/sops/my-checkoffs" className="flex items-center gap-1.5">
             <CheckCircle2 className="h-4 w-4 text-teal-600" />
-            <p className="text-xs font-semibold text-teal-800">My SOPs</p>
+            <p className="text-base font-semibold text-teal-800">My SOPs</p>
           </Link>
-          <span className="text-[10px] font-medium text-teal-600">{done}/{sops.length} ({pct}%)</span>
+          <span className="text-sm font-semibold text-teal-600">{done}/{sops.length} ({pct}%)</span>
         </div>
         <div className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden mb-2">
           <div className="bg-teal-500 h-1.5 rounded-full transition-all" style={{ width: `${pct}%` }} />
@@ -422,7 +422,7 @@ function SOPCheckoffWidget() {
                 }`}>
                   {isDone && <CheckCircle2 className="h-2.5 w-2.5 text-white" />}
                 </div>
-                <span className={`text-[11px] flex-1 ${isDone ? "text-gray-400 line-through" : "text-gray-700"}`}>
+                <span className={`text-sm flex-1 ${isDone ? "text-gray-400 line-through" : "text-gray-700"}`}>
                   {i + 1}. {sop.title}
                 </span>
               </button>
@@ -1002,16 +1002,20 @@ function SupervisorDashboard() {
 
 function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
   const [transactions, setTransactions] = useState<Array<{ id: string; type: string; quantity: number; createdAt: string; referenceNo?: string; product: { name: string; sku: string } }>>([]);
+  const [deliveryStats, setDeliveryStats] = useState<{ pending: number; verified: number; scheduled: number; packed: number } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
     const today = new Date().toISOString().split("T")[0];
     const endpoint = type === "inward" ? "/api/inventory/inwards" : "/api/inventory/outwards";
-    fetch(`${endpoint}?dateFrom=${today}&limit=50&mine=true`)
-      .then((r) => r.json())
-      .then((res) => { if (res.success) setTransactions(res.data); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    Promise.all([
+      fetch(`${endpoint}?dateFrom=${today}&limit=50&mine=true`).then(r => r.json()),
+      fetch("/api/deliveries/stats").then(r => r.json()).catch(() => ({ success: false })),
+    ]).then(([txRes, statsRes]) => {
+      if (txRes.success) setTransactions(txRes.data);
+      if (statsRes.success) setDeliveryStats(statsRes.data);
+    }).catch(() => {}).finally(() => setLoading(false));
   }, [type]);
 
   if (loading) {
@@ -1020,19 +1024,90 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
 
   const totalQty = transactions.reduce((s, t) => s + t.quantity, 0);
   const label = type === "inward" ? "Inwards" : "Outwards";
-  const Icon = type === "inward" ? ArrowDownCircle : ArrowUpCircle;
 
   return (
     <>
-      <ShareDailyReport />
-      {type === "inward" && <InwardsEODReport />}
-      <div className="grid grid-cols-2 gap-3">
-        <DashboardCard label={`My ${label} Today`} value={totalQty} icon={Icon} trend={{ direction: "up", value: `${transactions.length} entries` }} color={type === "inward" ? "bg-blue-100 text-blue-600" : "bg-orange-100 text-orange-600"} />
-        <DashboardCard label="Total Entries" value={transactions.length} icon={Package} color="bg-slate-100 text-slate-700" />
+      {/* Share dropdown — top-right */}
+      <div className="flex justify-end mb-3 relative">
+        <button
+          onClick={() => setShareOpen(!shareOpen)}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50"
+        >
+          <Share2 className="h-4 w-4" />
+          Share
+        </button>
+        {shareOpen && (
+          <div className="absolute right-0 top-10 z-20 bg-white border border-slate-200 rounded-lg shadow-lg py-1 w-56">
+            <div onClick={() => setShareOpen(false)}>
+              <ShareDailyReport />
+            </div>
+            {type === "inward" && (
+              <div onClick={() => setShareOpen(false)}>
+                <InwardsEODReport />
+              </div>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* 3 stat cards */}
+      <div className="grid grid-cols-3 gap-3">
+        <Card>
+          <CardContent className="p-3 text-center">
+            <ArrowDownCircle className="h-5 w-5 text-blue-500 mx-auto mb-1" />
+            <p className="text-2xl font-bold text-slate-900">{totalQty}</p>
+            <p className="text-sm font-medium text-slate-500">
+              {type === "inward" ? "Received Today" : "Dispatched Today"}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-3 text-center">
+            <Clock className="h-5 w-5 text-amber-500 mx-auto mb-1" />
+            <p className="text-2xl font-bold text-slate-900">
+              {type === "inward"
+                ? (deliveryStats?.pending ?? 0)
+                : ((deliveryStats?.packed ?? 0) + (deliveryStats?.scheduled ?? 0))}
+            </p>
+            <p className="text-sm font-medium text-slate-500">
+              {type === "inward" ? "Pending Verify" : "Pending Dispatch"}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-3 text-center">
+            {type === "inward" ? (
+              <Truck className="h-5 w-5 text-orange-500 mx-auto mb-1" />
+            ) : (
+              <Users className="h-5 w-5 text-green-500 mx-auto mb-1" />
+            )}
+            <p className="text-2xl font-bold text-slate-900">
+              {type === "inward"
+                ? ((deliveryStats?.pending ?? 0) + (deliveryStats?.verified ?? 0))
+                : (deliveryStats?.pending ?? 0)}
+            </p>
+            <p className="text-sm font-medium text-slate-500">
+              {type === "inward" ? "Stock Out Queue" : "Walk-outs Today"}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Quick action button */}
+      <Link href={type === "inward" ? "/inbound" : "/deliveries"} className="block mt-4">
+        <button className="w-full h-14 text-base font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center gap-2 mb-4">
+          {type === "inward" ? (
+            <><ArrowDownCircle className="h-5 w-5" /> Receive Shipment</>
+          ) : (
+            <><ArrowUpCircle className="h-5 w-5" /> Process Outward</>
+          )}
+        </button>
+      </Link>
+
+      {/* Transaction list */}
       {transactions.length > 0 && (
-        <Card className="mt-4">
-          <CardHeader><CardTitle>Today&apos;s {label}</CardTitle></CardHeader>
+        <Card>
+          <CardHeader><CardTitle className="text-base">Today&apos;s {label}</CardTitle></CardHeader>
           <CardContent>
             {transactions.map((t) => (
               <TransactionItem key={t.id} direction={type === "inward" ? "in" : "out"} productName={t.product?.name || "Unknown"} sku={t.product?.sku || ""} quantity={t.quantity} time={formatTime(t.createdAt)} reference={t.referenceNo} />
@@ -1051,8 +1126,9 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
 }
 
 function OutwardsClerkDashboard() {
-  const [stats, setStats] = useState<{ pending: number; verified: number; scheduled: number; outForDelivery: number; delivered: number; deliveredToday: number; flagged: number; prebooked: number } | null>(null);
+  const [stats, setStats] = useState<{ pending: number; verified: number; scheduled: number; outForDelivery: number; delivered: number; deliveredToday: number; flagged: number; prebooked: number; packed?: number } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
     fetch("/api/deliveries/stats")
@@ -1063,7 +1139,7 @@ function OutwardsClerkDashboard() {
   }, []);
 
   if (loading) {
-    return <div className="animate-pulse space-y-3 py-4"><div className="grid grid-cols-2 gap-3">{[1,2,3,4].map(i=><div key={i} className="p-3 border border-slate-100 rounded-lg space-y-2"><div className="h-3 bg-slate-200 rounded w-16"/><div className="h-6 bg-slate-200 rounded w-20"/></div>)}</div></div>;
+    return <div className="animate-pulse space-y-3 py-4"><div className="grid grid-cols-3 gap-3">{[1,2,3].map(i=><div key={i} className="p-3 border border-slate-100 rounded-lg space-y-2"><div className="h-3 bg-slate-200 rounded w-16"/><div className="h-6 bg-slate-200 rounded w-20"/></div>)}</div></div>;
   }
   if (!stats) {
     return <div className="text-center py-12"><AlertTriangle className="h-8 w-8 text-red-400 mx-auto mb-2" /><p className="text-sm text-slate-500">Failed to load dashboard.</p></div>;
@@ -1071,6 +1147,24 @@ function OutwardsClerkDashboard() {
 
   return (
     <>
+      {/* Share dropdown — top-right */}
+      <div className="flex justify-end mb-3 relative">
+        <button
+          onClick={() => setShareOpen(!shareOpen)}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm text-slate-600 hover:bg-slate-50"
+        >
+          <Share2 className="h-4 w-4" />
+          Share
+        </button>
+        {shareOpen && (
+          <div className="absolute right-0 top-10 z-20 bg-white border border-slate-200 rounded-lg shadow-lg py-1 w-56">
+            <div onClick={() => setShareOpen(false)}>
+              <ShareDailyReport />
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Walk-out nudge — urgent if pending > 0 */}
       {stats.pending > 0 && (
         <Link href="/deliveries/walkout">
@@ -1080,8 +1174,8 @@ function OutwardsClerkDashboard() {
                 <CheckCircle2 className="h-5 w-5 text-amber-700" />
               </div>
               <div className="flex-1">
-                <p className="text-sm font-bold text-amber-800">{stats.pending} Walk-outs pending</p>
-                <p className="text-[10px] text-amber-600">Verify walk-out deliveries before end of day</p>
+                <p className="text-base font-bold text-amber-800">{stats.pending} Walk-outs pending</p>
+                <p className="text-xs text-amber-600">Verify walk-out deliveries before end of day</p>
               </div>
               <ChevronRight className="h-4 w-4 text-amber-400" />
             </CardContent>
@@ -1089,13 +1183,40 @@ function OutwardsClerkDashboard() {
         </Link>
       )}
 
+      {/* 3 stat cards */}
+      <div className="grid grid-cols-3 gap-3">
+        <Card>
+          <CardContent className="p-3 text-center">
+            <ArrowUpCircle className="h-5 w-5 text-orange-500 mx-auto mb-1" />
+            <p className="text-2xl font-bold text-slate-900">{stats.delivered || stats.deliveredToday || 0}</p>
+            <p className="text-sm font-medium text-slate-500">Dispatched Today</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-3 text-center">
+            <Clock className="h-5 w-5 text-amber-500 mx-auto mb-1" />
+            <p className="text-2xl font-bold text-slate-900">{(stats.packed ?? 0) + stats.scheduled}</p>
+            <p className="text-sm font-medium text-slate-500">Pending Dispatch</p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-3 text-center">
+            <Users className="h-5 w-5 text-green-500 mx-auto mb-1" />
+            <p className="text-2xl font-bold text-slate-900">{stats.pending}</p>
+            <p className="text-sm font-medium text-slate-500">Walk-outs Today</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Quick action button */}
+      <Link href="/deliveries" className="block mt-4">
+        <button className="w-full h-14 text-base font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded-lg flex items-center justify-center gap-2 mb-4">
+          <ArrowUpCircle className="h-5 w-5" /> Process Outward
+        </button>
+      </Link>
+
+      {/* Secondary cards row */}
       <div className="grid grid-cols-2 gap-3">
-        <Link href="/deliveries">
-          <DashboardCard label="Pending Verify" value={stats.pending} icon={Clock} color="bg-amber-100 text-amber-700" />
-        </Link>
-        <Link href="/deliveries">
-          <DashboardCard label="Scheduled" value={stats.scheduled} icon={Truck} color="bg-blue-100 text-blue-700" />
-        </Link>
         <Link href="/deliveries/dispatch">
           <DashboardCard label="Out for Delivery" value={stats.outForDelivery} icon={Truck} color="bg-orange-100 text-orange-700" />
         </Link>
@@ -1112,9 +1233,6 @@ function OutwardsClerkDashboard() {
             <DashboardCard label="Prebooked" value={stats.prebooked} icon={Package} color="bg-purple-100 text-purple-700" />
           </Link>
         )}
-      </div>
-      <div className="mt-3">
-        <ShareDailyReport />
       </div>
 
       {/* SOP Check-offs */}
@@ -1279,10 +1397,10 @@ function SOPNudgeBanner() {
     <div className="mb-3 p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-center gap-2">
       <ShieldAlert className="h-5 w-5 text-amber-600 shrink-0" />
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold text-amber-800">
+        <p className="text-sm font-semibold text-amber-800">
           {pending} SOP{pending > 1 ? "s" : ""} pending today
         </p>
-        <p className="text-[10px] text-amber-600">{total - pending}/{total} done — tap to check off</p>
+        <p className="text-xs text-amber-600">{total - pending}/{total} done — tap to check off</p>
       </div>
       <Link href="/sops/my-checkoffs"
         className="px-2.5 py-1 bg-amber-600 text-white text-[10px] font-bold rounded-lg shrink-0">

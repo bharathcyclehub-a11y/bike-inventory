@@ -8,6 +8,7 @@ import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ActionConfirmation } from "@/components/ui/action-confirmation";
 
 interface TransferOrderItem {
   id: string;
@@ -45,6 +46,13 @@ export default function TransfersPage() {
   const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
+  const [confirmation, setConfirmation] = useState<{
+    type: "success" | "warning" | "error" | "info";
+    title: string;
+    referenceId: string;
+    items?: Array<{ label: string; value: string }>;
+    details?: string;
+  } | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -70,11 +78,40 @@ export default function TransfersPage() {
       });
       const data = await res.json();
       if (data.success) {
+        const order = orders.find((o) => o.id === id);
         setOrders((prev) =>
           prev.map((o) =>
             o.id === id ? { ...o, status: action === "approve" ? "APPROVED" : "REJECTED" } : o
           )
         );
+        if (order) {
+          if (action === "approve") {
+            setConfirmation({
+              type: "success",
+              title: "Transfer Approved",
+              referenceId: order.orderNo,
+              items: [
+                { label: "Items", value: `${order._count.items} item${order._count.items !== 1 ? "s" : ""}` },
+                ...order.items.slice(0, 3).map((item) => ({
+                  label: item.product.name,
+                  value: `${item.fromBin.code} → ${item.toBin.code} (Qty: ${item.quantity})`,
+                })),
+              ],
+              details: order.notes || undefined,
+            });
+          } else {
+            setConfirmation({
+              type: "warning",
+              title: "Transfer Rejected",
+              referenceId: order.orderNo,
+              items: [
+                { label: "Items", value: `${order._count.items} item${order._count.items !== 1 ? "s" : ""}` },
+                { label: "Created by", value: order.createdBy.name },
+              ],
+              details: order.rejectionNote || "No reason provided",
+            });
+          }
+        }
       }
     } catch { /* ignore */ }
     finally { setApproving(null); }
@@ -97,7 +134,7 @@ export default function TransfersPage() {
           <p className="text-xs text-slate-500">Multi-item bin transfers</p>
         </div>
         <Link href="/transfers/new">
-          <Button size="sm" className="bg-purple-600 hover:bg-purple-700">
+          <Button size="sm" className="h-12 px-4 bg-purple-600 hover:bg-purple-700 text-sm">
             <Plus className="h-4 w-4 mr-1" /> New Order
           </Button>
         </Link>
@@ -149,7 +186,7 @@ export default function TransfersPage() {
                 <div className="flex items-start justify-between mb-2">
                   <div className="flex-1 min-w-0 mr-2">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-semibold text-slate-900">{order.orderNo}</p>
+                      <p className="text-base font-semibold text-slate-900">{order.orderNo}</p>
                       {statusBadge(order.status)}
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">
@@ -164,8 +201,8 @@ export default function TransfersPage() {
                     <div key={item.id} className="bg-slate-50 rounded-lg px-2.5 py-1.5 flex items-center gap-2">
                       <Package className="h-3 w-3 text-slate-400 shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-slate-800 truncate">{item.product.name}</p>
-                        <div className="flex items-center gap-1 text-[10px] text-slate-500">
+                        <p className="text-sm font-medium text-slate-800 truncate">{item.product.name}</p>
+                        <div className="flex items-center gap-1 text-xs text-slate-500">
                           <span>Qty: {item.quantity}</span>
                           <span>|</span>
                           <span>{item.fromBin.code}</span>
@@ -177,22 +214,22 @@ export default function TransfersPage() {
                   ))}
                   {order.items.length > 2 && (
                     <button onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}
-                      className="text-[10px] text-purple-600 font-medium pl-2">
+                      className="text-xs text-purple-600 font-medium pl-2">
                       {expandedId === order.id ? "Show less" : `+${order.items.length - 2} more items`}
                     </button>
                   )}
                 </div>
 
                 {/* Notes */}
-                {order.notes && <p className="text-[10px] text-slate-400 mb-2">{order.notes}</p>}
+                {order.notes && <p className="text-xs text-slate-400 mb-2">{order.notes}</p>}
                 {order.rejectionNote && (
-                  <p className="text-[10px] text-red-500 mb-2">Rejected: {order.rejectionNote}</p>
+                  <p className="text-xs text-red-500 mb-2">Rejected: {order.rejectionNote}</p>
                 )}
 
                 {/* Actions */}
                 <div className="flex items-center justify-between">
                   {order.reviewedBy && (
-                    <p className="text-[10px] text-slate-400">
+                    <p className="text-xs text-slate-400">
                       {order.status === "APPROVED" ? "Approved" : "Reviewed"} by {order.reviewedBy.name}
                     </p>
                   )}
@@ -201,13 +238,13 @@ export default function TransfersPage() {
                   {canApprove && order.status === "PENDING" && (
                     <div className="flex gap-1.5">
                       <Button size="sm" variant="outline"
-                        className="h-7 text-xs text-green-600 border-green-200 hover:bg-green-50"
+                        className="h-10 px-4 py-2 text-sm text-green-600 border-green-200 hover:bg-green-50"
                         onClick={() => handleAction(order.id, "approve")}
                         disabled={approving === order.id}>
                         {approving === order.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Approve"}
                       </Button>
                       <Button size="sm" variant="outline"
-                        className="h-7 text-xs text-red-600 border-red-200 hover:bg-red-50"
+                        className="h-10 px-4 py-2 text-sm text-red-600 border-red-200 hover:bg-red-50"
                         onClick={() => handleAction(order.id, "reject")}
                         disabled={approving === order.id}>
                         Reject
@@ -220,6 +257,16 @@ export default function TransfersPage() {
           ))}
         </div>
       )}
+
+      <ActionConfirmation
+        open={!!confirmation}
+        onClose={() => setConfirmation(null)}
+        type={confirmation?.type || "success"}
+        title={confirmation?.title || ""}
+        referenceId={confirmation?.referenceId || ""}
+        items={confirmation?.items}
+        details={confirmation?.details}
+      />
     </div>
   );
 }

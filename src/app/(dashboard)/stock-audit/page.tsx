@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Plus, ClipboardCheck, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ActionConfirmation } from "@/components/ui/action-confirmation";
 
 interface StockCountItem {
   id: string;
@@ -36,6 +37,13 @@ export default function StockAuditPage() {
   const [counts, setCounts] = useState<StockCountItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("ALL");
+  const [confirmation, setConfirmation] = useState<{
+    type: "success" | "warning" | "error" | "info";
+    title: string;
+    referenceId: string;
+    items?: Array<{ label: string; value: string }>;
+    details?: string;
+  } | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -72,7 +80,7 @@ export default function StockAuditPage() {
         <h1 className="text-lg font-bold text-slate-900">Stock Audit</h1>
         {canCreate && (
           <Link href="/stock-audit/new"
-            className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2 rounded-lg text-sm font-medium">
+            className="flex items-center gap-1.5 bg-slate-900 text-white px-4 py-3 rounded-lg text-sm font-medium h-12">
             <Plus className="h-4 w-4" /> New Audit
           </Link>
         )}
@@ -110,10 +118,10 @@ export default function StockAuditPage() {
                     <div className="flex items-start justify-between mb-1">
                       <div className="flex-1 min-w-0 mr-2">
                         <div className="flex items-center gap-1.5">
-                          {c.countNo && <span className="text-[10px] font-mono text-slate-400 shrink-0">{c.countNo}</span>}
+                          {c.countNo && <span className="text-xs font-mono text-slate-400 shrink-0">{c.countNo}</span>}
                           <p className="text-sm font-medium text-slate-900 truncate">{c.title}</p>
                           {overdue && (
-                            <Badge variant="danger" className="shrink-0 flex items-center gap-0.5 text-[10px] px-1.5 py-0">
+                            <Badge variant="danger" className="shrink-0 flex items-center gap-0.5 text-xs px-1.5 py-0.5">
                               <AlertTriangle className="h-2.5 w-2.5" /> Overdue
                             </Badge>
                           )}
@@ -135,7 +143,7 @@ export default function StockAuditPage() {
                           style={{ width: `${progress}%` }}
                         />
                       </div>
-                      <span className="text-xs text-slate-500 shrink-0">
+                      <span className="text-lg font-bold text-slate-700 shrink-0">
                         {c.countedItems}/{c.totalItems}
                       </span>
                     </div>
@@ -146,6 +154,16 @@ export default function StockAuditPage() {
           })}
         </div>
       )}
+
+      <ActionConfirmation
+        open={!!confirmation}
+        onClose={() => setConfirmation(null)}
+        type={confirmation?.type || "success"}
+        title={confirmation?.title || ""}
+        referenceId={confirmation?.referenceId || ""}
+        items={confirmation?.items}
+        details={confirmation?.details}
+      />
     </div>
   );
 }

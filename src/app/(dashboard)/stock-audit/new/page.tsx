@@ -6,6 +6,7 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { ArrowLeft, MapPin, Package } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { ActionConfirmation } from "@/components/ui/action-confirmation";
 
 interface Bin {
   id: string;
@@ -52,6 +53,14 @@ export default function NewStockAuditPage() {
   const [productType, setProductType] = useState<string>("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [confirmation, setConfirmation] = useState<{
+    type: "success" | "warning" | "error" | "info";
+    title: string;
+    referenceId: string;
+    items?: Array<{ label: string; value: string }>;
+    details?: string;
+    redirectTo?: string;
+  } | null>(null);
 
   useEffect(() => {
     fetch("/api/bins").then((r) => r.json()).then((res) => { if (res.success) setBins(res.data); }).catch(() => {});
@@ -126,8 +135,21 @@ export default function NewStockAuditPage() {
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (data.success) router.push(`/stock-audit/${data.data.id}`);
-      else setError(data.error || "Failed to create stock count");
+      if (data.success) {
+        const assignedUser = users.find((u) => u.id === (assignedTo || user?.userId));
+        setConfirmation({
+          type: "success",
+          title: "Stock Count Created",
+          referenceId: data.data.countNo || data.data.id,
+          items: [
+            { label: "Title", value: title },
+            { label: "Assigned To", value: assignedUser?.name || "—" },
+            { label: "Due Date", value: new Date(dueDate).toLocaleDateString("en-IN") },
+            { label: "Scope", value: scope === "bin" ? `Bin: ${bins.find((b) => b.id === selectedBin)?.code || selectedBin}` : scope === "location" ? `Location: ${selectedLocation}` : "All Products" },
+          ],
+          redirectTo: `/stock-audit/${data.data.id}`,
+        });
+      } else setError(data.error || "Failed to create stock count");
     } catch {
       setError("Network error. Please try again.");
     }
@@ -248,7 +270,7 @@ export default function NewStockAuditPage() {
                     </div>
                     <div className="mt-1.5 flex flex-wrap gap-1 ml-6">
                       {group.bins.map((b) => (
-                        <span key={b.id} className="px-2 py-0.5 bg-slate-100 rounded text-[10px] text-slate-600">
+                        <span key={b.id} className="px-2 py-0.5 bg-slate-100 rounded text-xs text-slate-600">
                           {b.code} ({b._count.products})
                         </span>
                       ))}
@@ -312,10 +334,24 @@ export default function NewStockAuditPage() {
 
         <button onClick={handleSubmit}
           disabled={!title || !dueDate || !assignedTo || (scope === "bin" && !selectedBin) || (scope === "location" && !selectedLocation) || submitting}
-          className="w-full bg-slate-900 text-white py-3 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+          className="w-full bg-slate-900 text-white py-3 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed h-12">
           {submitting ? "Creating..." : "Create Stock Count"}
         </button>
       </div>
+
+      <ActionConfirmation
+        open={!!confirmation}
+        onClose={() => {
+          const redirectTo = confirmation?.redirectTo;
+          setConfirmation(null);
+          if (redirectTo) router.push(redirectTo);
+        }}
+        type={confirmation?.type || "success"}
+        title={confirmation?.title || ""}
+        referenceId={confirmation?.referenceId || ""}
+        items={confirmation?.items}
+        details={confirmation?.details}
+      />
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { ArrowLeft, Loader2, Phone, CheckCircle2, Calendar, Truck, MapPin, Rotat
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { ActionConfirmation } from "@/components/ui/action-confirmation";
 
 interface LineItem {
   id: string;
@@ -93,6 +94,15 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const [issueNotes, setIssueNotes] = useState("");
   const [issueQty, setIssueQty] = useState(0);
   const [issueSaving, setIssueSaving] = useState(false);
+  const [confirmation, setConfirmation] = useState<{
+    type: "success" | "warning" | "error" | "info";
+    title: string;
+    referenceId: string;
+    items?: Array<{ label: string; value: string }>;
+    details?: string;
+  } | null>(null);
+  const [showRevertConfirm, setShowRevertConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Per-item bin selections: lineItemId → array of binIds (one per unit)
   const [binSelections, setBinSelections] = useState<Record<string, string[]>>({});
@@ -164,7 +174,16 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         const selections = binSelections[li.id] || [];
         const allFilled = selections.length === li.quantity && selections.every((b) => b);
         if (!allFilled) {
-          alert(`Please assign a bin to all units of "${li.productName}" (${li.quantity} units) before marking delivered.`);
+          setConfirmation({
+            type: "error",
+            title: "Bin Assignment Required",
+            referenceId: shipment?.shipmentNo || "",
+            items: [
+              { label: "Product", value: li.productName },
+              { label: "Units", value: `${li.quantity}` },
+            ],
+            details: "Please assign a bin to all units before marking delivered.",
+          });
           return;
         }
       }
@@ -217,7 +236,16 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
     const selections = binSelections[li.id] || [];
     const allFilled = selections.length === li.quantity && selections.every((b) => b);
     if (!allFilled) {
-      alert(`Please select a bin for all ${li.quantity} unit(s) before marking delivered.`);
+      setConfirmation({
+        type: "error",
+        title: "Bin Assignment Required",
+        referenceId: shipment?.shipmentNo || "",
+        items: [
+          { label: "Product", value: li.productName },
+          { label: "Units", value: `${li.quantity}` },
+        ],
+        details: `Please select a bin for all ${li.quantity} unit(s) before marking delivered.`,
+      });
       return;
     }
     setItemLoading(li.id);
@@ -232,6 +260,17 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         setActionError("");
         setBinSelections((prev) => { const n = { ...prev }; delete n[li.id]; return n; });
         await refreshShipment();
+        setConfirmation({
+          type: "success",
+          title: "Item Received & Binned",
+          referenceId: shipment?.shipmentNo || "",
+          items: [
+            { label: "Product", value: li.productName },
+            { label: "Quantity", value: `${li.quantity} units` },
+            { label: "Bin", value: bins.find(b => b.id === (binSelections[li.id]?.[0]))?.code || "Assigned" },
+          ],
+          details: `Bill: ${shipment?.billNo}`,
+        });
       } else {
         setActionError(res.error || `Failed to mark "${li.productName}" as delivered`);
       }
@@ -271,7 +310,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   };
 
   const handleRevert = async () => {
-    if (!confirm("Revert this shipment back to In Transit?")) return;
+    setShowRevertConfirm(false);
     setActionLoading(true);
     try {
       const res = await fetch(`/api/inbound/${id}/status`, {
@@ -282,21 +321,31 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       if (res.success) {
         await refreshShipment();
       } else {
-        alert(res.error || "Cannot revert");
+        setConfirmation({
+          type: "error",
+          title: "Cannot Revert",
+          referenceId: shipment?.shipmentNo || "",
+          details: res.error || "Cannot revert shipment",
+        });
       }
     } catch (e) { setActionError(e instanceof Error ? e.message : "Revert failed"); }
     finally { setActionLoading(false); }
   };
 
   const handleDelete = async () => {
-    if (!confirm("Delete this shipment? This cannot be undone.")) return;
+    setShowDeleteConfirm(false);
     setActionLoading(true);
     try {
       const res = await fetch(`/api/inbound/${id}`, { method: "DELETE" }).then((r) => r.json());
       if (res.success) {
         router.push("/inbound");
       } else {
-        alert(res.error || "Cannot delete");
+        setConfirmation({
+          type: "error",
+          title: "Cannot Delete",
+          referenceId: shipment?.shipmentNo || "",
+          details: res.error || "Cannot delete shipment",
+        });
       }
     } catch (e) { setActionError(e instanceof Error ? e.message : "Delete failed"); }
     finally { setActionLoading(false); }
@@ -321,11 +370,21 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       }).then((r) => r.json());
 
       if (res.success) {
-        setIssueModal(null);
         setIssueNotes("");
         setIssueQty(0);
         setActionError("");
-        alert(`Issue reported: ${res.data.issueNo}. Sravan will be notified.`);
+        setConfirmation({
+          type: "warning",
+          title: "Issue Reported",
+          referenceId: res.data.issueNo,
+          items: [
+            { label: "Product", value: issueModal.lineItem.productName },
+            { label: "Issue Type", value: issueType },
+            { label: "Shipment", value: shipment?.shipmentNo || "" },
+          ],
+          details: "Sravan (Finance Head) will be notified",
+        });
+        setIssueModal(null);
       } else {
         setActionError(res.error || "Failed to report issue");
       }
@@ -375,7 +434,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         {/* Per-unit selectors */}
         {Array.from({ length: qty }).map((_, i) => (
           <div key={i} className="flex items-center gap-2">
-            <span className="text-[10px] text-slate-400 w-10 shrink-0">#{i + 1}</span>
+            <span className="text-xs text-slate-400 w-10 shrink-0">#{i + 1}</span>
             <select
               value={selections[i] || ""}
               onChange={(e) => setBinForUnit(li.id, i, e.target.value, qty)}
@@ -471,7 +530,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           {needsBinCount > 0 && (
             <div className="flex justify-between items-center">
               <span className="text-xs text-slate-500">Needs Bin</span>
-              <Badge variant="warning" className="text-[10px]">{needsBinCount} item{needsBinCount > 1 ? "s" : ""}</Badge>
+              <Badge variant="warning" className="text-xs">{needsBinCount} item{needsBinCount > 1 ? "s" : ""}</Badge>
             </div>
           )}
           <div className="flex justify-between items-center">
@@ -511,7 +570,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-center">
               <ShieldCheck className="h-5 w-5 text-amber-500 mx-auto mb-1" />
               <p className="text-xs font-medium text-amber-800">Awaiting Approval</p>
-              <p className="text-[10px] text-amber-600 mt-0.5">Supervisor or Accounts Manager must approve before delivery</p>
+              <p className="text-xs text-amber-600 mt-0.5">Supervisor or Accounts Manager must approve before delivery</p>
             </div>
           )}
         </div>
@@ -543,7 +602,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
               <Truck className="h-4 w-4 mr-2" /> {actionLoading ? "..." : "Mark All Delivered"}
             </Button>
             {deliveredCount === 0 && (
-              <Button onClick={handleRevert} disabled={actionLoading}
+              <Button onClick={() => setShowRevertConfirm(true)} disabled={actionLoading}
                 variant="outline" className="gap-1.5" size="lg">
                 <RotateCcw className="h-4 w-4" /> Undo
               </Button>
@@ -558,7 +617,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           <p className="text-xs text-amber-800 font-medium mb-1 flex items-center gap-1.5">
             <MapPin className="h-3.5 w-3.5" /> {needsBinCount} item{needsBinCount > 1 ? "s" : ""} need bin assignment
           </p>
-          <p className="text-[10px] text-amber-600 mb-2">Select bins below, then save.</p>
+          <p className="text-xs text-amber-600 mb-2">Select bins below, then save.</p>
           {putawayReady > 0 && (
             <Button onClick={handlePutaway} disabled={putawayLoading} size="sm"
               className="w-full bg-amber-600 hover:bg-amber-700">
@@ -570,19 +629,20 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* Success message after delivery */}
-      {successMsg && (
-        <div className="bg-green-50 border border-green-300 rounded-xl p-4 mb-3 text-center">
-          <CheckCircle2 className="h-8 w-8 text-green-500 mx-auto mb-2" />
-          <p className="text-sm font-bold text-green-800">Inward Completed Successfully!</p>
-          <p className="text-lg font-bold text-green-900 mt-1">{successMsg.shipmentNo}</p>
-          <p className="text-xs text-green-600 mt-1">{successMsg.deliveredCount} items received &amp; stock updated</p>
-          <p className="text-[10px] text-slate-400 mt-2">Take a screenshot of this for your records</p>
-          <button onClick={() => setSuccessMsg(null)}
-            className="mt-3 px-4 py-1.5 rounded-lg text-xs font-medium bg-green-600 text-white hover:bg-green-700">
-            OK
-          </button>
-        </div>
-      )}
+      <ActionConfirmation
+        open={!!successMsg}
+        onClose={() => setSuccessMsg(null)}
+        type="success"
+        title="Inward Completed Successfully!"
+        referenceId={successMsg?.shipmentNo || ""}
+        performedBy={(session?.user as any)?.name}
+        items={[
+          { label: "Items Received", value: `${successMsg?.deliveredCount || 0} items` },
+          { label: "Bill", value: shipment?.billNo || "" },
+          { label: "Brand", value: shipment?.brand.name || "" },
+        ]}
+        details="All items received and stock updated"
+      />
 
       {/* Select All — apply one bin to ALL undelivered items */}
       {canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && bins.length > 0 && (
@@ -618,24 +678,24 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
             <CardContent className="p-3">
               <div className="flex items-start justify-between mb-1">
                 <div className="flex-1 min-w-0 mr-2">
-                  <p className="text-sm font-medium text-slate-900">{li.productName}</p>
-                  {li.product && <p className="text-[10px] text-slate-500">{li.product.sku} | {li.product.name}</p>}
+                  <p className="text-base font-medium text-slate-900">{li.productName}</p>
+                  {li.product && <p className="text-xs text-slate-500">{li.product.sku} | {li.product.name}</p>}
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   {li.isDelivered && <CheckCircle2 className="h-4 w-4 text-green-500" />}
-                  {li.isDelivered && !li.binId && <Badge variant="warning" className="text-[9px] px-1.5">No Bin</Badge>}
+                  {li.isDelivered && !li.binId && <Badge variant="warning" className="text-[11px] px-1.5">No Bin</Badge>}
                 </div>
               </div>
 
               <div className="flex items-center gap-3 mt-1 text-xs text-slate-500">
-                <span>Qty: {li.quantity}</span>
+                <span className="text-base font-bold text-slate-800">Qty: {li.quantity}</span>
                 {isAdmin && <span>Rate: {formatINR(li.rate)}</span>}
                 {isAdmin && <span className="font-medium text-slate-700">{formatINR(li.amount)}</span>}
               </div>
 
               {/* Current bin assignment */}
               {li.bin && (
-                <div className="flex items-center gap-1.5 mt-1.5 text-[10px] text-indigo-600">
+                <div className="flex items-center gap-1.5 mt-1.5 text-xs text-indigo-600">
                   <MapPin className="h-3 w-3" /> {li.bin.code} — {li.bin.name} ({li.bin.location})
                 </div>
               )}
@@ -647,7 +707,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                   <button
                     onClick={() => handleMarkItemDelivered(li)}
                     disabled={itemLoading === li.id}
-                    className="mt-2 w-full py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-medium border border-green-200 hover:bg-green-100 disabled:opacity-50"
+                    className="mt-2 w-full py-2.5 h-10 rounded-lg bg-green-50 text-green-700 text-xs font-medium border border-green-200 hover:bg-green-100 disabled:opacity-50"
                   >
                     {itemLoading === li.id ? "Marking..." : `Mark Delivered (Qty: ${li.quantity})`}
                   </button>
@@ -680,13 +740,13 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                 <div className="mt-2 bg-purple-50 rounded-lg p-2 flex items-center justify-between">
                   <div>
                     <p className="text-xs text-purple-700 font-medium">Pre-booked: {li.preBookedCustomerName}</p>
-                    {li.preBookedInvoiceNo && <p className="text-[10px] text-purple-500">Invoice: {li.preBookedInvoiceNo}</p>}
+                    {li.preBookedInvoiceNo && <p className="text-xs text-purple-500">Invoice: {li.preBookedInvoiceNo}</p>}
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {li.whatsAppSent && <span className="text-[9px] text-green-600 font-medium">Sent</span>}
+                    {li.whatsAppSent && <span className="text-[11px] text-green-600 font-medium">Sent</span>}
                     {li.preBookedCustomerPhone && (
                       <button onClick={() => handleWhatsApp(li)}
-                        className="p-1.5 rounded-full hover:bg-green-100">
+                        className="p-2.5 rounded-full hover:bg-green-100">
                         <Phone className="h-4 w-4 text-green-600" />
                       </button>
                     )}
@@ -700,13 +760,13 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
 
       {/* Notes */}
       {shipment.notes && (
-        <p className="text-[10px] text-slate-400 text-center mt-4">Notes: {shipment.notes}</p>
+        <p className="text-xs text-slate-400 text-center mt-4">Notes: {shipment.notes}</p>
       )}
 
       {/* Delete — admin only */}
       {isAdmin && (
         <button
-          onClick={handleDelete}
+          onClick={() => setShowDeleteConfirm(true)}
           disabled={actionLoading}
           className="mt-6 w-full flex items-center justify-center gap-2 py-2.5 rounded-lg text-red-600 text-xs font-medium border border-red-200 hover:bg-red-50 disabled:opacity-50"
         >
@@ -714,6 +774,46 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           {deliveredCount > 0 ? "Delete & Reverse Stock" : "Delete Shipment"}
         </button>
       )}
+      {/* Revert Confirmation */}
+      {showRevertConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-5 space-y-4">
+            <h3 className="text-base font-bold text-slate-900">Revert Shipment?</h3>
+            <p className="text-sm text-slate-600">This will revert the shipment back to In Transit status. Are you sure?</p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowRevertConfirm(false)}
+                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50">
+                Cancel
+              </button>
+              <button onClick={handleRevert}
+                className="flex-1 py-2.5 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700">
+                Yes, Revert
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-5 space-y-4">
+            <h3 className="text-base font-bold text-red-700">Delete Shipment?</h3>
+            <p className="text-sm text-slate-600">This action cannot be undone. {deliveredCount > 0 ? "Stock entries will be reversed." : "The shipment will be permanently removed."}</p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowDeleteConfirm(false)}
+                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50">
+                Cancel
+              </button>
+              <button onClick={handleDelete}
+                className="flex-1 py-2.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700">
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Issue Report Modal */}
       {issueModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
@@ -767,6 +867,19 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
             </div>
           </div>
         </div>
+      )}
+
+      {confirmation && (
+        <ActionConfirmation
+          open={!!confirmation}
+          onClose={() => setConfirmation(null)}
+          type={confirmation.type}
+          title={confirmation.title}
+          referenceId={confirmation.referenceId}
+          performedBy={(session?.user as any)?.name}
+          items={confirmation.items}
+          details={confirmation.details}
+        />
       )}
     </div>
   );

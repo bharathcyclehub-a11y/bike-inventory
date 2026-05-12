@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { useDebounce, getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
 import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 import { usePermissions } from "@/lib/use-permissions";
+import { ActionConfirmation } from "@/components/ui/action-confirmation";
 
 interface DeliveryItem {
   id: string;
@@ -181,9 +182,7 @@ export default function DeliveriesPage() {
     } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
   };
 
-  const handleFlag = async (id: string) => {
-    const reason = prompt("Flag reason:");
-    if (!reason) return;
+  const handleFlag = async (id: string, reason: string) => {
     const res = await fetch(`/api/deliveries/${id}/flag`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -195,15 +194,17 @@ export default function DeliveriesPage() {
       const phone = data.data.alertPhones[0].replace(/\D/g, "");
       window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
     }
+    setFlagModal(null);
+    setFlagReason("");
     fetchData();
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Delete this delivery entry?")) return;
     setDeleting(id);
     try {
       const res = await fetch(`/api/deliveries/${id}`, { method: "DELETE" }).then(r => r.json());
       if (!res.success) throw new Error(res.error || "Delete failed");
+      setDeleteConfirm(null);
       fetchData();
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Delete failed");
@@ -211,8 +212,8 @@ export default function DeliveriesPage() {
   };
 
   const handleBulkDelete = async () => {
-    if (!confirm(`Delete ALL ${deliveries.length} deliveries in current view? This cannot be undone.`)) return;
     setBulkDeleting(true);
+    setBulkDeleteConfirm(false);
     setFetchError("");
     try {
       let deleted = 0;
@@ -220,7 +221,14 @@ export default function DeliveriesPage() {
         const res = await fetch(`/api/deliveries/${d.id}`, { method: "DELETE" }).then(r => r.json());
         if (res.success) deleted++;
       }
-      setFetchError(`Deleted ${deleted} of ${deliveries.length} deliveries`);
+      setConfirmation({
+        type: "warning",
+        title: "Bulk Delete Complete",
+        referenceId: `${deleted} deliveries`,
+        items: [
+          { label: "Deleted", value: `${deleted} of ${deliveries.length}` },
+        ],
+      });
       fetchData();
     } catch (e) {
       setFetchError(e instanceof Error ? e.message : "Bulk delete failed");
@@ -428,11 +436,32 @@ export default function DeliveriesPage() {
 
   const [prebooking, setPrebooking] = useState<string | null>(null);
 
+  // Confirmation modal state
+  const [confirmation, setConfirmation] = useState<{
+    type: "success" | "warning" | "error" | "info";
+    title: string;
+    referenceId: string;
+    items?: Array<{ label: string; value: string }>;
+    details?: string;
+  } | null>(null);
+
+  // Delete confirmation state
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+
+  // Bulk delete confirmation state
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
+
+  // Flag modal state
+  const [flagModal, setFlagModal] = useState<{ id: string; invoiceNo: string } | null>(null);
+  const [flagReason, setFlagReason] = useState("");
+
+  // Convert to prebook confirmation
+  const [prebookConfirm, setPrebookConfirm] = useState<DeliveryItem | null>(null);
+
   const handleConvertToPrebook = async (d: DeliveryItem) => {
-    if (!confirm(`Convert "${d.invoiceNo}" to Pre-Booking?\nThis will create a pre-booking and change the delivery status to Prebooked.`)) return;
     setPrebooking(d.id);
+    setPrebookConfirm(null);
     try {
-      // Create pre-booking
       const itemName = d.lineItems?.[0]?.name || "Unknown product";
       const pbRes = await fetch("/api/prebookings", {
         method: "POST",
@@ -447,20 +476,38 @@ export default function DeliveriesPage() {
       }).then((r) => r.json());
 
       if (!pbRes.success) {
-        alert(pbRes.error || "Failed to create pre-booking");
+        setConfirmation({
+          type: "error",
+          title: "Pre-booking Failed",
+          referenceId: d.invoiceNo,
+          details: pbRes.error || "Failed to create pre-booking",
+        });
         return;
       }
 
-      // Update delivery status to PREBOOKED
       await fetch(`/api/deliveries/${d.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "PREBOOKED" }),
       });
 
+      setConfirmation({
+        type: "success",
+        title: "Converted to Pre-booking",
+        referenceId: d.invoiceNo,
+        items: [
+          { label: "Customer", value: d.customerName },
+          { label: "Product", value: itemName },
+        ],
+      });
       fetchData();
     } catch {
-      alert("Network error");
+      setConfirmation({
+        type: "error",
+        title: "Network Error",
+        referenceId: d.invoiceNo,
+        details: "Could not connect to server. Please try again.",
+      });
     } finally {
       setPrebooking(null);
     }
@@ -514,14 +561,14 @@ export default function DeliveriesPage() {
         <div className="flex items-center gap-1.5">
           {isAdmin && (
             <button onClick={handleBackfill} disabled={backfilling}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50">
+              className="flex items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50">
               {backfilling ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
               {backfilling ? "..." : "Backfill"}
             </button>
           )}
           {isAdmin && deliveries.length > 0 && (
-            <button onClick={handleBulkDelete} disabled={bulkDeleting}
-              className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs font-medium bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-50">
+            <button onClick={() => setBulkDeleteConfirm(true)} disabled={bulkDeleting}
+              className="flex items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-50">
               {bulkDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
               {bulkDeleting ? "..." : `Del (${deliveries.length})`}
             </button>
@@ -529,7 +576,7 @@ export default function DeliveriesPage() {
           {canFetchInvoices && (
             <button onClick={() => setFetchStep("pickDate")}
               disabled={fetchStep === "fetching" || fetchStep === "importing" || fetchStep === "pickDate"}
-              className="flex items-center gap-1 bg-slate-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50"
+              className="flex items-center gap-1 bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50"
               title="Fetch deliveries from Zoho">
               {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
               Fetch
@@ -597,12 +644,12 @@ export default function DeliveriesPage() {
           {fetchDays === -1 && (
             <div className="flex gap-2 mb-3">
               <div>
-                <label className="text-[10px] text-slate-500 block mb-0.5">From</label>
+                <label className="text-xs text-slate-500 block mb-0.5">From</label>
                 <input type="date" value={fetchCustomFrom} onChange={(e) => setFetchCustomFrom(e.target.value)}
                   className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
               </div>
               <div>
-                <label className="text-[10px] text-slate-500 block mb-0.5">To (optional)</label>
+                <label className="text-xs text-slate-500 block mb-0.5">To (optional)</label>
                 <input type="date" value={fetchCustomTo} onChange={(e) => setFetchCustomTo(e.target.value)}
                   className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
               </div>
@@ -631,19 +678,19 @@ export default function DeliveriesPage() {
         <div className="grid grid-cols-4 gap-1.5 mb-3">
           <Card className="bg-amber-50 border-amber-200"><CardContent className="p-2 text-center">
             <p className="text-lg font-bold text-amber-700">{stats.pending}</p>
-            <p className="text-[9px] text-amber-600">Pending</p>
+            <p className="text-[11px] text-amber-600">Pending</p>
           </CardContent></Card>
           <Card className="bg-blue-50 border-blue-200"><CardContent className="p-2 text-center">
             <p className="text-lg font-bold text-blue-700">{stats.scheduled}</p>
-            <p className="text-[9px] text-blue-600">Scheduled</p>
+            <p className="text-[11px] text-blue-600">Scheduled</p>
           </CardContent></Card>
           <Card className="bg-orange-50 border-orange-200"><CardContent className="p-2 text-center">
             <p className="text-lg font-bold text-orange-700">{stats.outForDelivery}</p>
-            <p className="text-[9px] text-orange-600">Out</p>
+            <p className="text-[11px] text-orange-600">Out</p>
           </CardContent></Card>
           <Card className="bg-green-50 border-green-200"><CardContent className="p-2 text-center">
             <p className="text-lg font-bold text-green-700">{stats.delivered || stats.deliveredToday}</p>
-            <p className="text-[9px] text-green-600">Delivered</p>
+            <p className="text-[11px] text-green-600">Delivered</p>
           </CardContent></Card>
         </div>
       )}
@@ -672,7 +719,7 @@ export default function DeliveriesPage() {
         <span className="flex items-center gap-1.5">
           <SlidersHorizontal className="h-3.5 w-3.5" />
           Filters
-          {dateRange !== "all" && <Badge variant="warning" className="text-[9px] ml-1">Active</Badge>}
+          {dateRange !== "all" && <Badge variant="warning" className="text-xs ml-1">Active</Badge>}
         </span>
         {showFilters ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
       </button>
@@ -784,11 +831,11 @@ export default function DeliveriesPage() {
                       <span className="text-xs font-medium text-slate-900">{r.invoiceNumber}</span>
                       <span className="text-xs font-semibold text-slate-700">{formatINR(r.total)}</span>
                     </div>
-                    <p className="text-[10px] text-slate-600">
+                    <p className="text-xs text-slate-600">
                       {r.customerName}
                       {r.phone ? ` | ${r.phone}` : ""}
                     </p>
-                    <p className="text-[10px] text-slate-400">
+                    <p className="text-xs text-slate-400">
                       {r.date} | {r.status}
                       {r.alreadyImported && (
                         <span className="text-green-600 font-medium ml-1">
@@ -866,9 +913,9 @@ export default function DeliveriesPage() {
                       <span className="text-xs font-medium text-slate-900">{inv.data.invoiceNumber}</span>
                       <span className="text-xs font-semibold text-slate-700">{formatINR(inv.data.total)}</span>
                     </div>
-                    <p className="text-[10px] text-slate-600">{inv.data.customerName}</p>
+                    <p className="text-xs text-slate-600">{inv.data.customerName}</p>
                     {inv.data.lineItems.length > 0 && (
-                      <p className="text-[10px] text-slate-400 mt-0.5">
+                      <p className="text-xs text-slate-400 mt-0.5">
                         {inv.data.lineItems.slice(0, 2).map(li => `${li.name} x${li.quantity}`).join(" | ")}
                         {inv.data.lineItems.length > 2 && ` +${inv.data.lineItems.length - 2}`}
                       </p>
@@ -911,19 +958,19 @@ export default function DeliveriesPage() {
                 <CardContent className="p-3.5">
                   <div className="flex items-start justify-between mb-1.5">
                     <div className="flex-1 min-w-0 mr-2">
-                        <p className="text-sm font-semibold text-slate-900">{d.invoiceNo}</p>
-                      <p className="text-xs text-slate-600">{d.customerName}</p>
+                        <p className="text-base font-semibold text-slate-900">{d.invoiceNo}</p>
+                      <p className="text-sm font-medium text-slate-600">{d.customerName}</p>
                       {items.length > 0 && (
-                        <p className="text-[10px] text-slate-700 font-medium mt-0.5">
+                        <p className="text-xs text-slate-700 font-medium mt-0.5">
                           {items.map((item, i) => (
                             <span key={i}>{item.name}{item.quantity > 1 ? ` x${item.quantity}` : ""}{i < items.length - 1 ? ", " : ""}</span>
                           ))}
                         </p>
                       )}
                       {d.salesPerson && (
-                        <p className="text-[10px] text-purple-600">Sales: {d.salesPerson}</p>
+                        <p className="text-xs text-purple-600">Sales: {d.salesPerson}</p>
                       )}
-                      <p className="text-[10px] text-slate-400">
+                      <p className="text-xs text-slate-400">
                         {formatINR(d.invoiceAmount)} | {new Date(d.invoiceDate).toLocaleDateString("en-IN")}
                       </p>
                     </div>
@@ -932,13 +979,13 @@ export default function DeliveriesPage() {
                         {cfg.label}
                       </Badge>
                       {d.isOutstation && (
-                        <Badge variant={"warning"} className="text-[9px]">Outstation</Badge>
+                        <Badge variant={"warning"} className="text-xs">Outstation</Badge>
                       )}
                       {d.reversePickup && (
-                        <Badge variant={"info"} className="text-[9px]">Reverse</Badge>
+                        <Badge variant={"info"} className="text-xs">Reverse</Badge>
                       )}
                       {aging && aging.level !== "ok" && (
-                        <span className={`block text-[9px] font-medium px-1.5 py-0.5 rounded-full ${AGING_BADGE[aging.level]}`}>
+                        <span className={`block text-xs font-medium px-1.5 py-0.5 rounded-full ${AGING_BADGE[aging.level]}`}>
                           {aging.text}
                         </span>
                       )}
@@ -947,7 +994,7 @@ export default function DeliveriesPage() {
 
                   {/* Scheduled info / inline date editor */}
                   {d.scheduledDate && editingDateId !== d.id && (
-                    <p className="text-[10px] text-blue-600 mb-1.5 cursor-pointer" onClick={(e) => {
+                    <p className="text-xs text-blue-600 mb-1.5 cursor-pointer" onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
                       setEditDate(d.scheduledDate!.slice(0, 10));
@@ -973,7 +1020,7 @@ export default function DeliveriesPage() {
                           const val = `${d2.getFullYear()}-${String(d2.getMonth()+1).padStart(2,'0')}-${String(d2.getDate()).padStart(2,'0')}`;
                           return (
                             <button key={opt.label} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditDate(val); }}
-                              className={`px-2 py-1 rounded-full text-[10px] font-medium transition-colors ${
+                              className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${
                                 editDate === val ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
                               }`}>
                               {opt.label}
@@ -982,16 +1029,16 @@ export default function DeliveriesPage() {
                         })}
                       </div>
                       {editDate && (
-                        <p className="text-[10px] text-blue-600">
+                        <p className="text-xs text-blue-600">
                           {new Date(editDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
                         </p>
                       )}
                       <div className="flex gap-1.5">
                         <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleSaveDate(d.id); }}
                           disabled={!editDate}
-                          className="bg-blue-600 text-white px-2.5 py-1 rounded-md text-[10px] font-medium disabled:opacity-50">Save</button>
+                          className="bg-blue-600 text-white px-2.5 py-2 rounded-md text-xs font-medium disabled:opacity-50">Save</button>
                         <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingDateId(null); }}
-                          className="text-slate-400 text-[10px]">Cancel</button>
+                          className="text-slate-400 text-xs">Cancel</button>
                       </div>
                     </div>
                   )}
@@ -1005,7 +1052,7 @@ export default function DeliveriesPage() {
                       tomorrow.setDate(tomorrow.getDate() + 1);
                       setEditDate(`${tomorrow.getFullYear()}-${String(tomorrow.getMonth()+1).padStart(2,'0')}-${String(tomorrow.getDate()).padStart(2,'0')}`);
                       setEditingDateId(d.id);
-                    }} className="text-[10px] text-blue-500 mb-1.5">
+                    }} className="text-xs text-blue-500 mb-1.5">
                       + Set delivery date
                     </button>
                   )}
@@ -1013,7 +1060,7 @@ export default function DeliveriesPage() {
                   {/* Flag reason */}
                   {d.status === "FLAGGED" && d.flagReason && (
                     <div className="bg-red-50 rounded p-1.5 mb-1.5">
-                      <p className="text-[10px] text-red-600"><AlertTriangle className="h-3 w-3 inline mr-1" />{d.flagReason}</p>
+                      <p className="text-xs text-red-600"><AlertTriangle className="h-3 w-3 inline mr-1" />{d.flagReason}</p>
                     </div>
                   )}
 
@@ -1022,29 +1069,29 @@ export default function DeliveriesPage() {
                     {d.status === "PENDING" && (
                       <>
                         <Link href={`/deliveries/${d.id}`} className="flex-1">
-                          <button className="w-full bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Schedule</button>
+                          <button className="w-full bg-blue-600 text-white py-2 rounded-md text-xs font-medium">Schedule</button>
                         </Link>
                         <Link href={`/deliveries/${d.id}?action=walkout`} className="flex-1">
-                          <button className="w-full bg-green-600 text-white py-1.5 rounded-md text-xs font-medium">Walk-out</button>
+                          <button className="w-full bg-green-600 text-white py-2 rounded-md text-xs font-medium">Walk-out</button>
                         </Link>
-                        <button onClick={() => handleConvertToPrebook(d)} disabled={prebooking === d.id}
-                          className="flex-1 flex items-center justify-center gap-1 bg-purple-600 text-white py-1.5 rounded-md text-xs font-medium disabled:opacity-50">
+                        <button onClick={() => setPrebookConfirm(d)} disabled={prebooking === d.id}
+                          className="flex-1 flex items-center justify-center gap-1 bg-purple-600 text-white py-2 rounded-md text-xs font-medium disabled:opacity-50">
                           {prebooking === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Package className="h-3 w-3" />} Pre-book
                         </button>
                       </>
                     )}
                     {d.status === "SCHEDULED" && (
                       <Link href="/deliveries/dispatch" className="flex-1">
-                        <button className="w-full bg-orange-600 text-white py-1.5 rounded-md text-xs font-medium">Go to Dispatch</button>
+                        <button className="w-full bg-orange-600 text-white py-2 rounded-md text-xs font-medium">Go to Dispatch</button>
                       </Link>
                     )}
                     {d.status === "PREBOOKED" && (
                       <button onClick={() => handleMarkReady(d.id)}
-                        className="flex-1 bg-blue-600 text-white py-1.5 rounded-md text-xs font-medium">Mark Ready</button>
+                        className="flex-1 bg-blue-600 text-white py-2 rounded-md text-xs font-medium">Mark Ready</button>
                     )}
                     {(role === "ADMIN" || role === "CEO") && (
-                      <button onClick={() => handleDelete(d.id)} disabled={deleting === d.id}
-                        className="bg-slate-100 text-slate-500 px-2 py-1.5 rounded-md text-xs hover:bg-red-50 hover:text-red-600 disabled:opacity-50">
+                      <button onClick={() => setDeleteConfirm(d.id)} disabled={deleting === d.id}
+                        className="bg-slate-100 text-slate-500 px-2 py-2 rounded-md text-xs hover:bg-red-50 hover:text-red-600 disabled:opacity-50">
                         {deleting === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
                       </button>
                     )}
@@ -1055,6 +1102,135 @@ export default function DeliveriesPage() {
           })}
         </div>
       )}
+
+      {/* Delete Confirmation Dialog */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setDeleteConfirm(null)} />
+          <div className="relative w-full max-w-md bg-white rounded-t-2xl p-5 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-900">Delete Delivery?</h3>
+            <p className="text-sm text-slate-600 mt-1">This delivery entry will be permanently removed. This cannot be undone.</p>
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => handleDelete(deleteConfirm)}
+                disabled={deleting === deleteConfirm}
+                className="flex-1 h-12 bg-red-600 text-white rounded-xl font-semibold disabled:opacity-50"
+              >
+                {deleting === deleteConfirm ? "Deleting..." : "Delete"}
+              </button>
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                className="flex-1 h-12 bg-slate-100 text-slate-700 rounded-xl font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Confirmation Dialog */}
+      {bulkDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setBulkDeleteConfirm(false)} />
+          <div className="relative w-full max-w-md bg-white rounded-t-2xl p-5 shadow-xl">
+            <h3 className="text-lg font-semibold text-red-900">Delete ALL {deliveries.length} deliveries?</h3>
+            <p className="text-sm text-slate-600 mt-1">This will delete every delivery in the current view. This cannot be undone.</p>
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                className="flex-1 h-12 bg-red-600 text-white rounded-xl font-semibold disabled:opacity-50"
+              >
+                {bulkDeleting ? "Deleting..." : `Delete ${deliveries.length}`}
+              </button>
+              <button
+                onClick={() => setBulkDeleteConfirm(false)}
+                className="flex-1 h-12 bg-slate-100 text-slate-700 rounded-xl font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Flag Reason Modal */}
+      {flagModal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => { setFlagModal(null); setFlagReason(""); }} />
+          <div className="relative w-full max-w-md bg-white rounded-t-2xl p-5 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-900">Flag {flagModal.invoiceNo}</h3>
+            <p className="text-sm text-slate-600 mt-1">Enter the reason for flagging this delivery.</p>
+            <textarea
+              value={flagReason}
+              onChange={(e) => setFlagReason(e.target.value)}
+              placeholder="e.g. Customer not reachable, wrong address..."
+              className="w-full mt-3 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400 resize-none"
+              rows={3}
+              autoFocus
+            />
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => handleFlag(flagModal.id, flagReason)}
+                disabled={!flagReason.trim()}
+                className="flex-1 h-12 bg-red-600 text-white rounded-xl font-semibold disabled:opacity-50"
+              >
+                Flag Delivery
+              </button>
+              <button
+                onClick={() => { setFlagModal(null); setFlagReason(""); }}
+                className="flex-1 h-12 bg-slate-100 text-slate-700 rounded-xl font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Pre-book Confirmation Dialog */}
+      {prebookConfirm && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setPrebookConfirm(null)} />
+          <div className="relative w-full max-w-md bg-white rounded-t-2xl p-5 shadow-xl">
+            <h3 className="text-lg font-semibold text-slate-900">Convert to Pre-Booking?</h3>
+            <p className="text-sm text-slate-600 mt-1">
+              <span className="font-semibold">{prebookConfirm.invoiceNo}</span> will be converted to a pre-booking. The delivery status will change to Prebooked.
+            </p>
+            <div className="bg-purple-50 rounded-lg p-3 mt-3 space-y-1">
+              <p className="text-sm text-purple-900"><span className="text-slate-500">Customer:</span> {prebookConfirm.customerName}</p>
+              <p className="text-sm text-purple-900"><span className="text-slate-500">Product:</span> {prebookConfirm.lineItems?.[0]?.name || "Unknown"}</p>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => handleConvertToPrebook(prebookConfirm)}
+                disabled={prebooking === prebookConfirm.id}
+                className="flex-1 h-12 bg-purple-600 text-white rounded-xl font-semibold disabled:opacity-50"
+              >
+                {prebooking === prebookConfirm.id ? "Converting..." : "Convert"}
+              </button>
+              <button
+                onClick={() => setPrebookConfirm(null)}
+                className="flex-1 h-12 bg-slate-100 text-slate-700 rounded-xl font-semibold"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Action Confirmation */}
+      <ActionConfirmation
+        open={!!confirmation}
+        onClose={() => setConfirmation(null)}
+        type={confirmation?.type || "success"}
+        title={confirmation?.title || ""}
+        referenceId={confirmation?.referenceId || ""}
+        items={confirmation?.items}
+        details={confirmation?.details}
+      />
     </div>
   );
 }

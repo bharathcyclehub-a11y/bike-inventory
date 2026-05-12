@@ -37,24 +37,24 @@ export function TransactionItem({
         )}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-slate-900">
+        <p className="text-base font-medium text-slate-900">
           {label || productName}
         </p>
-        <p className="text-xs text-slate-500">
+        <p className="text-sm text-slate-500">
           {sku} {reference ? `| ${reference}` : ""}
         </p>
       </div>
       <div className="text-right shrink-0">
         <p
-          className={cn("text-sm font-semibold", {
-            "text-blue-600": direction === "in",
+          className={cn("text-base font-bold", {
+            "text-green-600": direction === "in",
             "text-orange-500": direction === "out",
           })}
         >
           {direction === "in" ? "+" : "-"}
           {quantity}
         </p>
-        <p className="text-xs text-slate-400">{time}</p>
+        <p className="text-sm text-slate-400">{time}</p>
       </div>
     </div>
   );
