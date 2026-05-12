@@ -23,6 +23,7 @@ export default function BarcodePage({ params }: { params: Promise<{ id: string }
   const [barcodeImages, setBarcodeImages] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [barcodeType, setBarcodeType] = useState<"code128" | "qrcode">("code128");
+  const [printWarning, setPrintWarning] = useState<string | null>(null);
   const printRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -112,7 +113,7 @@ export default function BarcodePage({ params }: { params: Promise<{ id: string }
         win.document.close();
         setTimeout(() => win.print(), 300);
       } else {
-        alert("Popup blocked. Please allow popups for this site.");
+        setPrintWarning("Popup blocked. Please allow popups for this site.");
       }
       return;
     }
@@ -136,6 +137,13 @@ export default function BarcodePage({ params }: { params: Promise<{ id: string }
           <p className="text-xs text-slate-500">{productName} ({productSku})</p>
         </div>
       </div>
+
+      {printWarning && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3 text-xs text-amber-700 flex items-center justify-between">
+          <span>{printWarning}</span>
+          <button onClick={() => setPrintWarning(null)} className="text-amber-400 hover:text-amber-600 ml-2 text-sm leading-none">&times;</button>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 mb-4">
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1 flex-1">

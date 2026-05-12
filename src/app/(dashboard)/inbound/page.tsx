@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { useDebounce } from "@/lib/utils";
 import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 import { usePermissions } from "@/lib/use-permissions";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface InboundShipment {
   id: string;
@@ -147,7 +148,13 @@ export default function InboundPage() {
         }
         if (statsRes.success) setStats(statsRes.data);
       })
-      .catch((e) => { setFetchError(e instanceof Error ? e.message : "Failed to load shipments"); })
+      .catch((e) => {
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          setFetchError("You're offline. Check your connection and retry.");
+        } else {
+          setFetchError(e instanceof Error ? e.message : "Failed to load data. Tap retry.");
+        }
+      })
       .finally(() => setLoading(false));
   }, [filter, debouncedSearch, dateFrom, dateTo]);
 
@@ -397,16 +404,12 @@ export default function InboundPage() {
 
       {/* Fetch Error */}
       {fetchError && (
-        <div className={`rounded-lg p-2.5 mb-2 text-xs ${
-          fetchError.toLowerCase().includes("fail") || fetchError.toLowerCase().includes("error") || fetchError.toLowerCase().includes("timed out")
-            ? "bg-red-50 border border-red-200 text-red-700"
-            : "bg-amber-50 border border-amber-200 text-amber-700"
-        }`}>
-          {fetchError.split("\n").map((line, i) => (
-            <p key={i}>{line}</p>
-          ))}
-          <button onClick={() => setFetchError("")} className="mt-1 underline">dismiss</button>
-        </div>
+        <ErrorBanner
+          message={fetchError}
+          type={typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error"}
+          onRetry={() => { setFetchError(""); fetchData(); }}
+          onDismiss={() => setFetchError("")}
+        />
       )}
 
       {/* Bill Selection Panel */}

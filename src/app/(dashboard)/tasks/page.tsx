@@ -165,6 +165,7 @@ export default function TasksPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Detail form
   const [editTitle, setEditTitle] = useState("");
@@ -629,6 +630,14 @@ export default function TasksPage() {
         </div>
       )}
 
+      {/* ── Action error banner ─────────────────────────── */}
+      {actionError && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center justify-between text-red-700 text-xs">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} className="text-red-400 hover:text-red-600 text-sm leading-none">&times;</button>
+        </div>
+      )}
+
       {/* ── Header ─────────────────────────────────────── */}
       <div className="bg-white border-b border-gray-100 px-4 pt-3 pb-2">
         <div className="flex items-center justify-between mb-2">
@@ -738,9 +747,9 @@ export default function TasksPage() {
                     if (json.success) {
                       fetchTasks();
                     } else {
-                      alert(json.error || "Seed failed");
+                      setActionError(json.error || "Seed failed");
                     }
-                  } catch { alert("Network error"); }
+                  } catch { setActionError("Network error"); }
                   setSeeding(false);
                 }}
                 className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl shadow active:scale-95 transition-transform disabled:opacity-50"

@@ -78,6 +78,7 @@ export default function VendorIssuesPage() {
   const [dateTo, setDateTo] = useState<string | undefined>();
   const [showFilters, setShowFilters] = useState(false);
   const [brandFilter, setBrandFilter] = useState("ALL");
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const activeFilterCount = [
     statusFilter !== "ALL",
@@ -184,9 +185,9 @@ export default function VendorIssuesPage() {
       if (res.success) {
         setIssues((prev) => prev.filter((i) => i.id !== issueId));
       } else {
-        alert(res.error || "Failed to delete");
+        setActionError(res.error || "Failed to delete");
       }
-    } catch { alert("Network error"); }
+    } catch { setActionError("Network error"); }
   };
 
   const renderIssueCard = (issue: IssueItem) => (
@@ -250,6 +251,13 @@ export default function VendorIssuesPage() {
           <Share2 className="w-4 h-4 text-white" />
         </button>
       </div>
+
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700 flex items-center justify-between">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} className="text-red-400 hover:text-red-600 ml-2 text-sm leading-none">&times;</button>
+        </div>
+      )}
 
       {/* Source Tabs — top-level, always visible */}
       <div className="flex gap-2 mb-3">

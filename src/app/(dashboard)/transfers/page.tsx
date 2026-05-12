@@ -1,14 +1,16 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Plus, ArrowRightLeft, ArrowRight, CheckCircle2, XCircle, Clock, Loader2, Package } from "lucide-react";
+import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
 import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 interface TransferOrderItem {
   id: string;
@@ -53,8 +55,9 @@ export default function TransfersPage() {
     items?: Array<{ label: string; value: string }>;
     details?: string;
   } | null>(null);
+  const [dataError, setDataError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchData = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
     if (filter !== "all") params.set("status", filter);
@@ -64,9 +67,17 @@ export default function TransfersPage() {
     fetch(`/api/transfer-orders?${params}`)
       .then((r) => r.json())
       .then((res) => { if (res.success) setOrders(res.data); })
-      .catch(() => {})
+      .catch((e) => {
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          setDataError("You're offline. Check your connection and retry.");
+        } else {
+          setDataError(e instanceof Error ? e.message : "Failed to load data. Tap retry.");
+        }
+      })
       .finally(() => setLoading(false));
   }, [filter, dateFrom, dateTo]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   async function handleAction(id: string, action: "approve" | "reject") {
     setApproving(id);
@@ -118,12 +129,11 @@ export default function TransfersPage() {
   }
 
   const statusBadge = (status: string) => {
-    switch (status) {
-      case "APPROVED": return <Badge variant="success"><CheckCircle2 className="h-3 w-3 mr-0.5" />Approved</Badge>;
-      case "PENDING": return <Badge variant="warning"><Clock className="h-3 w-3 mr-0.5" />Pending</Badge>;
-      case "REJECTED": return <Badge variant="danger"><XCircle className="h-3 w-3 mr-0.5" />Rejected</Badge>;
-      default: return <Badge>{status}</Badge>;
-    }
+    const icon = status === "APPROVED" ? <CheckCircle2 className="h-3 w-3 mr-0.5" />
+      : status === "PENDING" ? <Clock className="h-3 w-3 mr-0.5" />
+      : status === "REJECTED" ? <XCircle className="h-3 w-3 mr-0.5" />
+      : null;
+    return <Badge className={`text-xs ${getStatusColor(status)}`}>{icon}{getStatusLabel(status)}</Badge>;
   };
 
   return (
@@ -156,6 +166,16 @@ export default function TransfersPage() {
           </button>
         ))}
       </div>
+
+      {/* Data Load Error */}
+      {dataError && (
+        <ErrorBanner
+          message={dataError}
+          type={typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error"}
+          onRetry={() => { setDataError(null); fetchData(); }}
+          onDismiss={() => setDataError(null)}
+        />
+      )}
 
       {loading ? (
         <div className="space-y-2">

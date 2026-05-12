@@ -267,11 +267,11 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       });
       const data = await res.json();
       if (!data.success) {
-        alert(data.error || `Failed to change status to ${newStatus}`);
+        setActionError(data.error || `Failed to change status to ${newStatus}`);
       }
       fetchSummary();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Network error");
+      setActionError(e instanceof Error ? e.message : "Network error");
     }
     finally { setActionLoading(false); }
   };
@@ -292,8 +292,8 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       const res = await fetch(`/api/stock-counts/${id}`, { method: "DELETE" });
       const data = await res.json();
       if (data.success) router.push("/stock-audit");
-      else alert(data.error || "Failed to delete");
-    } catch { alert("Failed to delete"); }
+      else setActionError(data.error || "Failed to delete");
+    } catch { setActionError("Failed to delete"); }
     finally { setDeleting(false); }
   };
 

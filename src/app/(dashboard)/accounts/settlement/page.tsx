@@ -53,6 +53,7 @@ export default function SettlementListPage() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Progress state
   const [fetchStep, setFetchStep] = useState<FetchStep>("idle");
@@ -167,8 +168,8 @@ export default function SettlementListPage() {
       });
       const data = await res.json();
       if (data.success) loadSettlements();
-      else alert(data.error || "Failed to create settlement");
-    } catch { alert("Network error"); }
+      else setActionError(data.error || "Failed to create settlement");
+    } catch { setActionError("Network error"); }
     finally { setCreating(false); }
   };
 
@@ -185,8 +186,8 @@ export default function SettlementListPage() {
       });
       const data = await res.json();
       if (data.success) loadSettlements();
-      else alert(data.error || "Failed to delete");
-    } catch { alert("Network error"); }
+      else setActionError(data.error || "Failed to delete");
+    } catch { setActionError("Network error"); }
     finally { setDeleting(null); }
   };
 
@@ -210,6 +211,13 @@ export default function SettlementListPage() {
         <Link href="/accounts"><ArrowLeft className="h-5 w-5 text-slate-500" /></Link>
         <h1 className="text-lg font-bold text-slate-900 flex-1">Daily Settlement</h1>
       </div>
+
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700 flex items-center justify-between">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} className="text-red-400 hover:text-red-600 ml-2 text-sm leading-none">&times;</button>
+        </div>
+      )}
 
       {/* Actions */}
       <div className="flex gap-2 mb-3">

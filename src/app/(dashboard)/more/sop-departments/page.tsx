@@ -15,6 +15,7 @@ export default function SOPDepartmentsPage() {
   const [saving, setSaving] = useState(false);
   const [newDept, setNewDept] = useState("");
   const [saved, setSaved] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/settings?key=sop_departments")
@@ -43,7 +44,7 @@ export default function SOPDepartmentsPage() {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch {
-      alert("Failed to save");
+      setActionError("Failed to save");
     }
     setSaving(false);
   };
@@ -76,6 +77,13 @@ export default function SOPDepartmentsPage() {
       <p className="text-xs text-slate-500 mb-4">
         Manage the department categories used for SOPs. These appear as filter chips and category options when creating SOPs.
       </p>
+
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700 flex items-center justify-between">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} className="text-red-400 hover:text-red-600 ml-2 text-sm leading-none">&times;</button>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-slate-400" /></div>

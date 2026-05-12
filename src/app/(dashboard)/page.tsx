@@ -135,6 +135,7 @@ function MyTasksWidget() {
 
 function ShareDailyReport() {
   const [sharing, setSharing] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
 
   const handleShare = async () => {
     setSharing(true);
@@ -148,7 +149,7 @@ function ShareDailyReport() {
       const dateStr = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 
       if (totalActions === 0) {
-        alert("No activities recorded today yet. Complete some tasks first, then share.");
+        setShareError("No activities recorded today yet. Complete some tasks first, then share.");
         return;
       }
 
@@ -186,23 +187,32 @@ function ShareDailyReport() {
       // Open WhatsApp
       window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`, "_blank");
     } catch {
-      alert("Failed to load activity data");
+      setShareError("Failed to load activity data");
     } finally {
       setSharing(false);
     }
   };
 
   return (
-    <button onClick={handleShare} disabled={sharing}
-      className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50 w-full justify-center">
-      {sharing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
-      {sharing ? "Loading..." : "Share Daily Report via WhatsApp"}
-    </button>
+    <>
+      {shareError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-2 text-xs text-red-700 flex items-center justify-between">
+          <span>{shareError}</span>
+          <button onClick={() => setShareError(null)} className="text-red-400 hover:text-red-600 ml-2 text-sm leading-none">&times;</button>
+        </div>
+      )}
+      <button onClick={handleShare} disabled={sharing}
+        className="flex items-center gap-1.5 bg-green-600 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50 w-full justify-center">
+        {sharing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
+        {sharing ? "Loading..." : "Share Daily Report via WhatsApp"}
+      </button>
+    </>
   );
 }
 
 function InwardsEODReport() {
   const [sharing, setSharing] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   const handleShare = async () => {
     setSharing(true);
@@ -262,18 +272,26 @@ function InwardsEODReport() {
       msg += `— Bharath Cycle Hub App`;
       window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`, "_blank");
     } catch {
-      alert("Failed to load report data");
+      setReportError("Failed to load report data");
     } finally {
       setSharing(false);
     }
   };
 
   return (
-    <button onClick={handleShare} disabled={sharing}
-      className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50 w-full justify-center mb-2">
-      {sharing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
-      {sharing ? "Loading..." : "Share Inwards EOD Report"}
-    </button>
+    <>
+      {reportError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-2 text-xs text-red-700 flex items-center justify-between">
+          <span>{reportError}</span>
+          <button onClick={() => setReportError(null)} className="text-red-400 hover:text-red-600 ml-2 text-sm leading-none">&times;</button>
+        </div>
+      )}
+      <button onClick={handleShare} disabled={sharing}
+        className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50 w-full justify-center mb-2">
+        {sharing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Share2 className="h-3.5 w-3.5" />}
+        {sharing ? "Loading..." : "Share Inwards EOD Report"}
+      </button>
+    </>
   );
 }
 

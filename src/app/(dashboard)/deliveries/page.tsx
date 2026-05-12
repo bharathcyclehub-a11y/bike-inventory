@@ -15,6 +15,8 @@ import { useDebounce, getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
 import { DateFilter, type DateRangeKey } from "@/components/date-filter";
 import { usePermissions } from "@/lib/use-permissions";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
+import { ErrorBanner } from "@/components/ui/error-banner";
+import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
 
 interface DeliveryItem {
   id: string;
@@ -129,6 +131,7 @@ export default function DeliveriesPage() {
   const [fetchCustomFrom, setFetchCustomFrom] = useState("");
   const [fetchCustomTo, setFetchCustomTo] = useState("");
 
+  const [dataError, setDataError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showOutstation, setShowOutstation] = useState(false);
@@ -163,7 +166,13 @@ export default function DeliveriesPage() {
         if (listRes.success) setDeliveries(listRes.data);
         if (statsRes.success) setStats(statsRes.data);
       })
-      .catch(() => {})
+      .catch((e) => {
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          setDataError("You're offline. Check your connection and retry.");
+        } else {
+          setDataError(e instanceof Error ? e.message : "Failed to load data. Tap retry.");
+        }
+      })
       .finally(() => setLoading(false));
   }, [filter, debouncedSearch, showOutstation, dateRange, dateFrom, dateTo]);
 
@@ -936,6 +945,16 @@ export default function DeliveriesPage() {
         </div>
       )}
 
+      {/* Data Load Error */}
+      {dataError && (
+        <ErrorBanner
+          message={dataError}
+          type={typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error"}
+          onRetry={() => { setDataError(null); fetchData(); }}
+          onDismiss={() => setDataError(null)}
+        />
+      )}
+
       {/* Delivery Cards */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
@@ -975,8 +994,8 @@ export default function DeliveriesPage() {
                       </p>
                     </div>
                     <div className="text-right space-y-1">
-                      <Badge variant={cfg.variant as "warning" | "info" | "success" | "danger" | "default"}>
-                        {cfg.label}
+                      <Badge className={`text-xs ${getStatusColor(d.status)}`}>
+                        {getStatusLabel(d.status)}
                       </Badge>
                       {d.isOutstation && (
                         <Badge variant={"warning"} className="text-xs">Outstation</Badge>

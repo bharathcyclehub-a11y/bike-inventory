@@ -5,6 +5,7 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Phone, CheckCircle2, Calendar, Truck, MapPin, RotateCcw, Save, Trash2, ShieldCheck, AlertTriangle } from "lucide-react";
+import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -466,11 +467,10 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
 
   const deliveredCount = shipment.lineItems.filter((li) => li.isDelivered).length;
   const needsBinCount = shipment.lineItems.filter((li) => li.isDelivered && !li.binId).length;
-  const statusBadge = shipment.status === "DELIVERED"
-    ? { variant: "success" as const, label: "Delivered" }
-    : shipment.status === "PARTIALLY_DELIVERED"
-    ? { variant: "info" as const, label: "Partial" }
-    : { variant: "warning" as const, label: "In Transit" };
+  const statusBadge = {
+    colorClass: getStatusColor(shipment.status === "PARTIALLY_DELIVERED" ? "PARTIAL" : shipment.status),
+    label: shipment.status === "PARTIALLY_DELIVERED" ? "Partial" : getStatusLabel(shipment.status),
+  };
 
   const putawayReady = Object.entries(binSelections).filter(([liId]) => {
     const li = shipment.lineItems.find((l) => l.id === liId);
@@ -484,7 +484,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <h1 className="text-lg font-bold text-slate-900">{shipment.shipmentNo}</h1>
-            <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+            <Badge className={`text-xs ${statusBadge.colorClass}`}>{statusBadge.label}</Badge>
           </div>
           <p className="text-xs text-slate-500">{shipment.brand.name} | Bill: {shipment.billNo}</p>
         </div>

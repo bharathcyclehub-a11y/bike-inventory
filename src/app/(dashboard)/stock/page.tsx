@@ -12,6 +12,7 @@ import { useDebounce, fuzzySearchFields } from "@/lib/utils";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { usePermissions } from "@/lib/use-permissions";
+import { ErrorBanner } from "@/components/ui/error-banner";
 
 const STOCK_COLUMNS: ExportColumn[] = [
   { header: "SKU", key: "sku" },
@@ -113,6 +114,7 @@ export default function StockPage() {
   const [fetchCustomFrom, setFetchCustomFrom] = useState("");
   const [fetchCustomTo, setFetchCustomTo] = useState("");
 
+  const [dataError, setDataError] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -423,7 +425,13 @@ export default function StockPage() {
           setLastUpdated(new Date());
         }
       })
-      .catch(() => {})
+      .catch((e) => {
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          setDataError("You're offline. Check your connection and retry.");
+        } else {
+          setDataError(e instanceof Error ? e.message : "Failed to load data. Tap retry.");
+        }
+      })
       .finally(() => {
         setLoading(false);
         setLoadingMore(false);
@@ -702,6 +710,16 @@ export default function StockPage() {
           <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
           <span className="text-xs text-blue-700 font-medium">Importing items into catalog...</span>
         </div>
+      )}
+
+      {/* Data Load Error */}
+      {dataError && (
+        <ErrorBanner
+          message={dataError}
+          type={typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error"}
+          onRetry={() => { setDataError(null); fetchProducts(1); }}
+          onDismiss={() => setDataError(null)}
+        />
       )}
 
       {/* View Tabs */}

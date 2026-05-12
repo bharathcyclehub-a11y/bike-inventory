@@ -8,6 +8,7 @@ import { ArrowLeft, Loader2, Truck, Phone, MapPin, Package, Search } from "lucid
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDebounce, getAging, AGING_COLORS } from "@/lib/utils";
+import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
 
 interface OutstationDelivery {
   id: string;
@@ -24,18 +25,6 @@ interface OutstationDelivery {
   courierName: string | null;
   trackingNo: string | null;
 }
-
-const STATUS_COLORS: Record<string, string> = {
-  PENDING: "bg-amber-100 text-amber-700",
-  VERIFIED: "bg-blue-100 text-blue-700",
-  SCHEDULED: "bg-blue-100 text-blue-700",
-  PACKED: "bg-purple-100 text-purple-700",
-  OUT_FOR_DELIVERY: "bg-orange-100 text-orange-700",
-  SHIPPED: "bg-indigo-100 text-indigo-700",
-  IN_TRANSIT: "bg-orange-100 text-orange-700",
-  DELIVERED: "bg-green-100 text-green-700",
-  FLAGGED: "bg-red-100 text-red-700",
-};
 
 export default function OutstationDeliveriesPage() {
   const { data: session } = useSession();
@@ -117,9 +106,9 @@ export default function OutstationDeliveriesPage() {
                       <p className="text-[10px] text-slate-500">{d.invoiceNo}</p>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <Badge className={`text-[9px] ${AGING_COLORS[aging.level] || ""}`}>{aging.text}</Badge>
-                      <Badge className={`text-[9px] ${STATUS_COLORS[d.status] || "bg-slate-100 text-slate-600"}`}>
-                        {d.status === "IN_TRANSIT" ? "In Transit" : d.status === "OUT_FOR_DELIVERY" ? "Out for Delivery" : d.status.charAt(0) + d.status.slice(1).toLowerCase()}
+                      <Badge className={`text-xs ${AGING_COLORS[aging.level] || ""}`}>{aging.text}</Badge>
+                      <Badge className={`text-xs ${getStatusColor(d.status)}`}>
+                        {getStatusLabel(d.status)}
                       </Badge>
                     </div>
                   </div>

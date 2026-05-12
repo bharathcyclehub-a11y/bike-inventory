@@ -138,6 +138,7 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
   const [matchingMode, setMatchingMode] = useState<string | null>(null);
   const [searchTxn, setSearchTxn] = useState("");
   const [matchingTxnId, setMatchingTxnId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const loadData = () => {
     setLoading(true);
@@ -167,8 +168,8 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
       });
       const data = await res.json();
       if (data.success) loadData();
-      else alert(data.error);
-    } catch { alert("Network error"); }
+      else setActionError(data.error || "Failed to verify cash");
+    } catch { setActionError("Network error"); }
     finally { setVerifying(false); }
   };
 
@@ -188,14 +189,14 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
       });
       const data = await res.json();
       if (data.success) { setEditingBreakdown(false); loadData(); }
-      else alert(data.error);
-    } catch { alert("Network error"); }
+      else setActionError(data.error || "Failed to save breakdown");
+    } catch { setActionError("Network error"); }
     finally { setSavingBreakdown(false); }
   };
 
   const saveCashFlow = async () => {
     if (!cashOutInput && !cashInInput) return;
-    if (cashOutInput && !cashOutReason.trim()) { alert("Cash out reason is required"); return; }
+    if (cashOutInput && !cashOutReason.trim()) { setActionError("Cash out reason is required"); return; }
     setSavingCashFlow(true);
     try {
       const res = await fetch(`/api/pos/settlement/${id}`, {
@@ -209,8 +210,8 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
       });
       const data = await res.json();
       if (data.success) { setCashInInput(""); setCashOutInput(""); setCashOutReason(""); loadData(); }
-      else alert(data.error);
-    } catch { alert("Network error"); }
+      else setActionError(data.error || "Failed to save cash flow");
+    } catch { setActionError("Network error"); }
     finally { setSavingCashFlow(false); }
   };
 
@@ -225,8 +226,8 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
       });
       const data = await res.json();
       if (data.success) { setMatchingMode(null); setSearchTxn(""); loadData(); }
-      else alert(data.error);
-    } catch { alert("Network error"); }
+      else setActionError(data.error || "Failed to match transaction");
+    } catch { setActionError("Network error"); }
     finally { setMatchingTxnId(null); }
   };
 
@@ -240,8 +241,8 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
       });
       const data = await res.json();
       if (data.success) loadData();
-      else alert(data.error);
-    } catch { alert("Network error"); }
+      else setActionError(data.error || "Failed to remove match");
+    } catch { setActionError("Network error"); }
   };
 
   if (!canAccess) return <div className="text-center py-12"><p className="text-sm font-medium text-red-600">Access Denied</p></div>;
@@ -271,6 +272,13 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <div>
+      {actionError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700 flex items-center justify-between">
+          <span>{actionError}</span>
+          <button onClick={() => setActionError(null)} className="text-red-400 hover:text-red-600 ml-2 text-sm leading-none">&times;</button>
+        </div>
+      )}
+
       <div className="flex items-center gap-2 mb-3">
         <Link href="/accounts/settlement">
           <ArrowLeft className="h-5 w-5 text-slate-500" />

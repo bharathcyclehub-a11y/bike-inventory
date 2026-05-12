@@ -220,10 +220,10 @@ export default function PreBookingsPage() {
         setManualMatchPb(null);
         fetchData();
       } else {
-        alert(res.error || "Match failed");
+        setActionError(res.error || "Match failed");
       }
     } catch {
-      alert("Network error");
+      setActionError("Network error");
     } finally {
       setMatchingItem(null);
     }

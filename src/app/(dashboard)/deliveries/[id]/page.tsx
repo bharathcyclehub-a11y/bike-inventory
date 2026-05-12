@@ -12,6 +12,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
+import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
 
 interface DeliveryData {
   id: string;
@@ -417,8 +418,8 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
               <Globe className="h-3 w-3 mr-1" />Outstation
             </Badge>
           )}
-          <Badge variant={data.status === "FLAGGED" ? "danger" : data.status === "DELIVERED" || data.status === "WALK_OUT" ? "success" : "info"}>
-            {data.status === "OUT_FOR_DELIVERY" ? "Out" : data.status === "WALK_OUT" ? "Walk-out" : data.status === "IN_TRANSIT" ? "In Transit" : data.status.charAt(0) + data.status.slice(1).toLowerCase().replace(/_/g, " ")}
+          <Badge className={`text-xs ${getStatusColor(data.status)}`}>
+            {getStatusLabel(data.status)}
           </Badge>
         </div>
       </div>
