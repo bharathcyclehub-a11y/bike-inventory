@@ -51,6 +51,11 @@ body {
   padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px));
 }
 
+/* Bottom sheet safe padding — clears device safe area */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 8px);
+}
+
 /* Position fixed elements above bottom nav */
 .above-nav {
   bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 8px);

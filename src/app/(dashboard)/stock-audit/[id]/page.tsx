@@ -759,7 +759,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
 
       {/* Rejection Bottom Sheet Modal */}
       {showRejectModal && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40" onClick={() => setShowRejectModal(false)}>
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40" onClick={() => setShowRejectModal(false)}>
           <div className="w-full max-w-lg bg-white rounded-t-2xl p-4 pb-8 safe-bottom" onClick={(e) => e.stopPropagation()}>
             <div className="w-10 h-1 bg-slate-300 rounded-full mx-auto mb-4" />
             <h3 className="text-base font-bold text-slate-900 mb-3">Reject Stock Count</h3>
@@ -795,7 +795,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
 
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setShowDeleteConfirm(false)}>
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40" onClick={() => setShowDeleteConfirm(false)}>
           <div className="bg-white rounded-2xl p-5 mx-4 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-base font-bold text-slate-900 mb-2">Delete Stock Count?</h3>
             <p className="text-sm text-slate-500 mb-4">This cannot be undone. All counted data will be lost.</p>

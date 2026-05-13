@@ -89,7 +89,7 @@ function ActionConfirmation({
   const ts = timestamp ?? new Date();
 
   return (
-    <div className="fixed inset-0 z-50">
+    <div className="fixed inset-0 z-[60]">
       {/* Backdrop */}
       <div
         className={cn(

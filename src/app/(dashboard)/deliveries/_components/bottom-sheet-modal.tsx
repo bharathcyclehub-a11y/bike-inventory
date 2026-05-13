@@ -52,7 +52,7 @@ export function BottomSheetModal({
   if (!visible) return null;
 
   return (
-    <div className="fixed inset-0 z-50">
+    <div className="fixed inset-0 z-[60]">
       <div
         className={`absolute inset-0 bg-black/40 transition-opacity duration-200 ${
           animating ? "opacity-100" : "opacity-0"
@@ -64,7 +64,7 @@ export function BottomSheetModal({
           animating ? "translate-y-0" : "translate-y-full"
         }`}
       >
-        <div className="w-full max-w-md bg-white rounded-t-2xl p-5 shadow-xl">
+        <div className="w-full max-w-md bg-white rounded-t-2xl p-5 pb-safe shadow-xl">
           <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
           {description && (
             <p className="text-sm text-slate-600 mt-1">{description}</p>

@@ -696,7 +696,7 @@ export default function SOPManagementPage() {
 
       {/* ──────────── Add/Edit SOP Bottom Sheet ──────────── */}
       {showForm && (
-        <div className="fixed inset-0 z-50">
+        <div className="fixed inset-0 z-[60]">
           {/* Backdrop */}
           <div className="absolute inset-0 bg-black/40" onClick={() => setShowForm(false)} />
           {/* Sheet */}
@@ -838,7 +838,7 @@ export default function SOPManagementPage() {
 
       {/* ──────────── Log Violation Bottom Sheet ──────────── */}
       {showViolationForm && (
-        <div className="fixed inset-0 z-50">
+        <div className="fixed inset-0 z-[60]">
           <div className="absolute inset-0 bg-black/40" onClick={() => setShowViolationForm(false)} />
           <div className="fixed bottom-0 left-0 right-0 bg-white rounded-t-2xl max-h-[85vh] overflow-y-auto z-50">
             <div className="p-4 space-y-4">

@@ -419,7 +419,7 @@ export default function PreBookingsPage() {
 
       {/* Manual Match Modal */}
       {manualMatchPb && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-end justify-center">
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-end justify-center">
           <div className="bg-white w-full max-w-lg rounded-t-2xl max-h-[80vh] flex flex-col">
             <div className="p-4 border-b flex items-center justify-between">
               <div>

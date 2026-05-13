@@ -207,7 +207,7 @@ export default function SecondHandDetailPage({ params }: { params: Promise<{ id:
       {/* Lightbox Modal */}
       {lightboxIndex !== null && images.length > 0 && (
         <div
-          className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center"
+          className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center"
           onClick={() => setLightboxIndex(null)}
         >
           {/* Close button */}
