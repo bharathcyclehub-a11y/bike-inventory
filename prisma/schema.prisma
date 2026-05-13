@@ -925,6 +925,11 @@ model Delivery {
   courierCost             Float?
   vehicleNo               String?
 
+  // Customer self-fill
+  selfFillToken       String?   @unique
+  selfFillTokenExpiry DateTime?
+  selfFillCompletedAt DateTime?
+
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 

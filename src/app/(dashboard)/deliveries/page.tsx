@@ -2,157 +2,61 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
-import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
-import {
-  Search, Loader2, Cloud, Download, Truck, AlertTriangle, CheckCircle2,
-  Clock, Package, Flag, Trash2, Phone, SlidersHorizontal, ChevronDown, ChevronUp,
-} from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { useDebounce, getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
-import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { useSearchParams } from "next/navigation";
+import { Loader2, Truck } from "lucide-react";
+import { useDebounce } from "@/lib/utils";
 import { usePermissions } from "@/lib/use-permissions";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { ErrorBanner } from "@/components/ui/error-banner";
-import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
-
-interface DeliveryItem {
-  id: string;
-  invoiceNo: string;
-  invoiceDate: string;
-  invoiceAmount: number;
-  customerName: string;
-  customerPhone: string | null;
-  customerArea: string | null;
-  status: string;
-  scheduledDate: string | null;
-  lineItems: Array<{ name: string; quantity: number; rate?: number }> | null;
-  flagReason: string | null;
-  prebookNotes: string | null;
-  verifiedBy: { name: string } | null;
-  salesPerson: string | null;
-  isOutstation: boolean;
-  reversePickup: boolean;
-  invoiceType: string | null;
-}
-
-interface Stats {
-  pending: number;
-  verified: number;
-  scheduled: number;
-  outForDelivery: number;
-  delivered: number;
-  deliveredToday: number;
-  flagged: number;
-  prebooked: number;
-}
-
-interface ZohoSearchResult {
-  invoiceId: string;
-  invoiceNumber: string;
-  customerName: string;
-  phone: string;
-  date: string;
-  total: number;
-  balance: number;
-  status: string;
-  alreadyImported: boolean;
-  appStatus: string | null;
-}
-
-const STATUS_CONFIG: Record<string, { label: string; variant: string; icon: typeof Truck }> = {
-  PENDING: { label: "Pending", variant: "warning", icon: Clock },
-  VERIFIED: { label: "Verified", variant: "info", icon: CheckCircle2 },
-  WALK_OUT: { label: "Walk-out", variant: "success", icon: CheckCircle2 },
-  SCHEDULED: { label: "Scheduled", variant: "info", icon: Clock },
-  OUT_FOR_DELIVERY: { label: "Out", variant: "info", icon: Truck },
-  DELIVERED: { label: "Delivered", variant: "success", icon: CheckCircle2 },
-  FLAGGED: { label: "Flagged", variant: "danger", icon: Flag },
-  PREBOOKED: { label: "Prebooked", variant: "default", icon: Package },
-  PACKED: { label: "Packed", variant: "info", icon: Package },
-  SHIPPED: { label: "Shipped", variant: "info", icon: Truck },
-  IN_TRANSIT: { label: "In Transit", variant: "info", icon: Truck },
-};
-
-function formatINR(n: number) {
-  return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
-}
-
-interface ZohoInvoicePreview {
-  id: string;
-  zohoId: string;
-  data: {
-    invoiceNumber: string;
-    customerName: string;
-    phone: string;
-    date: string;
-    total: number;
-    balance: number;
-    status: string;
-    salesPerson: string;
-    lineItems: Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>;
-  };
-}
+import { DeliveryStats, type Stats } from "./_components/delivery-stats";
+import { DeliverySearch } from "./_components/delivery-search";
+import { DeliveryFilters } from "./_components/delivery-filters";
+import { DeliveryCard, type DeliveryItem } from "./_components/delivery-card";
+import { ZohoImportFlow } from "./_components/zoho-import-flow";
+import { BottomSheetModal } from "./_components/bottom-sheet-modal";
 
 export default function DeliveriesPage() {
-  const router = useRouter();
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
   const { canFetch } = usePermissions(role);
   const canFetchInvoices = canFetch("deliveries");
   const isAdmin = role === "ADMIN" || role === "CEO";
 
+  // ─── Data state ───
   const [deliveries, setDeliveries] = useState<DeliveryItem[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [dataError, setDataError] = useState<string | null>(null);
+
+  // ─── Filter state ───
   const searchParams = useSearchParams();
   const [filter, setFilter] = useState(searchParams.get("status") || "PENDING");
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
-
-  // Quick Search (invoice number / phone)
-  const [invoiceSearch, setInvoiceSearch] = useState("");
-  const [searchStep, setSearchStep] = useState<"idle" | "searching" | "results" | "importing">("idle");
-  const [searchResults, setSearchResults] = useState<ZohoSearchResult[]>([]);
-  const [selectedResults, setSelectedResults] = useState<Set<string>>(new Set());
-  const [searchError, setSearchError] = useState("");
-  const [searchProgress, setSearchProgress] = useState("");
-
-  // Bulk Fetch (date-range based flow)
-  const [fetchStep, setFetchStep] = useState<"idle" | "pickDate" | "fetching" | "selecting" | "importing">("idle");
-  const [invoicePreviews, setInvoicePreviews] = useState<ZohoInvoicePreview[]>([]);
-  const [selectedInvoices, setSelectedInvoices] = useState<Set<string>>(new Set());
-  const [fetchError, setFetchError] = useState("");
-  const [fetchPullId, setFetchPullId] = useState("");
-  const [fetchProgress, setFetchProgress] = useState("");
-  const [fetchDays, setFetchDays] = useState<number>(7);
-  const [fetchCustomFrom, setFetchCustomFrom] = useState("");
-  const [fetchCustomTo, setFetchCustomTo] = useState("");
-
-  const [dataError, setDataError] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [bulkDeleting, setBulkDeleting] = useState(false);
-  const [showOutstation, setShowOutstation] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
-
   const [dateRange, setDateRange] = useState<string>("all");
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
-  const [editingDateId, setEditingDateId] = useState<string | null>(null);
-  const [editDate, setEditDate] = useState("");
 
-  // Backfill salesPerson + lineItems from Zoho
-  const [backfilling, setBackfilling] = useState(false);
-  const [backfillMsg, setBackfillMsg] = useState("");
+  // ─── Action state ───
+  const [deleting, setDeleting] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [prebookConfirm, setPrebookConfirm] = useState<DeliveryItem | null>(null);
+  const [prebooking, setPrebooking] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<{
+    type: "success" | "warning" | "error" | "info";
+    title: string;
+    referenceId: string;
+    items?: Array<{ label: string; value: string }>;
+    details?: string;
+  } | null>(null);
+  const [actionError, setActionError] = useState("");
 
+  // ─── Data fetching ───
   const fetchData = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams();
     if (filter !== "ALL") params.set("status", filter);
     if (debouncedSearch) params.set("search", debouncedSearch);
-    if (showOutstation) params.set("outstation", "true");
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
     if (dateRange !== "all" && dateRange !== "custom") params.set("dateRange", dateRange);
@@ -174,10 +78,13 @@ export default function DeliveriesPage() {
         }
       })
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch, showOutstation, dateRange, dateFrom, dateTo]);
+  }, [filter, debouncedSearch, dateRange, dateFrom, dateTo]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
+  // ─── Handlers ───
   const handleMarkReady = async (id: string) => {
     try {
       const res = await fetch(`/api/deliveries/${id}`, {
@@ -186,286 +93,29 @@ export default function DeliveriesPage() {
         body: JSON.stringify({ status: "PENDING" }),
       });
       const data = await res.json();
-      if (!data.success) { setFetchError(data.error || "Mark ready failed"); return; }
+      if (!data.success) {
+        setActionError(data.error || "Mark ready failed");
+        return;
+      }
       fetchData();
-    } catch (e) { setFetchError(e instanceof Error ? e.message : "Network error"); }
-  };
-
-  const handleFlag = async (id: string, reason: string) => {
-    const res = await fetch(`/api/deliveries/${id}/flag`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason }),
-    });
-    const data = await res.json();
-    if (data.success && data.data.alertPhones?.length > 0) {
-      const msg = data.data.whatsappMessage;
-      const phone = data.data.alertPhones[0].replace(/\D/g, "");
-      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Network error");
     }
-    setFlagModal(null);
-    setFlagReason("");
-    fetchData();
   };
 
   const handleDelete = async (id: string) => {
     setDeleting(id);
     try {
-      const res = await fetch(`/api/deliveries/${id}`, { method: "DELETE" }).then(r => r.json());
+      const res = await fetch(`/api/deliveries/${id}`, { method: "DELETE" }).then((r) => r.json());
       if (!res.success) throw new Error(res.error || "Delete failed");
       setDeleteConfirm(null);
       fetchData();
     } catch (e) {
-      setFetchError(e instanceof Error ? e.message : "Delete failed");
-    } finally { setDeleting(null); }
-  };
-
-  const handleBulkDelete = async () => {
-    setBulkDeleting(true);
-    setBulkDeleteConfirm(false);
-    setFetchError("");
-    try {
-      let deleted = 0;
-      for (const d of deliveries) {
-        const res = await fetch(`/api/deliveries/${d.id}`, { method: "DELETE" }).then(r => r.json());
-        if (res.success) deleted++;
-      }
-      setConfirmation({
-        type: "warning",
-        title: "Bulk Delete Complete",
-        referenceId: `${deleted} deliveries`,
-        items: [
-          { label: "Deleted", value: `${deleted} of ${deliveries.length}` },
-        ],
-      });
-      fetchData();
-    } catch (e) {
-      setFetchError(e instanceof Error ? e.message : "Bulk delete failed");
-    } finally { setBulkDeleting(false); }
-  };
-
-  const handleSaveDate = async (deliveryId: string) => {
-    if (!editDate) return;
-    try {
-      await fetch(`/api/deliveries/${deliveryId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scheduledDate: editDate }),
-      });
-      setEditingDateId(null);
-      setEditDate("");
-      fetchData();
-    } catch (e) { setFetchError(e instanceof Error ? e.message : "Save date failed"); }
-  };
-
-  // ─── QUICK SEARCH (invoice no / phone → direct Zoho search, no pipeline) ───
-  const handleQuickSearch = async () => {
-    const q = invoiceSearch.trim();
-    if (!q || q.length < 3) {
-      setSearchError("Enter at least 3 characters");
-      return;
-    }
-
-    setSearchStep("searching");
-    setSearchError("");
-    setSearchProgress(`Searching Zoho for "${q}"...`);
-    try {
-      const res = await fetch("/api/deliveries/search-zoho", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q }),
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text.startsWith("{") ? JSON.parse(text).error : `Server error (${res.status}). Try again.`);
-      }
-
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Search failed");
-
-      const results: ZohoSearchResult[] = data.data.results || [];
-      setSearchResults(results);
-
-      const newOnes = results.filter((r) => !r.alreadyImported);
-      setSelectedResults(new Set(newOnes.map((r) => r.invoiceId)));
-      setSearchStep(results.length > 0 ? "results" : "idle");
-
-      if (results.length === 0) {
-        setSearchError(`No invoices found for "${q}"`);
-      } else if (newOnes.length === 0) {
-        setSearchError(`Found ${results.length} invoice(s) — all already imported`);
-        setSearchStep("results"); // Still show results
-      }
-    } catch (e) {
-      setSearchError(e instanceof Error ? e.message : "Search failed");
-      setSearchStep("idle");
+      setActionError(e instanceof Error ? e.message : "Delete failed");
     } finally {
-      setSearchProgress("");
+      setDeleting(null);
     }
   };
-
-  const handleImportSearchResults = async () => {
-    if (selectedResults.size === 0) return;
-    setSearchStep("importing");
-    setSearchError("");
-    setSearchProgress(`Importing ${selectedResults.size} invoice(s)...`);
-    try {
-      const res = await fetch("/api/deliveries/import-zoho", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ invoiceIds: Array.from(selectedResults) }),
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text.startsWith("{") ? JSON.parse(text).error : `Server error (${res.status})`);
-      }
-
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Import failed");
-
-      const { imported, errors } = data.data;
-      setSearchStep("idle");
-      setSearchResults([]);
-      setSelectedResults(new Set());
-      setInvoiceSearch("");
-
-      if (errors && errors.length > 0) {
-        setSearchError(`Imported ${imported}. Issues: ${errors.join(", ")}`);
-      }
-      fetchData();
-    } catch (e) {
-      setSearchError(e instanceof Error ? e.message : "Import failed");
-      setSearchStep("results");
-    } finally {
-      setSearchProgress("");
-    }
-  };
-
-  // ─── BULK FETCH (date-range based, pipeline) ───
-  const handleFetchInvoices = async () => {
-    setFetchStep("fetching");
-    setFetchError("");
-    setFetchProgress("Connecting to Zoho...");
-    try {
-      const initRes = await fetch("/api/zoho/trigger-pull", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "init" }),
-      });
-      if (!initRes.ok) throw new Error(`Connection failed (${initRes.status})`);
-      const initData = await initRes.json();
-      if (!initData.success) throw new Error(initData.error || "Init failed");
-      const pullId = initData.data.pullId;
-      setFetchPullId(pullId);
-
-      let fromDate: string;
-      if (fetchDays === -1 && fetchCustomFrom) {
-        fromDate = fetchCustomFrom;
-      } else {
-        const fromDateObj = new Date();
-        fromDateObj.setDate(fromDateObj.getDate() - fetchDays);
-        fromDate = fromDateObj.toISOString().slice(0, 10);
-      }
-      const label = fetchDays === -1 ? "custom range" : `last ${fetchDays} days`;
-      setFetchProgress(`Pulling invoices (${label})...`);
-      const invRes = await fetch("/api/zoho/trigger-pull", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "invoices", pullId, fromDate }),
-      });
-      if (!invRes.ok) throw new Error(`Fetch failed (${invRes.status}). Try again.`);
-      const invData = await invRes.json();
-      if (!invData.success) throw new Error(invData.error || "Invoice fetch failed");
-
-      const invFound = invData.data.invoicesNew || 0;
-      setFetchProgress(`Found ${invFound} invoice${invFound !== 1 ? "s" : ""}. Finalizing...`);
-      await fetch("/api/zoho/trigger-pull", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          step: "finalize", pullId,
-          invoicesNew: invData.data.invoicesNew, apiCalls: invData.data.apiCalls,
-          allErrors: invData.data.errors || [],
-        }),
-      }).catch(() => {});
-
-      setFetchProgress("Loading preview...");
-      const previewRes = await fetch(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
-      if (previewRes.success) {
-        const invoices = (previewRes.data.previews || []).filter(
-          (p: ZohoInvoicePreview & { entityType: string; status: string }) => p.entityType === "invoice" && p.status === "PENDING"
-        );
-        setInvoicePreviews(invoices);
-        setSelectedInvoices(new Set(invoices.map((inv: ZohoInvoicePreview) => inv.id)));
-        setFetchStep(invoices.length > 0 ? "selecting" : "idle");
-        if (invoices.length === 0) {
-          setFetchError(invFound > 0 ? `${invFound} found but already imported` : "No new invoices found (last 24h)");
-        }
-      }
-    } catch (e) {
-      setFetchError(e instanceof Error ? e.message : "Fetch failed");
-      setFetchStep("idle");
-    } finally {
-      setFetchProgress("");
-    }
-  };
-
-  const toggleInvoice = (id: string) => {
-    setSelectedInvoices(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
-  };
-
-  const handleImportSelected = async () => {
-    if (selectedInvoices.size === 0) return;
-    setFetchStep("importing");
-    try {
-      const res = await fetch("/api/zoho/pull-review/approve", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          pullId: fetchPullId, action: "approve",
-          entityType: "invoice", previewIds: Array.from(selectedInvoices),
-        }),
-      }).then(r => r.json());
-      if (!res.success) throw new Error(res.error || "Import failed");
-      const importedCount = selectedInvoices.size;
-      setFetchStep("idle");
-      setInvoicePreviews([]);
-      setSelectedInvoices(new Set());
-      setFetchError("");
-      setFetchProgress(`✅ Imported ${importedCount} delivery${importedCount !== 1 ? "s" : ""} successfully`);
-      setTimeout(() => setFetchProgress(""), 5000);
-      fetchData();
-    } catch (e) {
-      setFetchError(e instanceof Error ? e.message : "Import failed");
-      setFetchStep("selecting");
-    }
-  };
-
-  const [prebooking, setPrebooking] = useState<string | null>(null);
-
-  // Confirmation modal state
-  const [confirmation, setConfirmation] = useState<{
-    type: "success" | "warning" | "error" | "info";
-    title: string;
-    referenceId: string;
-    items?: Array<{ label: string; value: string }>;
-    details?: string;
-  } | null>(null);
-
-  // Delete confirmation state
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
-
-  // Bulk delete confirmation state
-  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false);
-
-  // Flag modal state
-  const [flagModal, setFlagModal] = useState<{ id: string; invoiceNo: string } | null>(null);
-  const [flagReason, setFlagReason] = useState("");
-
-  // Convert to prebook confirmation
-  const [prebookConfirm, setPrebookConfirm] = useState<DeliveryItem | null>(null);
 
   const handleConvertToPrebook = async (d: DeliveryItem) => {
     setPrebooking(d.id);
@@ -522,435 +172,59 @@ export default function DeliveriesPage() {
     }
   };
 
-  const FILTERS = [
-    { key: "PENDING", label: "Pending", count: stats?.pending },
-    { key: "SCHEDULED", label: "Scheduled", count: stats?.scheduled },
-    { key: "OUT_FOR_DELIVERY", label: "Out", count: stats?.outForDelivery },
-    { key: "DELIVERED", label: "Delivered", count: stats?.delivered || stats?.deliveredToday },
-    { key: "FLAGGED", label: "Flagged", count: stats?.flagged },
-    { key: "PACKED", label: "Packed" },
-    { key: "SHIPPED", label: "Shipped" },
-    { key: "IN_TRANSIT", label: "In Transit" },
-  ];
-
-  const isPhone = /^\d{10,}$/.test(invoiceSearch.trim());
-
-  const handleBackfill = async () => {
-    setBackfilling(true);
-    setBackfillMsg("Starting backfill...");
-    let totalUpdated = 0;
-    let page = 1;
-    try {
-      while (true) {
-        const res = await fetch("/api/deliveries/backfill", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ page, batchSize: 10 }),
-        });
-        const data = await res.json();
-        if (!res.ok) { setBackfillMsg(`Error: ${data.error || "Failed"}`); break; }
-        totalUpdated += data.data?.updated || 0;
-        const remaining = data.data?.remaining || 0;
-        setBackfillMsg(`Updated ${totalUpdated} deliveries (${remaining} remaining)...`);
-        if (remaining <= 0 || (data.data?.batch || 0) === 0) {
-          setBackfillMsg(`Done! Updated ${totalUpdated} deliveries with product & salesperson info.`);
-          fetchData();
-          break;
-        }
-        page++;
-      }
-    } catch { setBackfillMsg("Network error"); }
-    setBackfilling(false);
+  const handleDateChange = (key: string, from: string | undefined, to: string | undefined) => {
+    setDateRange(key);
+    setDateFrom(from);
+    setDateTo(to);
   };
 
+  // ─── Render ───
   return (
     <div>
+      {/* Header */}
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-lg font-bold text-slate-900">Deliveries</h1>
         <div className="flex items-center gap-1.5">
-          {isAdmin && (
-            <button onClick={handleBackfill} disabled={backfilling}
-              className="flex items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-purple-100 text-purple-700 hover:bg-purple-200 disabled:opacity-50">
-              {backfilling ? <Loader2 className="h-3 w-3 animate-spin" /> : <Download className="h-3 w-3" />}
-              {backfilling ? "..." : "Backfill"}
-            </button>
-          )}
-          {isAdmin && deliveries.length > 0 && (
-            <button onClick={() => setBulkDeleteConfirm(true)} disabled={bulkDeleting}
-              className="flex items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium bg-red-100 text-red-600 hover:bg-red-200 disabled:opacity-50">
-              {bulkDeleting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-              {bulkDeleting ? "..." : `Del (${deliveries.length})`}
-            </button>
-          )}
-          {canFetchInvoices && (
-            <button onClick={() => setFetchStep("pickDate")}
-              disabled={fetchStep === "fetching" || fetchStep === "importing" || fetchStep === "pickDate"}
-              className="flex items-center gap-1 bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50"
-              title="Fetch deliveries from Zoho">
-              {fetchStep === "fetching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Cloud className="h-3.5 w-3.5" />}
-              Fetch
-            </button>
-          )}
+          <ZohoImportFlow canFetch={canFetchInvoices} onImported={fetchData} />
         </div>
       </div>
 
-      {/* Invoice Search (inside Fetch area — searches Zoho for specific invoice) */}
-      {canFetchInvoices && (
-        <div className="flex gap-1.5 mb-2">
-          <div className="relative flex-1">
-            <input
-              type="text"
-              placeholder="Invoice / Phone..."
-              value={invoiceSearch}
-              onChange={(e) => setInvoiceSearch(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleQuickSearch()}
-              className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400 pr-8"
-            />
-            {isPhone && (
-              <Phone className="absolute right-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-green-500" />
-            )}
-          </div>
-          <button onClick={handleQuickSearch}
-            disabled={searchStep === "searching" || searchStep === "importing"}
-            className="flex items-center gap-1 bg-slate-900 text-white px-3 py-2 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0">
-            {searchStep === "searching" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
-            Search
-          </button>
-        </div>
-      )}
+      {/* Stats */}
+      {stats && <DeliveryStats stats={stats} onFilterChange={setFilter} />}
 
-      {backfillMsg && (
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-2 mb-2 text-xs text-purple-700">
-          {backfillMsg}
-        </div>
-      )}
-
-      {/* Fetch Date Picker */}
-      {fetchStep === "pickDate" && (
-        <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 mb-2">
-          <p className="text-xs font-medium text-slate-700 mb-2">Fetch deliveries created in Zoho within:</p>
-          <div className="flex flex-wrap gap-2 mb-3">
-            {[
-              { label: "3 days", value: 3 },
-              { label: "7 days", value: 7 },
-              { label: "14 days", value: 14 },
-              { label: "30 days", value: 30 },
-              { label: "Custom", value: -1 },
-            ].map((opt) => (
-              <button
-                key={opt.value}
-                onClick={() => setFetchDays(opt.value)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-                  fetchDays === opt.value
-                    ? "bg-slate-900 text-white border-slate-900"
-                    : "bg-white text-slate-600 border-slate-300 hover:border-slate-400"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          {fetchDays === -1 && (
-            <div className="flex gap-2 mb-3">
-              <div>
-                <label className="text-xs text-slate-500 block mb-0.5">From</label>
-                <input type="date" value={fetchCustomFrom} onChange={(e) => setFetchCustomFrom(e.target.value)}
-                  className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500 block mb-0.5">To (optional)</label>
-                <input type="date" value={fetchCustomTo} onChange={(e) => setFetchCustomTo(e.target.value)}
-                  className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
-              </div>
-            </div>
-          )}
-          <div className="flex gap-2">
-            <button
-              onClick={handleFetchInvoices}
-              disabled={fetchDays === -1 && !fetchCustomFrom}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
-            >
-              <Cloud className="h-3.5 w-3.5" /> Fetch
-            </button>
-            <button
-              onClick={() => setFetchStep("idle")}
-              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white text-slate-500 border border-slate-300"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Stats Row */}
-      {stats && (
-        <div className="grid grid-cols-4 gap-1.5 mb-3">
-          <Card className="bg-amber-50 border-amber-200"><CardContent className="p-2 text-center">
-            <p className="text-lg font-bold text-amber-700">{stats.pending}</p>
-            <p className="text-[11px] text-amber-600">Pending</p>
-          </CardContent></Card>
-          <Card className="bg-blue-50 border-blue-200"><CardContent className="p-2 text-center">
-            <p className="text-lg font-bold text-blue-700">{stats.scheduled}</p>
-            <p className="text-[11px] text-blue-600">Scheduled</p>
-          </CardContent></Card>
-          <Card className="bg-orange-50 border-orange-200"><CardContent className="p-2 text-center">
-            <p className="text-lg font-bold text-orange-700">{stats.outForDelivery}</p>
-            <p className="text-[11px] text-orange-600">Out</p>
-          </CardContent></Card>
-          <Card className="bg-green-50 border-green-200"><CardContent className="p-2 text-center">
-            <p className="text-lg font-bold text-green-700">{stats.delivered || stats.deliveredToday}</p>
-            <p className="text-[11px] text-green-600">Delivered</p>
-          </CardContent></Card>
-        </div>
-      )}
-
-      {/* Filter Chips */}
-      <div className="flex gap-1.5 overflow-x-auto scrollbar-hide mb-1.5 pb-1">
-        {FILTERS.map((f) => (
-          <button key={f.key} onClick={() => setFilter(f.key)}
-            className={`shrink-0 px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === f.key ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-            }`}>
-            {f.label}{f.count !== undefined && f.count > 0 ? ` (${f.count})` : ""}
-          </button>
-        ))}
-      </div>
-
-      {/* Collapsible Filters */}
-      <button
-        onClick={() => setShowFilters(!showFilters)}
-        className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition-colors mb-2 border ${
-          showFilters || dateRange !== "all"
-            ? "bg-slate-900 text-white border-slate-900"
-            : "bg-slate-100 text-slate-600 border-slate-200"
-        }`}
-      >
-        <span className="flex items-center gap-1.5">
-          <SlidersHorizontal className="h-3.5 w-3.5" />
-          Filters
-          {dateRange !== "all" && <Badge variant="warning" className="text-xs ml-1">Active</Badge>}
-        </span>
-        {showFilters ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-      </button>
-
-      {/* Always-visible: Prebooked + Batch Dispatch */}
-      <div className="flex gap-2 mb-2">
-        <Link href="/deliveries/dispatch"
-          className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors border bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-100">
-          <Truck className="h-3.5 w-3.5" />
-          Batch Dispatch
-        </Link>
-        <button onClick={() => setFilter("PREBOOKED")}
-          className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors border ${
-            filter === "PREBOOKED"
-              ? "bg-purple-600 text-white border-purple-600"
-              : "bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100"
-          }`}>
-          <Package className="h-3.5 w-3.5" />
-          Prebooked{stats?.prebooked ? ` (${stats.prebooked})` : ""}
-        </button>
-      </div>
-
-      {showFilters && (
-        <div className="space-y-2 mb-2 animate-in slide-in-from-top-2 duration-200">
-          {/* Hub Navigation: 3 delivery types */}
-          <div className="grid grid-cols-3 gap-2">
-            <Link href="/deliveries/walkout"
-              className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-green-50 text-green-700 border-green-200 hover:bg-green-100">
-              <CheckCircle2 className="h-5 w-5" />
-              Walk-out
-            </Link>
-            <Link href="/deliveries/blr"
-              className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100">
-              <Truck className="h-5 w-5" />
-              Bangalore
-            </Link>
-            <Link href="/deliveries/outstation"
-              className="flex flex-col items-center gap-1 py-3 rounded-xl text-xs font-semibold transition-colors border bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100">
-              <Package className="h-5 w-5" />
-              Outstation
-            </Link>
-          </div>
-
-          {/* Date Range Filter */}
-          <DateFilter
-            value={dateRange as DateRangeKey}
-            onChange={(key, from, to) => {
-              setDateRange(key);
-              setDateFrom(from);
-              setDateTo(to);
-            }}
-          />
-        </div>
-      )}
+      {/* Filters */}
+      <DeliveryFilters
+        filter={filter}
+        onFilterChange={setFilter}
+        stats={stats}
+        dateRange={dateRange}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onDateChange={handleDateChange}
+      />
 
       {/* Local search */}
-      <div className="relative mb-2">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-        <Input placeholder="Search invoice, customer..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
-      </div>
+      <DeliverySearch value={search} onChange={setSearch} />
 
-      {/* ─── Quick Search Progress ─── */}
-      {searchStep === "searching" && searchProgress && (
-        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
-          <span className="text-xs text-blue-700 font-medium">{searchProgress}</span>
-        </div>
-      )}
-
-      {/* ─── Quick Search Results ─── */}
-      {searchStep === "results" && searchResults.length > 0 && (
-        <Card className="mb-3 border-blue-200 bg-blue-50/50">
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-blue-800">
-                {searchResults.length} invoice{searchResults.length !== 1 ? "s" : ""} found in Zoho
-              </p>
-              <div className="flex gap-2">
-                <button onClick={() => { setSearchStep("idle"); setSearchResults([]); }}
-                  className="text-xs text-slate-500 underline">Close</button>
-                {selectedResults.size > 0 && (
-                  <button onClick={handleImportSearchResults}
-                    className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-md text-xs font-medium">
-                    <Download className="h-3 w-3" /> Import {selectedResults.size}
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="space-y-1.5 max-h-64 overflow-y-auto">
-              {searchResults.map((r) => (
-                <label key={r.invoiceId}
-                  className={`flex items-start gap-2 p-2 rounded-lg transition-colors ${
-                    r.alreadyImported
-                      ? "bg-slate-100 border border-slate-200 opacity-60"
-                      : selectedResults.has(r.invoiceId)
-                        ? "bg-blue-100 border border-blue-300 cursor-pointer"
-                        : "bg-white border border-slate-200 cursor-pointer"
-                  }`}>
-                  {!r.alreadyImported && (
-                    <input type="checkbox" checked={selectedResults.has(r.invoiceId)}
-                      onChange={() => setSelectedResults(prev => {
-                        const next = new Set(prev);
-                        next.has(r.invoiceId) ? next.delete(r.invoiceId) : next.add(r.invoiceId);
-                        return next;
-                      })} className="mt-0.5 rounded" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-slate-900">{r.invoiceNumber}</span>
-                      <span className="text-xs font-semibold text-slate-700">{formatINR(r.total)}</span>
-                    </div>
-                    <p className="text-xs text-slate-600">
-                      {r.customerName}
-                      {r.phone ? ` | ${r.phone}` : ""}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {r.date} | {r.status}
-                      {r.alreadyImported && (
-                        <span className="text-green-600 font-medium ml-1">
-                          ✓ Imported — {STATUS_CONFIG[r.appStatus || ""]?.label || r.appStatus || "Unknown"}
-                        </span>
-                      )}
-                    </p>
-                  </div>
-                </label>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ─── Quick Search Importing ─── */}
-      {searchStep === "importing" && (
-        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-2">
-          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />
-          <span className="text-xs text-blue-700 font-medium">{searchProgress || "Importing..."}</span>
-        </div>
-      )}
-
-      {/* Search Error */}
-      {searchError && (
+      {/* Action error banner */}
+      {actionError && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-2 text-xs text-amber-700">
-          {searchError}
-          <button onClick={() => setSearchError("")} className="ml-2 underline">dismiss</button>
+          {actionError}
+          <button onClick={() => setActionError("")} className="ml-2 underline">
+            dismiss
+          </button>
         </div>
       )}
 
-      {/* ─── Bulk Fetch Progress ─── */}
-      {fetchProgress && (
-        <div className={`flex items-center gap-2 rounded-lg p-2.5 mb-2 border ${fetchProgress.startsWith("✅") ? "bg-green-50 border-green-200" : "bg-blue-50 border-blue-200"}`}>
-          {!fetchProgress.startsWith("✅") && <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600 shrink-0" />}
-          <span className={`text-xs font-medium ${fetchProgress.startsWith("✅") ? "text-green-700" : "text-blue-700"}`}>{fetchProgress}</span>
-        </div>
-      )}
-
-      {/* Fetch Error */}
-      {fetchError && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-2 text-xs text-amber-700">
-          {fetchError}
-          <button onClick={() => setFetchError("")} className="ml-2 underline">dismiss</button>
-        </div>
-      )}
-
-      {/* Invoice Selection Panel (bulk fetch) */}
-      {fetchStep === "selecting" && invoicePreviews.length > 0 && (
-        <Card className="mb-3 border-blue-200 bg-blue-50/50">
-          <CardContent className="p-3">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-blue-800">
-                {invoicePreviews.length} new invoice{invoicePreviews.length !== 1 ? "s" : ""} from Zoho
-              </p>
-              <div className="flex gap-2">
-                <button onClick={() => { setFetchStep("idle"); setInvoicePreviews([]); }}
-                  className="text-xs text-slate-500 underline">Cancel</button>
-                <button onClick={handleImportSelected} disabled={selectedInvoices.size === 0}
-                  className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50">
-                  <Download className="h-3 w-3" /> Import {selectedInvoices.size}
-                </button>
-              </div>
-            </div>
-            <div className="space-y-1.5 max-h-64 overflow-y-auto">
-              {invoicePreviews.map((inv) => (
-                <label key={inv.id}
-                  className={`flex items-start gap-2 p-2 rounded-lg cursor-pointer transition-colors ${
-                    selectedInvoices.has(inv.id) ? "bg-blue-100 border border-blue-300" : "bg-white border border-slate-200"
-                  }`}>
-                  <input type="checkbox" checked={selectedInvoices.has(inv.id)}
-                    onChange={() => toggleInvoice(inv.id)} className="mt-0.5 rounded" />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-slate-900">{inv.data.invoiceNumber}</span>
-                      <span className="text-xs font-semibold text-slate-700">{formatINR(inv.data.total)}</span>
-                    </div>
-                    <p className="text-xs text-slate-600">{inv.data.customerName}</p>
-                    {inv.data.lineItems.length > 0 && (
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        {inv.data.lineItems.slice(0, 2).map(li => `${li.name} x${li.quantity}`).join(" | ")}
-                        {inv.data.lineItems.length > 2 && ` +${inv.data.lineItems.length - 2}`}
-                      </p>
-                    )}
-                  </div>
-                </label>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Importing indicator (bulk fetch) */}
-      {fetchStep === "importing" && (
-        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
-          <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-          <span className="text-xs text-blue-700">Importing {selectedInvoices.size} invoices...</span>
-        </div>
-      )}
-
-      {/* Data Load Error */}
+      {/* Data load error */}
       {dataError && (
         <ErrorBanner
           message={dataError}
           type={typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error"}
-          onRetry={() => { setDataError(null); fetchData(); }}
+          onRetry={() => {
+            setDataError(null);
+            fetchData();
+          }}
           onDismiss={() => setDataError(null)}
         />
       )}
@@ -967,278 +241,80 @@ export default function DeliveriesPage() {
         </div>
       ) : (
         <div className="space-y-2.5">
-          {deliveries.map((d) => {
-            const cfg = STATUS_CONFIG[d.status] || STATUS_CONFIG.PENDING;
-            const items = d.lineItems || [];
-            const isPending = ["PENDING", "VERIFIED", "SCHEDULED"].includes(d.status);
-            const aging = isPending ? getAging(d.invoiceDate) : null;
-            return (
-              <Card key={d.id} className={`${aging ? AGING_COLORS[aging.level] : ""} cursor-pointer`} onClick={() => { if (editingDateId !== d.id) router.push(`/deliveries/${d.id}`); }}>
-                <CardContent className="p-3.5">
-                  <div className="flex items-start justify-between mb-1.5">
-                    <div className="flex-1 min-w-0 mr-2">
-                        <p className="text-base font-semibold text-slate-900">{d.invoiceNo}</p>
-                      <p className="text-sm font-medium text-slate-600">{d.customerName}</p>
-                      {items.length > 0 && (
-                        <p className="text-xs text-slate-700 font-medium mt-0.5">
-                          {items.map((item, i) => (
-                            <span key={i}>{item.name}{item.quantity > 1 ? ` x${item.quantity}` : ""}{i < items.length - 1 ? ", " : ""}</span>
-                          ))}
-                        </p>
-                      )}
-                      {d.salesPerson && (
-                        <p className="text-xs text-purple-600">Sales: {d.salesPerson}</p>
-                      )}
-                      <p className="text-xs text-slate-400">
-                        {formatINR(d.invoiceAmount)} | {new Date(d.invoiceDate).toLocaleDateString("en-IN")}
-                      </p>
-                    </div>
-                    <div className="text-right space-y-1">
-                      <Badge className={`text-xs ${getStatusColor(d.status)}`}>
-                        {getStatusLabel(d.status)}
-                      </Badge>
-                      {d.isOutstation && (
-                        <Badge variant={"warning"} className="text-xs">Outstation</Badge>
-                      )}
-                      {d.reversePickup && (
-                        <Badge variant={"info"} className="text-xs">Reverse</Badge>
-                      )}
-                      {aging && aging.level !== "ok" && (
-                        <span className={`block text-xs font-medium px-1.5 py-0.5 rounded-full ${AGING_BADGE[aging.level]}`}>
-                          {aging.text}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Scheduled info / inline date editor */}
-                  {d.scheduledDate && editingDateId !== d.id && (
-                    <p className="text-xs text-blue-600 mb-1.5 cursor-pointer" onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setEditDate(d.scheduledDate!.slice(0, 10));
-                      setEditingDateId(d.id);
-                    }}>
-                      Delivery: {new Date(d.scheduledDate).toLocaleDateString("en-IN")}
-                      {d.customerArea && ` | ${d.customerArea}`}
-                      <span className="text-blue-400 ml-1">tap to change</span>
-                    </p>
-                  )}
-                  {editingDateId === d.id && (
-                    <div className="space-y-1.5 mb-1.5" onClick={(e) => e.stopPropagation()}>
-                      <div className="flex flex-wrap gap-1">
-                        {[
-                          { label: "Today", days: 0 },
-                          { label: "Tomorrow", days: 1 },
-                          { label: "3 days", days: 3 },
-                          { label: "1 week", days: 7 },
-                          { label: "1 month", days: 30 },
-                        ].map((opt) => {
-                          const d2 = new Date();
-                          d2.setDate(d2.getDate() + opt.days);
-                          const val = `${d2.getFullYear()}-${String(d2.getMonth()+1).padStart(2,'0')}-${String(d2.getDate()).padStart(2,'0')}`;
-                          return (
-                            <button key={opt.label} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditDate(val); }}
-                              className={`px-2 py-1 rounded-full text-xs font-medium transition-colors ${
-                                editDate === val ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600"
-                              }`}>
-                              {opt.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      {editDate && (
-                        <p className="text-xs text-blue-600">
-                          {new Date(editDate).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" })}
-                        </p>
-                      )}
-                      <div className="flex gap-1.5">
-                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleSaveDate(d.id); }}
-                          disabled={!editDate}
-                          className="bg-blue-600 text-white px-2.5 py-2 rounded-md text-xs font-medium disabled:opacity-50">Save</button>
-                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingDateId(null); }}
-                          className="text-slate-400 text-xs">Cancel</button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Set date for cards without one */}
-                  {!d.scheduledDate && ["VERIFIED", "SCHEDULED"].includes(d.status) && editingDateId !== d.id && (
-                    <button onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      const tomorrow = new Date();
-                      tomorrow.setDate(tomorrow.getDate() + 1);
-                      setEditDate(`${tomorrow.getFullYear()}-${String(tomorrow.getMonth()+1).padStart(2,'0')}-${String(tomorrow.getDate()).padStart(2,'0')}`);
-                      setEditingDateId(d.id);
-                    }} className="text-xs text-blue-500 mb-1.5">
-                      + Set delivery date
-                    </button>
-                  )}
-
-                  {/* Flag reason */}
-                  {d.status === "FLAGGED" && d.flagReason && (
-                    <div className="bg-red-50 rounded p-1.5 mb-1.5">
-                      <p className="text-xs text-red-600"><AlertTriangle className="h-3 w-3 inline mr-1" />{d.flagReason}</p>
-                    </div>
-                  )}
-
-                  {/* Action buttons */}
-                  <div className="flex gap-2 mt-1" onClick={(e) => e.stopPropagation()}>
-                    {d.status === "PENDING" && (
-                      <>
-                        <Link href={`/deliveries/${d.id}`} className="flex-1">
-                          <button className="w-full bg-blue-600 text-white py-2 rounded-md text-xs font-medium">Schedule</button>
-                        </Link>
-                        <Link href={`/deliveries/${d.id}?action=walkout`} className="flex-1">
-                          <button className="w-full bg-green-600 text-white py-2 rounded-md text-xs font-medium">Walk-out</button>
-                        </Link>
-                        <button onClick={() => setPrebookConfirm(d)} disabled={prebooking === d.id}
-                          className="flex-1 flex items-center justify-center gap-1 bg-purple-600 text-white py-2 rounded-md text-xs font-medium disabled:opacity-50">
-                          {prebooking === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Package className="h-3 w-3" />} Pre-book
-                        </button>
-                      </>
-                    )}
-                    {d.status === "SCHEDULED" && (
-                      <Link href="/deliveries/dispatch" className="flex-1">
-                        <button className="w-full bg-orange-600 text-white py-2 rounded-md text-xs font-medium">Go to Dispatch</button>
-                      </Link>
-                    )}
-                    {d.status === "PREBOOKED" && (
-                      <button onClick={() => handleMarkReady(d.id)}
-                        className="flex-1 bg-blue-600 text-white py-2 rounded-md text-xs font-medium">Mark Ready</button>
-                    )}
-                    {(role === "ADMIN" || role === "CEO") && (
-                      <button onClick={() => setDeleteConfirm(d.id)} disabled={deleting === d.id}
-                        className="bg-slate-100 text-slate-500 px-2 py-2 rounded-md text-xs hover:bg-red-50 hover:text-red-600 disabled:opacity-50">
-                        {deleting === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                      </button>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Delete Confirmation Dialog */}
-      {deleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setDeleteConfirm(null)} />
-          <div className="relative w-full max-w-md bg-white rounded-t-2xl p-5 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-900">Delete Delivery?</h3>
-            <p className="text-sm text-slate-600 mt-1">This delivery entry will be permanently removed. This cannot be undone.</p>
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={() => handleDelete(deleteConfirm)}
-                disabled={deleting === deleteConfirm}
-                className="flex-1 h-12 bg-red-600 text-white rounded-xl font-semibold disabled:opacity-50"
-              >
-                {deleting === deleteConfirm ? "Deleting..." : "Delete"}
-              </button>
-              <button
-                onClick={() => setDeleteConfirm(null)}
-                className="flex-1 h-12 bg-slate-100 text-slate-700 rounded-xl font-semibold"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Bulk Delete Confirmation Dialog */}
-      {bulkDeleteConfirm && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setBulkDeleteConfirm(false)} />
-          <div className="relative w-full max-w-md bg-white rounded-t-2xl p-5 shadow-xl">
-            <h3 className="text-lg font-semibold text-red-900">Delete ALL {deliveries.length} deliveries?</h3>
-            <p className="text-sm text-slate-600 mt-1">This will delete every delivery in the current view. This cannot be undone.</p>
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={handleBulkDelete}
-                disabled={bulkDeleting}
-                className="flex-1 h-12 bg-red-600 text-white rounded-xl font-semibold disabled:opacity-50"
-              >
-                {bulkDeleting ? "Deleting..." : `Delete ${deliveries.length}`}
-              </button>
-              <button
-                onClick={() => setBulkDeleteConfirm(false)}
-                className="flex-1 h-12 bg-slate-100 text-slate-700 rounded-xl font-semibold"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Flag Reason Modal */}
-      {flagModal && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => { setFlagModal(null); setFlagReason(""); }} />
-          <div className="relative w-full max-w-md bg-white rounded-t-2xl p-5 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-900">Flag {flagModal.invoiceNo}</h3>
-            <p className="text-sm text-slate-600 mt-1">Enter the reason for flagging this delivery.</p>
-            <textarea
-              value={flagReason}
-              onChange={(e) => setFlagReason(e.target.value)}
-              placeholder="e.g. Customer not reachable, wrong address..."
-              className="w-full mt-3 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-400 resize-none"
-              rows={3}
-              autoFocus
+          {deliveries.map((d) => (
+            <DeliveryCard
+              key={d.id}
+              delivery={d}
+              onDelete={(id) => setDeleteConfirm(id)}
+              onPrebook={(delivery) => setPrebookConfirm(delivery)}
+              onMarkReady={handleMarkReady}
+              isAdmin={isAdmin}
+              deleting={deleting}
+              prebooking={prebooking}
             />
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={() => handleFlag(flagModal.id, flagReason)}
-                disabled={!flagReason.trim()}
-                className="flex-1 h-12 bg-red-600 text-white rounded-xl font-semibold disabled:opacity-50"
-              >
-                Flag Delivery
-              </button>
-              <button
-                onClick={() => { setFlagModal(null); setFlagReason(""); }}
-                className="flex-1 h-12 bg-slate-100 text-slate-700 rounded-xl font-semibold"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
+          ))}
         </div>
       )}
 
-      {/* Pre-book Confirmation Dialog */}
-      {prebookConfirm && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setPrebookConfirm(null)} />
-          <div className="relative w-full max-w-md bg-white rounded-t-2xl p-5 shadow-xl">
-            <h3 className="text-lg font-semibold text-slate-900">Convert to Pre-Booking?</h3>
-            <p className="text-sm text-slate-600 mt-1">
-              <span className="font-semibold">{prebookConfirm.invoiceNo}</span> will be converted to a pre-booking. The delivery status will change to Prebooked.
+      {/* Delete Confirmation */}
+      <BottomSheetModal
+        open={!!deleteConfirm}
+        onClose={() => setDeleteConfirm(null)}
+        title="Delete Delivery?"
+        description="This delivery entry will be permanently removed. This cannot be undone."
+        actions={[
+          {
+            label: deleting === deleteConfirm ? "Deleting..." : "Delete",
+            onClick: () => deleteConfirm && handleDelete(deleteConfirm),
+            variant: "danger",
+            loading: deleting === deleteConfirm,
+            disabled: deleting === deleteConfirm,
+          },
+          {
+            label: "Cancel",
+            onClick: () => setDeleteConfirm(null),
+            variant: "secondary",
+          },
+        ]}
+      />
+
+      {/* Pre-book Confirmation */}
+      <BottomSheetModal
+        open={!!prebookConfirm}
+        onClose={() => setPrebookConfirm(null)}
+        title="Convert to Pre-Booking?"
+        description={
+          prebookConfirm
+            ? `${prebookConfirm.invoiceNo} will be converted to a pre-booking. The delivery status will change to Prebooked.`
+            : undefined
+        }
+        actions={[
+          {
+            label: prebooking === prebookConfirm?.id ? "Converting..." : "Convert",
+            onClick: () => prebookConfirm && handleConvertToPrebook(prebookConfirm),
+            variant: "primary",
+            loading: prebooking === prebookConfirm?.id,
+            disabled: prebooking === prebookConfirm?.id,
+          },
+          {
+            label: "Cancel",
+            onClick: () => setPrebookConfirm(null),
+            variant: "secondary",
+          },
+        ]}
+      >
+        {prebookConfirm && (
+          <div className="bg-purple-50 rounded-lg p-3 space-y-1">
+            <p className="text-sm text-purple-900">
+              <span className="text-slate-500">Customer:</span> {prebookConfirm.customerName}
             </p>
-            <div className="bg-purple-50 rounded-lg p-3 mt-3 space-y-1">
-              <p className="text-sm text-purple-900"><span className="text-slate-500">Customer:</span> {prebookConfirm.customerName}</p>
-              <p className="text-sm text-purple-900"><span className="text-slate-500">Product:</span> {prebookConfirm.lineItems?.[0]?.name || "Unknown"}</p>
-            </div>
-            <div className="flex gap-2 mt-4">
-              <button
-                onClick={() => handleConvertToPrebook(prebookConfirm)}
-                disabled={prebooking === prebookConfirm.id}
-                className="flex-1 h-12 bg-purple-600 text-white rounded-xl font-semibold disabled:opacity-50"
-              >
-                {prebooking === prebookConfirm.id ? "Converting..." : "Convert"}
-              </button>
-              <button
-                onClick={() => setPrebookConfirm(null)}
-                className="flex-1 h-12 bg-slate-100 text-slate-700 rounded-xl font-semibold"
-              >
-                Cancel
-              </button>
-            </div>
+            <p className="text-sm text-purple-900">
+              <span className="text-slate-500">Product:</span>{" "}
+              {prebookConfirm.lineItems?.[0]?.name || "Unknown"}
+            </p>
           </div>
-        </div>
-      )}
+        )}
+      </BottomSheetModal>
 
       {/* Action Confirmation */}
       <ActionConfirmation
