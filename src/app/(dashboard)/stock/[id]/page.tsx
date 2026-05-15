@@ -145,10 +145,12 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
 
   async function handleSave() {
     setSaving(true);
+    setActionError("");
     try {
       let res;
       if (canEdit) {
         // Full edit — admin/purchase manager
+        // Only send non-empty fields; skip type if not set (empty string fails enum validation)
         const payload: Record<string, unknown> = {};
         for (const [k, v] of Object.entries(editData)) {
           if (v !== "" && v !== undefined) payload[k] = v;
@@ -159,7 +161,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           body: JSON.stringify(payload),
         });
       } else {
-        // Type-only reclassification — all users
+        // Type-only reclassification — all authenticated users
         res = await fetch(`/api/products/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -168,7 +170,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       }
       const data = await res.json();
       if (data.success) {
-        setProduct(data.data);
+        // Always re-fetch full product so serialItems/transactions/tags are intact
+        const full = await fetch(`/api/products/${id}`).then((r) => r.json());
+        if (full.success) setProduct(full.data);
         setEditing(false);
       } else {
         setActionError(data.error || "Save failed");
