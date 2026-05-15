@@ -8,7 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE"]);
+    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE", "ACCOUNTS_MANAGER"]);
     const { id } = await params;
 
     const delivery = await prisma.delivery.findUnique({
