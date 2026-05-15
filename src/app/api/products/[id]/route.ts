@@ -79,6 +79,35 @@ export async function PUT(
   }
 }
 
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    await requireAuth(); // any authenticated user
+    const { id } = await params;
+    const body = await req.json();
+
+    // Only allow type reclassification via PATCH
+    const { type } = body as { type?: string };
+    const VALID_TYPES = ["BICYCLE", "SPARE_PART", "ACCESSORY", "BOX_PIECE", "WIP", "FINISHED_GOOD"];
+    if (!type || !VALID_TYPES.includes(type)) {
+      return errorResponse("Invalid product type", 400);
+    }
+
+    const product = await prisma.product.update({
+      where: { id },
+      data: { type: type as never },
+      include: { category: true, brand: true, bin: true },
+    });
+
+    return successResponse(product);
+  } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    return errorResponse(error instanceof Error ? error.message : "Failed to update type", 400);
+  }
+}
+
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }

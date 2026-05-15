@@ -81,12 +81,13 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const role = (session?.user as { role?: string })?.role || "";
   const isAdmin = role === "ADMIN" || role === "CEO";
   const canEdit = ["ADMIN", "CEO", "PURCHASE_MANAGER"].includes(role);
+  const canEditType = true; // all authenticated users can reclassify product type
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState("");
-  const [editData, setEditData] = useState<Record<string, unknown>>({ name: "", color: "", size: "", sellingPrice: 0, mrp: 0, reorderLevel: 0, brandId: "", binId: "" });
+  const [editData, setEditData] = useState<Record<string, unknown>>({ name: "", color: "", size: "", sellingPrice: 0, mrp: 0, reorderLevel: 0, brandId: "", binId: "", type: "" });
   const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
   const [bins, setBins] = useState<{ id: string; code: string; name: string; location: string }[]>([]);
 
@@ -137,6 +138,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       reorderLevel: product!.reorderLevel,
       brandId: product!.brandId || "",
       binId: product!.binId || "",
+      type: product!.type || "",
     });
     setEditing(true);
   }
@@ -144,20 +146,32 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   async function handleSave() {
     setSaving(true);
     try {
-      // Only send fields that changed
-      const payload: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(editData)) {
-        if (v !== "" && v !== undefined) payload[k] = v;
+      let res;
+      if (canEdit) {
+        // Full edit — admin/purchase manager
+        const payload: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(editData)) {
+          if (v !== "" && v !== undefined) payload[k] = v;
+        }
+        res = await fetch(`/api/products/${id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        // Type-only reclassification — all users
+        res = await fetch(`/api/products/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: editData.type }),
+        });
       }
-      const res = await fetch(`/api/products/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
       const data = await res.json();
       if (data.success) {
         setProduct(data.data);
         setEditing(false);
+      } else {
+        setActionError(data.error || "Save failed");
       }
     } catch (e) { setActionError(e instanceof Error ? e.message : "Save failed"); }
     finally { setSaving(false); }
@@ -197,7 +211,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             {product.status === "ACTIVE" ? "Active" : "Inactive"}
           </button>
         )}
-        {canEdit && !editing && (
+        {(canEdit || canEditType) && !editing && (
           <button onClick={startEdit} className="p-2 rounded-lg hover:bg-slate-100">
             <Pencil className="h-4 w-4 text-slate-500" />
           </button>
@@ -215,50 +229,82 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
         <Card className="mb-4 border-blue-200 bg-blue-50">
           <CardContent className="p-3 space-y-2">
             <p className="text-xs font-semibold text-blue-800 mb-1">Edit Product</p>
+
+            {/* Type selector — visible to ALL users */}
             <div>
-              <label className="text-[10px] text-slate-500">Name</label>
-              <Input value={editData.name as string} onChange={(e) => setEditData({ ...editData, name: e.target.value })} />
-            </div>
-            <div>
-              <label className="text-[10px] text-slate-500">Brand</label>
-              <select value={editData.brandId as string} onChange={(e) => setEditData({ ...editData, brandId: e.target.value })}
-                className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">No brand</option>
-                {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-[10px] text-slate-500">Bin / Location</label>
-              <select value={editData.binId as string} onChange={(e) => setEditData({ ...editData, binId: e.target.value })}
-                className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="">No bin</option>
-                {bins.map((b) => <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>)}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[10px] text-slate-500">Size</label>
-                <Input value={editData.size as string} onChange={(e) => setEditData({ ...editData, size: e.target.value })} placeholder='e.g. 26"' />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500">Color</label>
-                <Input value={editData.color as string} onChange={(e) => setEditData({ ...editData, color: e.target.value })} placeholder="e.g. Red" />
+              <label className="text-[10px] text-slate-500 uppercase tracking-wide font-medium">Item Type</label>
+              <div className="grid grid-cols-3 gap-1.5 mt-1">
+                {([
+                  { key: "BICYCLE", label: "Cycle" },
+                  { key: "SPARE_PART", label: "Spare" },
+                  { key: "ACCESSORY", label: "Accessory" },
+                ] as const).map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => setEditData({ ...editData, type: t.key })}
+                    className={`py-2 rounded-lg text-xs font-semibold border transition-colors ${
+                      editData.type === t.key
+                        ? "bg-blue-600 text-white border-blue-600"
+                        : "bg-white text-slate-600 border-slate-200 hover:border-slate-400"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className="text-[10px] text-slate-500">Selling Price</label>
-                <Input type="number" value={editData.sellingPrice as number} onChange={(e) => setEditData({ ...editData, sellingPrice: Number(e.target.value) })} />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500">MRP</label>
-                <Input type="number" value={editData.mrp as number} onChange={(e) => setEditData({ ...editData, mrp: Number(e.target.value) })} />
-              </div>
-              <div>
-                <label className="text-[10px] text-slate-500">Reorder Level</label>
-                <Input type="number" value={editData.reorderLevel as number} onChange={(e) => setEditData({ ...editData, reorderLevel: Number(e.target.value) })} />
-              </div>
-            </div>
+
+            {/* Full edit fields — admins / purchase manager only */}
+            {canEdit && (
+              <>
+                <div>
+                  <label className="text-[10px] text-slate-500">Name</label>
+                  <Input value={editData.name as string} onChange={(e) => setEditData({ ...editData, name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500">Brand</label>
+                  <select value={editData.brandId as string} onChange={(e) => setEditData({ ...editData, brandId: e.target.value })}
+                    className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">No brand</option>
+                    {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500">Bin / Location</label>
+                  <select value={editData.binId as string} onChange={(e) => setEditData({ ...editData, binId: e.target.value })}
+                    className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">No bin</option>
+                    {bins.map((b) => <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[10px] text-slate-500">Size</label>
+                    <Input value={editData.size as string} onChange={(e) => setEditData({ ...editData, size: e.target.value })} placeholder='e.g. 26"' />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500">Color</label>
+                    <Input value={editData.color as string} onChange={(e) => setEditData({ ...editData, color: e.target.value })} placeholder="e.g. Red" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-[10px] text-slate-500">Selling Price</label>
+                    <Input type="number" value={editData.sellingPrice as number} onChange={(e) => setEditData({ ...editData, sellingPrice: Number(e.target.value) })} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500">MRP</label>
+                    <Input type="number" value={editData.mrp as number} onChange={(e) => setEditData({ ...editData, mrp: Number(e.target.value) })} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-500">Reorder Level</label>
+                    <Input type="number" value={editData.reorderLevel as number} onChange={(e) => setEditData({ ...editData, reorderLevel: Number(e.target.value) })} />
+                  </div>
+                </div>
+              </>
+            )}
+
             <div className="flex gap-2">
               <Button size="sm" onClick={handleSave} disabled={saving} className="flex-1 bg-blue-600 hover:bg-blue-700">
                 <Save className="h-3.5 w-3.5 mr-1" />{saving ? "Saving..." : "Save"}
