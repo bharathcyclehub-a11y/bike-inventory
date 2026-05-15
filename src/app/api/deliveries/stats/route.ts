@@ -9,7 +9,8 @@ export async function GET() {
     await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER"]);
 
     // Exclude SERVICE invoices to match the list API behavior
-    const baseWhere = { NOT: { invoiceType: "SERVICE" } };
+    // NOTE: Must use OR with null check — Prisma's NOT filter excludes NULL rows in PostgreSQL
+    const baseWhere = { OR: [{ invoiceType: null as string | null }, { invoiceType: { not: "SERVICE" } }] };
 
     // For "Delivered" count, match the list API behavior:
     // only count this month's delivered (list auto-hides older ones)
