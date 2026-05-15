@@ -6,7 +6,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET() {
   try {
-    await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER"]);
+    await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "INWARDS_EXECUTIVE", "ACCOUNTS_MANAGER"]);
 
     // Exclude SERVICE invoices to match the list API behavior
     // NOTE: Must use OR with null check — Prisma's NOT filter excludes NULL rows in PostgreSQL
