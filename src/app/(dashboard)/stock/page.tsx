@@ -121,6 +121,7 @@ export default function StockPage() {
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("ALL");
+  const [typeFilter, setTypeFilter] = useState<"BICYCLE" | "SPARE_PART" | "ACCESSORY" | "ALL">("BICYCLE");
   const [showFilters, setShowFilters] = useState(false);
   const [selectedBrand, setSelectedBrand] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("");
@@ -398,6 +399,7 @@ export default function StockPage() {
   const buildParams = useCallback((pageNum: number) => {
     const params = new URLSearchParams({ limit: String(PAGE_SIZE), page: String(pageNum), sortBy: "currentStock", sortOrder: "desc" });
     if (debouncedSearch) params.set("search", debouncedSearch);
+    if (typeFilter !== "ALL") params.set("type", typeFilter);
     if (quickFilter === "INACTIVE") { params.set("status", "INACTIVE"); }
     else if (quickFilter === "IN_STOCK") { params.set("status", "ACTIVE"); params.set("minStock", "1"); }
     else if (quickFilter === "NO_STOCK") { params.set("status", "ACTIVE"); params.set("maxStock", "0"); }
@@ -407,7 +409,7 @@ export default function StockPage() {
     if (selectedSize) params.set("size", selectedSize);
     if (selectedBin) params.set("binId", selectedBin);
     return params;
-  }, [debouncedSearch, quickFilter, selectedBrand, selectedCategory, selectedSize, selectedBin]);
+  }, [debouncedSearch, quickFilter, typeFilter, selectedBrand, selectedCategory, selectedSize, selectedBin]);
 
   const fetchProducts = useCallback((pageNum: number, append = false, silent = false) => {
     if (!silent) { if (append) setLoadingMore(true); else setLoading(true); }
@@ -721,6 +723,28 @@ export default function StockPage() {
           onDismiss={() => setDataError(null)}
         />
       )}
+
+      {/* Type Tabs */}
+      <div className="grid grid-cols-4 gap-1 mb-3 bg-slate-100 rounded-xl p-1">
+        {([
+          { key: "BICYCLE" as const, label: "Cycles" },
+          { key: "SPARE_PART" as const, label: "Spares" },
+          { key: "ACCESSORY" as const, label: "Access." },
+          { key: "ALL" as const, label: "All" },
+        ]).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => { setTypeFilter(t.key); setPage(1); }}
+            className={`py-2 rounded-lg text-xs font-semibold transition-colors ${
+              typeFilter === t.key
+                ? "bg-white text-slate-900 shadow-sm"
+                : "text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
       {/* View Tabs */}
       <div className="flex gap-2 mb-3">

@@ -107,8 +107,12 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
 
   // Per-item bin selections: lineItemId → array of binIds (one per unit)
   const [binSelections, setBinSelections] = useState<Record<string, string[]>>({});
+  const [shipmentType, setShipmentType] = useState<"BICYCLE" | "SPARE_PART" | "ACCESSORY" | "MIXED" | null>(null);
 
   useEffect(() => {
+    const saved = typeof window !== "undefined" ? localStorage.getItem(`inbound-shiptype-${id}`) : null;
+    if (saved) setShipmentType(saved as "BICYCLE" | "SPARE_PART" | "ACCESSORY" | "MIXED");
+
     Promise.all([
       fetch(`/api/inbound/${id}`).then((r) => r.json()),
       fetch("/api/bins").then((r) => r.json()),
@@ -124,6 +128,13 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const refreshShipment = async () => {
     const detail = await fetch(`/api/inbound/${id}`).then((r) => r.json());
     if (detail.success) setShipment(detail.data);
+  };
+
+  const handleTypeSelect = (type: "BICYCLE" | "SPARE_PART" | "ACCESSORY" | "MIXED") => {
+    setShipmentType(type);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(`inbound-shiptype-${id}`, type);
+    }
   };
 
   // Set bin for a specific unit of a line item
@@ -576,8 +587,51 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         </div>
       )}
 
+      {/* Item Type Selector — mandatory before stock count */}
+      {shipment.status !== "DELIVERED" && (
+        shipmentType === null ? (
+          <div className="mb-3 bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <p className="text-sm font-semibold text-blue-900 mb-0.5">What type of items are in this shipment?</p>
+            <p className="text-xs text-blue-600 mb-3">Select the category before doing the stock count.</p>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                { key: "BICYCLE" as const, label: "Cycles", bg: "bg-blue-600" },
+                { key: "SPARE_PART" as const, label: "Spares", bg: "bg-amber-600" },
+                { key: "ACCESSORY" as const, label: "Accessories", bg: "bg-purple-600" },
+                { key: "MIXED" as const, label: "Mixed", bg: "bg-slate-700" },
+              ]).map((t) => (
+                <button
+                  key={t.key}
+                  onClick={() => handleTypeSelect(t.key)}
+                  className={`py-3 rounded-xl text-sm font-semibold text-white ${t.bg} active:opacity-80`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="mb-3 flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500">Type:</span>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                shipmentType === "BICYCLE" ? "bg-blue-100 text-blue-700" :
+                shipmentType === "SPARE_PART" ? "bg-amber-100 text-amber-700" :
+                shipmentType === "ACCESSORY" ? "bg-purple-100 text-purple-700" :
+                "bg-slate-200 text-slate-700"
+              }`}>
+                {shipmentType === "BICYCLE" ? "Cycles" : shipmentType === "SPARE_PART" ? "Spares" : shipmentType === "ACCESSORY" ? "Accessories" : "Mixed"}
+              </span>
+            </div>
+            <button onClick={() => setShipmentType(null)} className="text-xs text-slate-400 underline">
+              Change
+            </button>
+          </div>
+        )
+      )}
+
       {/* Mark Delivered */}
-      {canDeliver && isApproved && shipment.status === "IN_TRANSIT" && (
+      {canDeliver && isApproved && shipment.status === "IN_TRANSIT" && shipmentType !== null && (
         <div className="flex gap-2 mb-3">
           <Button onClick={() => handleMarkDelivered("DELIVERED")} disabled={actionLoading}
             className="flex-1 bg-green-600 hover:bg-green-700" size="lg">
@@ -591,7 +645,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* Partial delivery actions */}
-      {canDeliver && isApproved && shipment.status === "PARTIALLY_DELIVERED" && (
+      {canDeliver && isApproved && shipment.status === "PARTIALLY_DELIVERED" && shipmentType !== null && (
         <div className="space-y-2 mb-3">
           <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-2 text-center">
             Select bin for each unit, then mark as delivered. Or mark all at once.
@@ -645,7 +699,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       />
 
       {/* Select All — apply one bin to ALL undelivered items */}
-      {canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && bins.length > 0 && (
+      {canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && bins.length > 0 && shipmentType !== null && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3">
           <p className="text-xs font-medium text-blue-800 mb-1.5">Apply same bin to all items</p>
           <select
@@ -701,7 +755,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
               )}
 
               {/* Bin selectors for undelivered items (during partial delivery) */}
-              {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && bins.length > 0 && (
+              {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && bins.length > 0 && shipmentType !== null && (
                 <div>
                   {renderBinSelectors(li)}
                   <button
@@ -715,7 +769,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
               )}
 
               {/* Bin selectors for IN_TRANSIT items (pre-select before Mark All Delivered) */}
-              {canDeliver && shipment.status === "IN_TRANSIT" && bins.length > 0 && (
+              {canDeliver && shipment.status === "IN_TRANSIT" && bins.length > 0 && shipmentType !== null && (
                 renderBinSelectors(li)
               )}
 
