@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDebounce } from "@/lib/utils";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface SecondHandItem {
   id: string;
@@ -50,7 +51,8 @@ function formatINR(n: number) {
 export default function SecondHandPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAdd = ["ADMIN", "CEO", "OUTWARDS_EXECUTIVE"].includes(role);
+  const { canCreate: canCreateCheck } = usePermissions(role);
+  const canAdd = canCreateCheck("second_hand");
   const isAdmin = role === "ADMIN" || role === "CEO";
 
   const [cycles, setCycles] = useState<SecondHandItem[]>([]);

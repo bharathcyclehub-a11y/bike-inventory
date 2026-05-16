@@ -200,3 +200,29 @@ export function desktopHref(href: string): string {
   if (href === "/") return "/desktop";
   return `/desktop${href}`;
 }
+
+// Map nav hrefs to permission feature keys for visibility filtering
+// Items not listed here are always shown (e.g., dashboard, more, settings, activity)
+export const NAV_FEATURE_MAP: Record<string, string> = {
+  "/inbound": "inbound",
+  "/deliveries": "deliveries",
+  "/stock": "stock",
+  "/stock-audit": "stock_audit",
+  "/transfers": "transfers",
+  "/vendors": "vendors",
+  "/bills": "bills",
+  "/purchase-orders": "purchase_orders",
+  "/expenses": "expenses",
+  "/reports": "reports",
+  "/team": "team",
+  "/barcode": "barcode",
+  "/reorder": "reorder",
+  "/second-hand": "second_hand",
+  "/sops": "dashboard", // SOPs visible if user can view dashboard
+  "/vendor-issues": "vendor_issues",
+  "/customers": "customers",
+  "/receivables": "customers",
+  "/accounts": "bills",
+  "/prebookings": "deliveries",
+  "/tasks": "dashboard",
+};

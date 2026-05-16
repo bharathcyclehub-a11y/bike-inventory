@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 interface FeaturePermission {
   view: boolean;
@@ -11,35 +11,55 @@ interface FeaturePermission {
 
 type Permissions = Record<string, FeaturePermission>;
 
-// Cache permissions in memory so we don't re-fetch on every page
-let cachedPermissions: { role: string; perms: Permissions } | null = null;
+// Cache with TTL (5 minutes)
+const CACHE_TTL = 5 * 60 * 1000;
+let cachedPermissions: { role: string; perms: Permissions; fetchedAt: number } | null = null;
+
+function isCacheValid(role: string): boolean {
+  if (!cachedPermissions) return false;
+  if (cachedPermissions.role !== role) return false;
+  return Date.now() - cachedPermissions.fetchedAt < CACHE_TTL;
+}
+
+/** Force clear the permission cache (e.g. after admin saves new permissions) */
+export function clearPermissionCache() {
+  cachedPermissions = null;
+}
 
 export function usePermissions(role: string) {
   const [permissions, setPermissions] = useState<Permissions | null>(
-    cachedPermissions?.role === role ? cachedPermissions.perms : null
+    isCacheValid(role) ? cachedPermissions!.perms : null
   );
+  const [loading, setLoading] = useState(!isCacheValid(role));
 
-  useEffect(() => {
-    if (!role || role === "ADMIN" || role === "CEO") return; // Admin has everything
-    if (cachedPermissions?.role === role) {
-      setPermissions(cachedPermissions.perms);
-      return;
-    }
-
-    // Fetch saved permissions from API (works for all authenticated users)
+  const refetch = useCallback(() => {
+    if (!role || role === "ADMIN" || role === "CEO") return;
+    setLoading(true);
     fetch("/api/my-permissions")
       .then((r) => r.json())
       .then((res) => {
         if (res.success && res.data?.permissions) {
           const perms = res.data.permissions as Permissions;
-          cachedPermissions = { role, perms };
+          cachedPermissions = { role, perms, fetchedAt: Date.now() };
           setPermissions(perms);
         }
       })
-      .catch(() => {
-        // Fallback to defaults if API fails
-      });
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, [role]);
+
+  useEffect(() => {
+    if (!role || role === "ADMIN" || role === "CEO") {
+      setLoading(false);
+      return;
+    }
+    if (isCacheValid(role)) {
+      setPermissions(cachedPermissions!.perms);
+      setLoading(false);
+      return;
+    }
+    refetch();
+  }, [role, refetch]);
 
   const canView = (feature: string) => {
     if (role === "ADMIN" || role === "CEO") return true;
@@ -71,5 +91,5 @@ export function usePermissions(role: string) {
     return permissions?.[feature]?.fetch ?? false;
   };
 
-  return { permissions, canView, canCreate, canEdit, canDelete, canApprove, canFetch };
+  return { permissions, loading, canView, canCreate, canEdit, canDelete, canApprove, canFetch, refetch };
 }

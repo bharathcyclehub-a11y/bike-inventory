@@ -7,6 +7,7 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { usePermissions } from "@/lib/use-permissions";
 
 const CATEGORIES = [
   "DELIVERY", "TRANSPORT", "SHOP_MAINTENANCE", "UTILITIES",
@@ -18,7 +19,8 @@ const PAYMENT_MODES = ["CASH", "CHEQUE", "NEFT", "RTGS", "UPI"];
 export default function NewExpensePage() {
   const { data: session, status: sessionStatus } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAccess = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const { canCreate: canCreateCheck } = usePermissions(role);
+  const canAccess = canCreateCheck("expenses");
 
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);

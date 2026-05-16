@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface ExpenseItem {
   id: string;
@@ -41,7 +42,8 @@ const CATEGORY_COLORS: Record<string, string> = {
 export default function ExpensesPage() {
   const { data: session, status: sessionStatus } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAccess = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const { canView } = usePermissions(role);
+  const canAccess = canView("expenses");
 
   const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
   const [loading, setLoading] = useState(true);

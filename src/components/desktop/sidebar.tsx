@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import { Bike, LogOut } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
-import { getPrimaryTabs, getDesktopExtraTabs, desktopHref } from "@/lib/nav-config";
+import { getPrimaryTabs, getDesktopExtraTabs, desktopHref, NAV_FEATURE_MAP } from "@/lib/nav-config";
+import { usePermissions } from "@/lib/use-permissions";
 import type { Role } from "@/types";
 
 interface SidebarProps {
@@ -15,17 +16,26 @@ interface SidebarProps {
 export function Sidebar({ role }: SidebarProps) {
   const pathname = usePathname();
   const { data: session } = useSession();
+  const { canView } = usePermissions(role);
   const userName = session?.user?.name || "User";
   const initials = userName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
 
   const primaryTabs = getPrimaryTabs(role);
   const extraTabs = getDesktopExtraTabs(role);
 
+  // Filter by permission
+  function isAllowed(href: string, key: string): boolean {
+    if (key === "home" || key === "more" || key === "settings" || key === "activity") return true;
+    const feature = NAV_FEATURE_MAP[href];
+    if (!feature) return true;
+    return canView(feature);
+  }
+
   // Filter out "More" from primary since desktop shows all pages
-  const mainTabs = primaryTabs.filter((t) => t.key !== "more");
+  const mainTabs = primaryTabs.filter((t) => t.key !== "more" && isAllowed(t.href, t.key));
   // Filter out items already in mainTabs from extraTabs
   const mainKeys = new Set(mainTabs.map((t) => t.key));
-  const secondaryTabs = extraTabs.filter((t) => !mainKeys.has(t.key) && t.key !== "settings");
+  const secondaryTabs = extraTabs.filter((t) => !mainKeys.has(t.key) && t.key !== "settings" && isAllowed(t.href, t.key));
   const settingsTab = extraTabs.find((t) => t.key === "settings");
 
   function isActive(href: string) {

@@ -77,6 +77,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         if (!allowed.includes(data.status)) {
           throw new Error(`Cannot change from ${existing.status} to ${data.status}`);
         }
+
+        // Walk-out requires customer phone to be saved
+        if (data.status === "WALK_OUT" && !existing.customerPhone) {
+          throw new Error("Cannot walk-out without saving customer contact first");
+        }
       }
       const updateData: Record<string, unknown> = {};
 

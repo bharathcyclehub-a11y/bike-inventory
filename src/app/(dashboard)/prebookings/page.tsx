@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface PreBooking {
   id: string;
@@ -64,8 +65,9 @@ function agingColor(dateStr: string) {
 export default function PreBookingsPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canCreate = ["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE"].includes(role);
-  const canMatch = ["ADMIN", "SUPERVISOR"].includes(role);
+  const { canCreate: canCreateCheck, canApprove: canApproveCheck } = usePermissions(role);
+  const canCreate = canCreateCheck("deliveries");
+  const canMatch = canApproveCheck("deliveries");
 
   const [preBookings, setPreBookings] = useState<PreBooking[]>([]);
   const [loading, setLoading] = useState(true);

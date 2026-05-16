@@ -7,6 +7,7 @@ import { ArrowLeft, Download, Plus, Clock, ChevronRight, Trash2, RefreshCw, Load
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface Settlement {
   id: string;
@@ -43,8 +44,9 @@ type FetchStep = "idle" | "connecting" | "fetching" | "creating" | "done" | "err
 export default function SettlementListPage() {
   const { data: session, status: sessionStatus } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAccess = ["ADMIN", "CEO", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
-  const isAdmin = role === "ADMIN" || role === "CEO";
+  const { canView, canDelete: canDeleteCheck } = usePermissions(role);
+  const canAccess = canView("bills");
+  const isAdmin = role === "ADMIN" || role === "CEO" || canDeleteCheck("bills");
 
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [loading, setLoading] = useState(true);

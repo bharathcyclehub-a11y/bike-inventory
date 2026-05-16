@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, use } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Loader2, Phone } from "lucide-react";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
@@ -21,12 +21,24 @@ import { DetailActions } from "./_components/detail-actions";
 export default function DeliveryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const searchParams = useSearchParams();
+  const router = useRouter();
 
   // Core data state
   const [data, setData] = useState<DeliveryData | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState("");
-  const [contactSaved, setContactSaved] = useState(false);
+
+  // Persist contact-saved state in localStorage so it survives refresh
+  const contactKey = `contact-saved-${id}`;
+  const [contactSaved, setContactSaved] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem(contactKey) === "1";
+  });
+
+  const markContactSaved = () => {
+    setContactSaved(true);
+    localStorage.setItem(contactKey, "1");
+  };
 
   // WhatsApp templates
   const [templates, setTemplates] = useState<Record<string, string>>({});
@@ -43,8 +55,15 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
     details?: string;
   } | null>(null);
 
-  // Initial action from URL (e.g. ?action=walkout)
-  const initialAction = searchParams.get("action") === "walkout" ? "WALK_OUT" as const : null;
+  // Initial action from URL (e.g. ?action=walkout) — consume once, then strip param
+  const actionParam = searchParams.get("action");
+  const initialAction = actionParam === "walkout" ? "WALK_OUT" as const : null;
+
+  useEffect(() => {
+    if (actionParam) {
+      router.replace(`/deliveries/${id}`, { scroll: false });
+    }
+  }, [actionParam, id, router]);
 
   const fetchData = () => {
     fetch(`/api/deliveries/${id}`)
@@ -197,7 +216,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
           {/* Save Contact (for PENDING) */}
           <CustomerInfoCard
             data={data}
-            onContactSaved={() => setContactSaved(true)}
+            onContactSaved={markContactSaved}
             contactSaved={contactSaved}
           />
 
@@ -230,7 +249,7 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
         <>
           <CustomerInfoCard
             data={data}
-            onContactSaved={() => setContactSaved(true)}
+            onContactSaved={markContactSaved}
             contactSaved={contactSaved}
           />
 

@@ -20,6 +20,7 @@ import {
   Calculator,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface AccountsSummary {
   stats: {
@@ -58,7 +59,8 @@ function formatCurrency(amount: number) {
 export default function AccountsPage() {
   const { data: session, status: sessionStatus } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAccess = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const { canView } = usePermissions(role);
+  const canAccess = canView("bills");
 
   const [data, setData] = useState<AccountsSummary | null>(null);
   const [loading, setLoading] = useState(true);

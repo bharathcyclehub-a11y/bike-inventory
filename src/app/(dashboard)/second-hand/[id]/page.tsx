@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface SecondHandDetail {
   id: string;
@@ -50,8 +51,9 @@ export default function SecondHandDetailPage({ params }: { params: Promise<{ id:
   const { id } = use(params);
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
+  const { canEdit: canEditCheck } = usePermissions(role);
   const isAdmin = role === "ADMIN" || role === "CEO";
-  const canSell = ["ADMIN", "CEO", "OUTWARDS_EXECUTIVE"].includes(role);
+  const canSell = canEditCheck("second_hand");
 
   const [cycle, setCycle] = useState<SecondHandDetail | null>(null);
   const [loading, setLoading] = useState(true);

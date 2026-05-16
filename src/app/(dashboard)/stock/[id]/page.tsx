@@ -10,6 +10,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TransactionItem } from "@/components/transaction-item";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface SerialItem {
   id: string;
@@ -79,8 +80,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   const { id } = use(params);
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
+  const { canEdit: canEditCheck } = usePermissions(role);
   const isAdmin = role === "ADMIN" || role === "CEO";
-  const canEdit = ["ADMIN", "CEO", "PURCHASE_MANAGER"].includes(role);
+  const canEdit = canEditCheck("stock");
   const canEditType = true; // all authenticated users can reclassify product type
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);

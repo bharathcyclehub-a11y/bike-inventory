@@ -7,6 +7,7 @@ import { Plus, ClipboardCheck, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface StockCountItem {
   id: string;
@@ -33,7 +34,8 @@ const STATUS_STYLE: Record<string, string> = {
 export default function StockAuditPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canCreate = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const { canCreate: canCreateCheck } = usePermissions(role);
+  const canCreate = canCreateCheck("stock_audit");
   const [counts, setCounts] = useState<StockCountItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("ALL");

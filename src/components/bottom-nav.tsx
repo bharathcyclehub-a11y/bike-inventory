@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { getPrimaryTabs } from "@/lib/nav-config";
+import { getPrimaryTabs, NAV_FEATURE_MAP } from "@/lib/nav-config";
+import { usePermissions } from "@/lib/use-permissions";
 import type { Role } from "@/types";
 
 interface BottomNavProps {
@@ -12,7 +13,16 @@ interface BottomNavProps {
 
 export function BottomNav({ role }: BottomNavProps) {
   const pathname = usePathname();
-  const tabs = getPrimaryTabs(role);
+  const { canView } = usePermissions(role);
+  const allTabs = getPrimaryTabs(role);
+
+  // Filter tabs by permission (always show home + more)
+  const tabs = allTabs.filter((tab) => {
+    if (tab.key === "home" || tab.key === "more") return true;
+    const feature = NAV_FEATURE_MAP[tab.href];
+    if (!feature) return true; // No permission mapping = always show
+    return canView(feature);
+  });
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";

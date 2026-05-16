@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Vendor, PurchaseOrder, VendorBill, VendorCredit } from "@/types";
+import { usePermissions } from "@/lib/use-permissions";
 
 function formatCurrency(amount: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(amount);
@@ -24,7 +25,8 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   const { id } = use(params);
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canEditBalance = ["ADMIN", "SUPERVISOR"].includes(role);
+  const { canEdit: canEditCheck } = usePermissions(role);
+  const canEditBalance = canEditCheck("vendors");
   const [vendor, setVendor] = useState<VendorDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"overview" | "pos" | "bills" | "credits" | "issues" | "ledger">("overview");

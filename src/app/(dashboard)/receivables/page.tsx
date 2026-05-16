@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useDebounce } from "@/lib/utils";
 import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface InvoiceItem {
   id: string;
@@ -46,7 +47,8 @@ function formatCurrency(amount: number) {
 export default function ReceivablesPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canFetch = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const { canFetch: canFetchCheck } = usePermissions(role);
+  const canFetch = canFetchCheck("customers");
 
   const [invoices, setInvoices] = useState<InvoiceItem[]>([]);
   const [loading, setLoading] = useState(true);

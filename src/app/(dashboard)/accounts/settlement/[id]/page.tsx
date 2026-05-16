@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface SettlementMatch {
   id: string;
@@ -114,7 +115,8 @@ export default function SettlementDetailPage({ params }: { params: Promise<{ id:
   const { id } = use(params);
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canAccess = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const { canView } = usePermissions(role);
+  const canAccess = canView("bills");
 
   const [settlement, setSettlement] = useState<Settlement | null>(null);
   const [bankTxns, setBankTxns] = useState<BankTxn[]>([]);

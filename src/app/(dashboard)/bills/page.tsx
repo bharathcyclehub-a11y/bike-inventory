@@ -11,6 +11,7 @@ import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { useDebounce } from "@/lib/utils";
 import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { usePermissions } from "@/lib/use-permissions";
 
 const BILL_COLUMNS: ExportColumn[] = [
   { header: "Bill No", key: "billNo" },
@@ -59,7 +60,8 @@ function formatCurrency(amount: number) {
 export default function BillsPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canFetchBills = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const { canFetch: canFetchCheck } = usePermissions(role);
+  const canFetchBills = canFetchCheck("bills");
 
   const [bills, setBills] = useState<BillItem[]>([]);
   const [loading, setLoading] = useState(true);

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface LineItem {
   id: string;
@@ -77,9 +78,10 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const router = useRouter();
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
+  const { canEdit: canEditCheck, canApprove: canApproveCheck } = usePermissions(role);
   const isAdmin = role === "ADMIN" || role === "CEO";
-  const canDeliver = ["ADMIN", "CEO", "SUPERVISOR", "INWARDS_EXECUTIVE"].includes(role);
-  const canApprove = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const canDeliver = canEditCheck("inbound");
+  const canApprove = canApproveCheck("inbound");
 
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [bins, setBins] = useState<Bin[]>([]);

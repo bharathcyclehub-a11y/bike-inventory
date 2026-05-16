@@ -43,11 +43,15 @@ export function HandoverChecklist({
     setLoading(true);
     try {
       const status = type === "WALK_OUT" ? "WALK_OUT" : "DELIVERED";
-      await fetch(`/api/deliveries/${deliveryId}`, {
+      const res = await fetch(`/api/deliveries/${deliveryId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || "Action failed");
+      }
 
       if (type === "WALK_OUT") {
         onConfirmation({

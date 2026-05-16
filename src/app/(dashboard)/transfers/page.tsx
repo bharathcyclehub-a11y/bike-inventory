@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { ErrorBanner } from "@/components/ui/error-banner";
+import { usePermissions } from "@/lib/use-permissions";
 
 interface TransferOrderItem {
   id: string;
@@ -39,7 +40,8 @@ type StatusFilter = "all" | "PENDING" | "APPROVED" | "REJECTED";
 export default function TransfersPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
-  const canApprove = ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(role);
+  const { canApprove: canApproveCheck } = usePermissions(role);
+  const canApprove = canApproveCheck("transfers");
   const [orders, setOrders] = useState<TransferOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>("all");
