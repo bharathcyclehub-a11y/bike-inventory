@@ -43,6 +43,7 @@ interface Task {
   isMyDay: boolean;
   recurrenceType?: string;
   recurrenceDays?: string[];
+  estimatedMinutes?: number;
   photoUrls?: string[];
   assignees?: TaskAssignee[];
   assigneeIds?: string[];
@@ -74,8 +75,14 @@ function isOverdue(task: Task): boolean {
   return task.dueDate < todayStr();
 }
 
-function sortTasks(tasks: Task[]): Task[] {
+function sortTasks(tasks: Task[], shortestFirst = false): Task[] {
   return [...tasks].sort((a, b) => {
+    // When shortest-first mode: sort by estimatedMinutes asc (nulls last)
+    if (shortestFirst) {
+      const aMin = a.estimatedMinutes ?? 9999;
+      const bMin = b.estimatedMinutes ?? 9999;
+      if (aMin !== bMin) return aMin - bMin;
+    }
     if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
     return (SLOT_ORDER[a.timeSlot || ""] ?? 9) - (SLOT_ORDER[b.timeSlot || ""] ?? 9);
   });
@@ -160,6 +167,7 @@ export default function TasksPage() {
   const [newAssignees, setNewAssignees] = useState<string[]>([]);
   const [newRecurring, setNewRecurring] = useState(false);
   const [newRecDays, setNewRecDays] = useState<string[]>([]);
+  const [newEstMins, setNewEstMins] = useState<number | null>(null);
   const [newPhotoUrls, setNewPhotoUrls] = useState<string[]>([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -176,7 +184,9 @@ export default function TasksPage() {
   const [editRecurring, setEditRecurring] = useState(false);
   const [editRecDays, setEditRecDays] = useState<string[]>([]);
   const [editMyDay, setEditMyDay] = useState(false);
+  const [editEstMins, setEditEstMins] = useState<number | null>(null);
   const [editAssignees, setEditAssignees] = useState<string[]>([]);
+  const [timeFilter, setTimeFilter] = useState<number | null>(null);
   const [detailSaving, setDetailSaving] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -244,8 +254,12 @@ export default function TasksPage() {
           t.taskNo.toLowerCase().includes(q)
       );
     }
+    if (timeFilter !== null) {
+      // Show only tasks with no estimate or estimate ≤ available time
+      list = list.filter((t) => !t.estimatedMinutes || t.estimatedMinutes <= timeFilter);
+    }
     return list;
-  }, [tasks, statusFilter, personFilter, debouncedSearch]);
+  }, [tasks, statusFilter, personFilter, debouncedSearch, timeFilter]);
 
   interface GroupedSection {
     key: string;
@@ -256,6 +270,7 @@ export default function TasksPage() {
   }
 
   const sections = useMemo<GroupedSection[]>(() => {
+    const sf = timeFilter !== null; // shortest-first when time budget is set
     const inProgress = filtered.filter((t) => t.status === "IN_PROGRESS");
     const blocked = filtered.filter((t) => t.status === "BLOCKED");
     const pending = filtered.filter((t) => t.status === "PENDING");
@@ -269,7 +284,7 @@ export default function TasksPage() {
         label: "In Progress",
         icon: <Clock className="w-4 h-4 text-blue-600" />,
         color: "text-blue-700",
-        tasks: sortTasks(inProgress),
+        tasks: sortTasks(inProgress, sf),
       });
     }
 
@@ -279,7 +294,7 @@ export default function TasksPage() {
         label: "Blocked",
         icon: <AlertCircle className="w-4 h-4 text-red-600" />,
         color: "text-red-700",
-        tasks: sortTasks(blocked),
+        tasks: sortTasks(blocked, sf),
       });
     }
 
@@ -293,7 +308,7 @@ export default function TasksPage() {
           label: cfg.label,
           icon: <span className="text-sm">{cfg.icon}</span>,
           color: cfg.color,
-          tasks: sortTasks(byPriority),
+          tasks: sortTasks(byPriority, sf),
         });
       }
     }
@@ -304,12 +319,12 @@ export default function TasksPage() {
         label: "Done",
         icon: <CheckCircle2 className="w-4 h-4 text-green-600" />,
         color: "text-green-700",
-        tasks: sortTasks(done),
+        tasks: sortTasks(done, sf),
       });
     }
 
     return groups;
-  }, [filtered]);
+  }, [filtered, timeFilter]);
 
   /* ── Person-grouped sections ─────────────────────────── */
 
@@ -509,6 +524,7 @@ export default function TasksPage() {
         timeSlot: newPriority === "TODAY" && newTimeSlot ? newTimeSlot : undefined,
         assigneeIds: newAssignees.length > 0 ? newAssignees : (userId ? [userId] : []),
         photoUrls: newPhotoUrls.length > 0 ? newPhotoUrls : undefined,
+        estimatedMinutes: newEstMins ?? undefined,
       };
       if (newRecurring && newRecDays.length > 0) {
         body.recurrenceType = "WEEKLY";
@@ -528,6 +544,7 @@ export default function TasksPage() {
       setNewAssignees([]);
       setNewRecurring(false);
       setNewRecDays([]);
+      setNewEstMins(null);
       setNewPhotoUrls([]);
       setShowQuickAdd(false);
       fetchTasks();
@@ -550,6 +567,7 @@ export default function TasksPage() {
     setEditRecurring(!!task.recurrenceType);
     setEditRecDays(task.recurrenceDays ?? []);
     setEditMyDay(task.isMyDay);
+    setEditEstMins(task.estimatedMinutes ?? null);
     setEditAssignees(task.assignees?.map((a) => a.id) ?? []);
   }
 
@@ -567,6 +585,7 @@ export default function TasksPage() {
         timeSlot: editPriority === "TODAY" && editTimeSlot ? editTimeSlot : undefined,
         isMyDay: editMyDay,
         assigneeIds: editAssignees,
+        estimatedMinutes: editEstMins ?? undefined,
       };
       if (editRecurring && editRecDays.length > 0) {
         body.recurrenceType = "WEEKLY";
@@ -704,6 +723,28 @@ export default function TasksPage() {
             ))}
           </div>
         )}
+
+        {/* ── Time budget filter ─────────────────────────── */}
+        <div className="flex gap-1 overflow-x-auto pt-0.5" style={{ scrollbarWidth: "none" }}>
+          <span className="shrink-0 text-[11px] text-gray-400 self-center pr-1">I have:</span>
+          {[{ label: "30m", mins: 30 }, { label: "1hr", mins: 60 }, { label: "2hr", mins: 120 }, { label: "4hr", mins: 240 }].map(({ label, mins }) => (
+            <button
+              key={mins}
+              type="button"
+              onClick={() => setTimeFilter(timeFilter === mins ? null : mins)}
+              className={`shrink-0 text-[11px] px-2.5 py-1 rounded-full font-medium transition-colors ${
+                timeFilter === mins ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+          {timeFilter !== null && (
+            <span className="shrink-0 text-[10px] text-purple-600 self-center pl-1 font-medium">
+              · shortest first
+            </span>
+          )}
+        </div>
       </div>
 
       {/* ── WhatsApp reminder banner ──────────────────── */}
@@ -827,6 +868,12 @@ export default function TasksPage() {
                               {task.timeSlot && (
                                 <span className="text-xs">
                                   {TIME_SLOTS.find((s) => s.key === task.timeSlot)?.icon}
+                                </span>
+                              )}
+                              {/* Estimated time badge */}
+                              {task.estimatedMinutes && (
+                                <span className="text-[10px] bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">
+                                  ⏱ {task.estimatedMinutes < 60 ? `${task.estimatedMinutes}m` : `${task.estimatedMinutes / 60}h`}
                                 </span>
                               )}
                               {/* Recurrence */}
@@ -994,6 +1041,23 @@ export default function TasksPage() {
                   </div>
                 </>
               )}
+
+              {/* How long? */}
+              <label className="text-xs font-medium text-gray-500 mb-2 block">How long will this take?</label>
+              <div className="flex gap-2 mb-4">
+                {[{ label: "30m", mins: 30 }, { label: "1hr", mins: 60 }, { label: "2hr", mins: 120 }, { label: "4hr", mins: 240 }].map(({ label, mins }) => (
+                  <button
+                    key={mins}
+                    type="button"
+                    onClick={() => setNewEstMins(newEstMins === mins ? null : mins)}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
+                      newEstMins === mins ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
 
               {/* Assign to */}
               <div className="flex items-center justify-between mb-2">
@@ -1195,6 +1259,23 @@ export default function TasksPage() {
                     </button>
                   );
                 })}
+              </div>
+
+              {/* How long? */}
+              <label className="text-xs font-medium text-gray-500 mb-2 block">How long will this take?</label>
+              <div className="flex gap-2 mb-4">
+                {[{ label: "30m", mins: 30 }, { label: "1hr", mins: 60 }, { label: "2hr", mins: 120 }, { label: "4hr", mins: 240 }].map(({ label, mins }) => (
+                  <button
+                    key={mins}
+                    type="button"
+                    onClick={() => setEditEstMins(editEstMins === mins ? null : mins)}
+                    className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
+                      editEstMins === mins ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
 
               {/* Due date */}

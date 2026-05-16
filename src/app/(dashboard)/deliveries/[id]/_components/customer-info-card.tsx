@@ -20,18 +20,26 @@ export function CustomerInfoCard({ data, onContactSaved, contactSaved }: Custome
     const blob = new Blob([vcard], { type: "text/vcard" });
     const file = new File([blob], `${contactName}.vcf`, { type: "text/vcard" });
 
+    // Try native share (best on mobile — opens contacts app directly)
     if (navigator.share && navigator.canShare?.({ files: [file] })) {
       try {
         await navigator.share({ files: [file], title: "Save Contact" });
         onContactSaved();
         return;
       } catch {
-        // User cancelled share -- fall through to fallback
+        // User cancelled share — fall through to download
       }
     }
 
+    // Fallback: programmatic download — on mobile this triggers "Add to Contacts"
     const url = URL.createObjectURL(blob);
-    window.open(url, "_blank");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${contactName}.vcf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
     onContactSaved();
   };
 

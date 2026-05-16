@@ -86,6 +86,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         ...(data.sortOrder !== undefined && { sortOrder: data.sortOrder }),
         ...(data.isMyDay !== undefined && { isMyDay: data.isMyDay }),
         ...(data.myDayDate !== undefined && { myDayDate: data.myDayDate }),
+        ...(data.estimatedMinutes !== undefined && { estimatedMinutes: data.estimatedMinutes }),
         ...(statusUpdate !== undefined && { status: statusUpdate }),
         ...(completedAt && { completedAt }),
         ...(recurringDoneDate !== undefined && { recurringDoneDate }),

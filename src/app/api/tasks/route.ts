@@ -75,6 +75,7 @@ export async function POST(req: NextRequest) {
         dueDate,
         recurrenceType: data.recurrenceType as never,
         recurrenceDays: data.recurrenceDays || [],
+        estimatedMinutes: data.estimatedMinutes,
         createdById: user.id,
         assignees: {
           createMany: {

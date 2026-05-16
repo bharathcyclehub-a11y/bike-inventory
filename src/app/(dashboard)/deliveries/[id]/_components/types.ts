@@ -52,6 +52,7 @@ export interface DeliveryData {
   salesPerson: string | null;
   selfFillToken: string | null;
   selfFillCompletedAt: string | null;
+  mapsLink: string | null;
 }
 
 export function formatINR(n: number) {

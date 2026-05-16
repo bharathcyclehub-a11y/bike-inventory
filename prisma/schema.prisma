@@ -929,6 +929,7 @@ model Delivery {
   selfFillToken       String?   @unique
   selfFillTokenExpiry DateTime?
   selfFillCompletedAt DateTime?
+  mapsLink            String?   // Google Maps location link shared by customer
 
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
@@ -1361,6 +1362,7 @@ model Task {
   recurringDoneDate String?
   isMyDay           Boolean         @default(false)
   myDayDate         String?
+  estimatedMinutes  Int?            // How long this task takes: 30, 60, 120, or 240 minutes
   photoUrls         String[]
   sortOrder         Int             @default(0)
   createdById       String

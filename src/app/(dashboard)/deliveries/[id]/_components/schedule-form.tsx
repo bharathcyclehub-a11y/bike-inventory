@@ -45,6 +45,7 @@ export function ScheduleForm({ data, deliveryId, templates, onScheduled, onCance
   const [delNotes, setDelNotes] = useState(data.deliveryNotes || "");
   const [freeAccessories, setFreeAccessories] = useState(data.freeAccessories || "");
   const [reversePickup, setReversePickup] = useState(data.reversePickup || false);
+  const [mapsLink, setMapsLink] = useState(data.mapsLink || "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -55,6 +56,10 @@ export function ScheduleForm({ data, deliveryId, templates, onScheduled, onCance
 
   const handleSubmit = async () => {
     if (!schedDate) return;
+    if (!isOutstation && !/^\d{6}$/.test(editPincode.trim())) {
+      setError("Pincode is required for Bangalore deliveries (6 digits)");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -65,6 +70,7 @@ export function ScheduleForm({ data, deliveryId, templates, onScheduled, onCance
         isOutstation,
         alternatePhone: editAltPhone.trim() || undefined,
         freeAccessories: freeAccessories.trim() || undefined,
+        mapsLink: mapsLink.trim() || undefined,
         ...(isOutstation
           ? { customerAddress: editAddress.trim() || undefined }
           : {
@@ -187,15 +193,20 @@ export function ScheduleForm({ data, deliveryId, templates, onScheduled, onCance
         {!isOutstation && (
           <>
             <div>
-              <label className="text-xs text-slate-500">Pincode *</label>
+              <label className="text-xs text-slate-500">
+                Pincode <span className="text-red-500">*</span>
+              </label>
               <Input
                 value={editPincode}
                 onChange={(e) => setEditPincode(e.target.value)}
-                placeholder="e.g. 560001"
-                className="text-xs"
+                placeholder="e.g. 560064"
+                className={`text-xs ${editPincode && !/^\d{6}$/.test(editPincode) ? "border-red-300" : ""}`}
                 inputMode="numeric"
                 maxLength={6}
               />
+              {editPincode && !/^\d{6}$/.test(editPincode) && (
+                <p className="text-[10px] text-red-500 mt-0.5">Must be 6 digits</p>
+              )}
             </div>
             <div>
               <label className="text-xs text-slate-500">Free Accessories</label>
@@ -244,6 +255,20 @@ export function ScheduleForm({ data, deliveryId, templates, onScheduled, onCance
             </div>
           </>
         )}
+
+        {/* Google Maps Link */}
+        <div>
+          <label className="text-xs text-slate-500">
+            Google Maps Link {mapsLink ? "✓" : <span className="text-amber-600">(needed before dispatch)</span>}
+          </label>
+          <Input
+            value={mapsLink}
+            onChange={(e) => setMapsLink(e.target.value)}
+            placeholder="https://maps.app.goo.gl/..."
+            className="text-xs"
+            type="url"
+          />
+        </div>
 
         {/* Estimated Delivery Date */}
         <div>

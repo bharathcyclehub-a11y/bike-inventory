@@ -64,13 +64,15 @@ export function BottomSheetModal({
           animating ? "translate-y-0" : "translate-y-full"
         }`}
       >
-        <div className="w-full max-w-md bg-white rounded-t-2xl p-5 pb-safe shadow-xl">
-          <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
-          {description && (
-            <p className="text-sm text-slate-600 mt-1">{description}</p>
-          )}
-          {children && <div className="mt-3">{children}</div>}
-          <div className="flex gap-2 mt-4">
+        <div className="w-full max-w-md bg-white rounded-t-2xl shadow-xl flex flex-col max-h-[90dvh]">
+          <div className="p-5 overflow-y-auto flex-1">
+            <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
+            {description && (
+              <p className="text-sm text-slate-600 mt-1">{description}</p>
+            )}
+            {children && <div className="mt-3">{children}</div>}
+          </div>
+          <div className="flex gap-2 p-5 pt-3 pb-safe border-t border-slate-100">
             {actions.map((action) => (
               <button
                 key={action.label}

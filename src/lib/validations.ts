@@ -320,6 +320,7 @@ export const deliveryUpdateSchema = z.object({
   whatsAppScheduledSent: z.boolean().optional(),
   whatsAppDispatchedSent: z.boolean().optional(),
   whatsAppDeliveredSent: z.boolean().optional(),
+  mapsLink: z.string().optional(),
 });
 
 // ─── Inbound Tracking ───────────────────────
@@ -365,6 +366,7 @@ export const taskSchema = z.object({
   recurrenceType: z.enum(["DAILY", "WEEKLY", "MONTHLY"]).optional(),
   recurrenceDays: z.array(z.string()).optional(),
   subtasks: z.array(z.object({ title: z.string().min(1) })).optional(),
+  estimatedMinutes: z.number().int().refine((v) => [30, 60, 120, 240].includes(v), "Must be 30, 60, 120, or 240").optional(),
 });
 
 export const taskUpdateSchema = taskSchema.partial().extend({

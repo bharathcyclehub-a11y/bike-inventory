@@ -95,6 +95,33 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ toke
     if (body.deliveryNotes && typeof body.deliveryNotes === "string") {
       updateData.deliveryNotes = body.deliveryNotes.trim().slice(0, 500);
     }
+    if (typeof body.isOutstation === "boolean") {
+      updateData.isOutstation = body.isOutstation;
+    }
+    if (body.mapsLink && typeof body.mapsLink === "string") {
+      updateData.mapsLink = body.mapsLink.trim().slice(0, 500);
+    }
+
+    // Delivery slot: validate requested date and slot availability
+    if (body.requestedDate && typeof body.requestedDate === "string") {
+      const dateStr = body.requestedDate.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        // Re-check slot count (race-condition guard)
+        const slotStart = new Date(dateStr + "T00:00:00+05:30");
+        const slotEnd = new Date(dateStr + "T23:59:59+05:30");
+        const booked = await prisma.delivery.count({
+          where: {
+            scheduledDate: { gte: slotStart, lte: slotEnd },
+            status: { notIn: ["PREBOOKED", "WALK_OUT"] },
+            id: { not: delivery.id }, // exclude self
+          },
+        });
+        if (booked >= 10) {
+          return errorResponse("This delivery slot is now full. Please choose another date.", 409);
+        }
+        updateData.scheduledDate = slotStart;
+      }
+    }
 
     await prisma.delivery.update({
       where: { id: delivery.id },

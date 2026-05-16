@@ -41,7 +41,9 @@ export function DetailActions({
 }: DetailActionsProps) {
   const [showSchedule, setShowSchedule] = useState(false);
   const [showDispatch, setShowDispatch] = useState(false);
-  const [showHandover, setShowHandover] = useState<"WALK_OUT" | "DELIVERED" | null>(initialAction);
+  const [showHandover, setShowHandover] = useState<"WALK_OUT" | "DELIVERED" | null>(
+    data.status === "WALK_OUT" || data.status === "DELIVERED" ? null : initialAction
+  );
   const [actionLoading, setActionLoading] = useState(false);
 
   const isOuts = data.isOutstation;
@@ -149,7 +151,10 @@ export function DetailActions({
                 Schedule Delivery
               </button>
               <button
-                onClick={() => setShowHandover("WALK_OUT")}
+                onClick={() => {
+                  if (!contactSaved && data.customerPhone) return;
+                  setShowHandover("WALK_OUT");
+                }}
                 className="flex-1 bg-green-600 text-white py-2.5 rounded-lg text-sm font-medium flex items-center justify-center gap-1.5"
               >
                 <CheckCircle2 className="h-4 w-4" /> Walk-out

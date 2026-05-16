@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
 // POST: Create pre-booking (from Zoho invoice or manual)
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE"]);
+    const user = await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE", "ACCOUNTS_MANAGER"]);
     const body = await req.json();
     const data = preBookingSchema.parse(body);
 
