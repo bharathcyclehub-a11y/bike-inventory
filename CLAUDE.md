@@ -20,3 +20,18 @@
 
 ## Next.js
 This version has breaking changes. Read `node_modules/next/dist/docs/` before writing code.
+
+## Domain Consultants
+When working on features in these domains, read the relevant agent file FIRST and check your implementation against their principles and red flags:
+
+- **Inventory / Stock / Reorder / Products**: Read `docs/agents/inventory-consultant.md`
+  - Applies to: stock pages, inbound, reorder, product CRUD, stock audit, transfers
+- **Warehouse / Bins / Dispatch / Inbound receiving**: Read `docs/agents/warehouse-consultant.md`
+  - Applies to: inbound shipment flow, bin management, delivery dispatch, handover checklist
+- **Accounting / Bills / Payments / Receivables / Expenses**: Read `docs/agents/accounting-consultant.md`
+  - Applies to: bills, payments, receivables, expenses, settlement, GST, Zoho sync
+
+Before completing any feature in these areas, verify:
+1. Does the implementation violate any principle listed in the agent doc?
+2. Would the agent raise any red flag about this change?
+3. If yes, flag it to the user before marking done.
