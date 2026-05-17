@@ -65,6 +65,9 @@ export async function PUT(req: NextRequest) {
             if (!product) continue;
 
             const newStock = product.currentStock - item.quantity;
+            if (newStock < 0) {
+              throw new Error(`Insufficient stock for ${item.name} (SKU: ${item.sku}) on invoice ${delivery.invoiceNo}. Available: ${product.currentStock}, Needed: ${item.quantity}`);
+            }
             await tx.product.update({
               where: { id: product.id },
               data: { currentStock: newStock },

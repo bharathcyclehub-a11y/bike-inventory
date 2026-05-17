@@ -312,6 +312,7 @@ export const deliveryUpdateSchema = z.object({
   isOutstation: z.boolean().optional(),
   courierName: z.string().optional(),
   courierTrackingNo: z.string().optional(),
+  courierTrackingLink: z.string().optional(),
   courierCost: z.number().optional(),
   vehicleNo: z.string().optional(),
   invoiceType: z.enum(["SALES", "SERVICE", "CENTRE"]).nullable().optional(),

@@ -375,7 +375,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           <CardHeader><CardTitle className="flex items-center gap-1.5"><IndianRupee className="h-3.5 w-3.5" /> Pricing</CardTitle></CardHeader>
           <CardContent>
             <div className="grid grid-cols-3 gap-3 text-sm">
-              <div><p className="text-slate-500">Cost</p><p className="font-medium">{fmt(product.costPrice)}</p></div>
+              <div><p className="text-slate-500">Cost</p><p className={`font-medium ${product.costPrice === 0 ? "text-amber-600" : ""}`}>{fmt(product.costPrice)}</p>{product.costPrice === 0 && <p className="text-[10px] text-amber-600 mt-0.5">COGS will be inaccurate</p>}</div>
               <div><p className="text-slate-500">Selling</p><p className="font-medium">{fmt(product.sellingPrice)}</p></div>
               <div><p className="text-slate-500">MRP</p><p className="font-medium">{fmt(product.mrp)}</p></div>
             </div>

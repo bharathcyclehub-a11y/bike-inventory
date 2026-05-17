@@ -22,6 +22,7 @@ export async function GET() {
       yesterdaySales,
       topSellerWeek,
       deadStockCount,
+      zeroCostCount,
     ] = await Promise.all([
       prisma.$queryRaw<[{ reorder_count: number; overstock_count: number; stock_value: number }]>`
         SELECT
@@ -56,12 +57,18 @@ export async function GET() {
           WHERE t."productId" = p.id AND t.type = 'OUTWARD' AND t."createdAt" >= ${ninetyDaysAgo}
         )
       `,
+      // Count active products with costPrice = 0 and stock > 0
+      prisma.$queryRaw<[{ count: number }]>`
+        SELECT COUNT(*)::int as count FROM "Product"
+        WHERE status = 'ACTIVE' AND "costPrice" = 0 AND "currentStock" > 0
+      `,
     ]);
 
     const reorderNum = stockMetrics[0]?.reorder_count || 0;
     const overstockCount = stockMetrics[0]?.overstock_count || 0;
     const totalStockValue = stockMetrics[0]?.stock_value || 0;
     const deadStock = deadStockCount[0]?.count || 0;
+    const zeroCost = zeroCostCount[0]?.count || 0;
 
     let topSellerName = "None this week";
     if (topSellerWeek.length > 0) {
@@ -113,6 +120,12 @@ export async function GET() {
         severity: "info",
         value: totalStockValue,
       },
+      ...(zeroCost > 0 ? [{
+        type: "zero_cost",
+        title: `${zeroCost} product${zeroCost !== 1 ? "s" : ""} with cost price = ₹0 (COGS inaccurate)`,
+        severity: "warning" as const,
+        value: zeroCost,
+      }] : []),
     ];
 
     return successResponse(insights);

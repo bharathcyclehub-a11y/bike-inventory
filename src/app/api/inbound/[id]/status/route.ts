@@ -57,6 +57,17 @@ export async function PUT(
       return successResponse(reverted);
     }
 
+    // Validate: all undelivered items must have bin assignments before marking delivered
+    if (status === "DELIVERED" || status === "PARTIALLY_DELIVERED") {
+      const undeliveredItems = existing.lineItems.filter((li) => !li.isDelivered);
+      for (const li of undeliveredItems) {
+        const binAssign = binAssignments.find((ba) => ba.lineItemId === li.id);
+        if (!binAssign || !binAssign.binId) {
+          return errorResponse(`Bin assignment required for "${li.productName}" before marking delivered`, 400);
+        }
+      }
+    }
+
     const updated = await prisma.$transaction(async (tx) => {
       // Mark all line items as delivered if full delivery
       if (status === "DELIVERED") {

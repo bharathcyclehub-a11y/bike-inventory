@@ -82,6 +82,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         if (data.status === "WALK_OUT" && !existing.customerPhone) {
           throw new Error("Cannot walk-out without saving customer contact first");
         }
+
+        // SHIPPED requires tracking number for outstation deliveries
+        if (data.status === "SHIPPED" && existing.isOutstation && !existing.courierTrackingNo && !data.courierTrackingNo) {
+          throw new Error("Tracking number is required for outstation shipments before marking as Shipped");
+        }
       }
       const updateData: Record<string, unknown> = {};
 
@@ -99,6 +104,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.isOutstation !== undefined) updateData.isOutstation = data.isOutstation;
       if (data.courierName !== undefined) updateData.courierName = data.courierName;
       if (data.courierTrackingNo !== undefined) updateData.courierTrackingNo = data.courierTrackingNo;
+      if (data.courierTrackingLink !== undefined) updateData.courierTrackingLink = data.courierTrackingLink;
       if (data.courierCost !== undefined) updateData.courierCost = data.courierCost;
       if (data.vehicleNo !== undefined) updateData.vehicleNo = data.vehicleNo;
       if (data.freeAccessories !== undefined) updateData.freeAccessories = data.freeAccessories;
@@ -148,7 +154,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             where: { referenceNo: existing.invoiceNo, type: "OUTWARD" },
           });
 
-          // Deduct stock — allow negative (resolve via transfer/inward later)
+          // Deduct stock (block if insufficient)
           const items = (!alreadyDeducted ? (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) : []) || [];
 
           for (const item of items) {
@@ -167,11 +173,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
             if (!product) continue;
 
             const newStock = product.currentStock - item.quantity;
+            if (newStock < 0) {
+              throw new Error(`Insufficient stock for ${item.name} (SKU: ${item.sku}). Available: ${product.currentStock}, Needed: ${item.quantity}`);
+            }
             await tx.product.update({
               where: { id: product.id },
               data: { currentStock: newStock },
             });
-            const negativeTag = newStock < 0 ? " [NEGATIVE STOCK]" : "";
             await tx.inventoryTransaction.create({
               data: {
                 type: "OUTWARD",
@@ -180,7 +188,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
                 previousStock: product.currentStock,
                 newStock,
                 referenceNo: existing.invoiceNo,
-                notes: `[ZOHO][VERIFIED] Customer: ${existing.customerName} | Invoice: ${existing.invoiceNo} | ${item.name} x${item.quantity}${negativeTag}`,
+                notes: `[ZOHO][VERIFIED] Customer: ${existing.customerName} | Invoice: ${existing.invoiceNo} | ${item.name} x${item.quantity}`,
                 userId: user.id,
               },
             });

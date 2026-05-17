@@ -922,6 +922,7 @@ model Delivery {
   isOutstation            Boolean  @default(false)
   courierName             String?
   courierTrackingNo       String?
+  courierTrackingLink     String?
   courierCost             Float?
   vehicleNo               String?
 
