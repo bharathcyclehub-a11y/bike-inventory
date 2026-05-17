@@ -58,8 +58,9 @@ export async function POST(req: NextRequest) {
 
       if (!product) throw new Error("Product not found");
 
-      if (product.currentStock < data.quantity) {
-        throw new Error(`Insufficient stock. Available: ${product.currentStock}, Requested: ${data.quantity}`);
+      const available = product.currentStock - product.reservedStock;
+      if (available < data.quantity) {
+        throw new Error(`Insufficient available stock. Physical: ${product.currentStock}, Reserved: ${product.reservedStock}, Available: ${available}, Requested: ${data.quantity}`);
       }
 
       const previousStock = product.currentStock;

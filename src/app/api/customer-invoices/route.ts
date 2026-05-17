@@ -14,9 +14,30 @@ export async function GET(req: NextRequest) {
     const status = searchParams.get("status") || undefined;
     const customerId = searchParams.get("customerId") || undefined;
     const overdue = searchParams.get("overdue") === "true";
+    const aging = searchParams.get("aging") || undefined; // "current" | "0-30" | "30-60" | "60+"
 
     const dateFrom = searchParams.get("dateFrom") || undefined;
     const dateTo = searchParams.get("dateTo") || undefined;
+
+    // Build aging date range filter on dueDate
+    let agingFilter: Record<string, unknown> | undefined;
+    if (aging) {
+      const now = new Date();
+      const unpaidStatuses = ["PENDING", "PARTIALLY_PAID"] as InvoiceStatus[];
+      if (aging === "current") {
+        agingFilter = { dueDate: { gte: now }, status: { in: unpaidStatuses } };
+      } else if (aging === "0-30") {
+        const d30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        agingFilter = { dueDate: { lt: now, gte: d30 }, status: { in: unpaidStatuses } };
+      } else if (aging === "30-60") {
+        const d30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        const d60 = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+        agingFilter = { dueDate: { lt: d30, gte: d60 }, status: { in: unpaidStatuses } };
+      } else if (aging === "60+") {
+        const d60 = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+        agingFilter = { dueDate: { lt: d60 }, status: { in: unpaidStatuses } };
+      }
+    }
 
     const where = {
       ...(search && {
@@ -28,6 +49,7 @@ export async function GET(req: NextRequest) {
       ...(status && { status: status as never }),
       ...(customerId && { customerId }),
       ...(overdue && { dueDate: { lt: new Date() }, status: { in: ["PENDING", "PARTIALLY_PAID"] as InvoiceStatus[] } }),
+      ...agingFilter,
       ...((dateFrom || dateTo) && {
         invoiceDate: {
           ...(dateFrom && { gte: new Date(dateFrom) }),

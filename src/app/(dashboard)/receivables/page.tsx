@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { FileText, AlertTriangle, Search, Plus, IndianRupee, Cloud, Loader2, Download } from "lucide-react";
+import { FileText, AlertTriangle, Search, Plus, IndianRupee, Cloud, Loader2, Download, Clock } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -70,8 +70,19 @@ export default function ReceivablesPage() {
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
 
+  // Aging data
+  const [aging, setAging] = useState<{ buckets: { current: { count: number; amount: number }; days30: { count: number; amount: number }; days60: { count: number; amount: number }; days90plus: { count: number; amount: number } }; totalOutstanding: number; totalCount: number } | null>(null);
+  const [agingFilter, setAgingFilter] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/customer-invoices/aging-summary")
+      .then((r) => r.json())
+      .then((res) => { if (res.success) setAging(res.data); })
+      .catch(() => {});
+  }, []);
+
   // Summary stats
-  const totalOutstanding = invoices.reduce((sum, inv) => sum + Math.max(0, inv.amount - inv.paidAmount), 0);
+  const totalOutstanding = aging?.totalOutstanding ?? invoices.reduce((sum, inv) => sum + Math.max(0, inv.amount - inv.paidAmount), 0);
   const overdueCount = invoices.filter(
     (inv) => new Date(inv.dueDate) < new Date() && inv.amount - inv.paidAmount > 0
   ).length;
@@ -79,7 +90,9 @@ export default function ReceivablesPage() {
   const fetchData = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
-    if (filter === "OVERDUE") {
+    if (agingFilter) {
+      params.set("aging", agingFilter);
+    } else if (filter === "OVERDUE") {
       params.set("overdue", "true");
     } else if (filter !== "ALL") {
       params.set("status", filter);
@@ -93,7 +106,7 @@ export default function ReceivablesPage() {
       .then((res) => { if (res.success) setInvoices(res.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch, dateFrom, dateTo]);
+  }, [filter, agingFilter, debouncedSearch, dateFrom, dateTo]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -381,27 +394,39 @@ export default function ReceivablesPage() {
         </div>
       )}
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <Card>
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <IndianRupee className="h-4 w-4 text-red-500" />
-              <span className="text-xs text-slate-500">Total Outstanding</span>
-            </div>
-            <p className="text-lg font-bold text-red-600">{formatCurrency(totalOutstanding)}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle className="h-4 w-4 text-amber-500" />
-              <span className="text-xs text-slate-500">Overdue</span>
-            </div>
-            <p className="text-lg font-bold text-amber-600">{overdueCount}</p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* Aging Bucket Cards */}
+      {aging && (
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Clock className="h-4 w-4 text-slate-500" />
+            <span className="text-xs font-semibold text-slate-700">Aging Summary</span>
+            <span className="text-xs text-slate-400">Total: {formatCurrency(totalOutstanding)}</span>
+            {agingFilter && (
+              <button onClick={() => setAgingFilter(null)} className="ml-auto text-[10px] text-blue-600 underline">Clear</button>
+            )}
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { key: "current", label: "Current", data: aging.buckets.current, color: "text-green-600", bg: "bg-green-50 border-green-200" },
+              { key: "0-30", label: "1-30d", data: aging.buckets.days30, color: "text-yellow-600", bg: "bg-yellow-50 border-yellow-200" },
+              { key: "30-60", label: "31-60d", data: aging.buckets.days60, color: "text-orange-600", bg: "bg-orange-50 border-orange-200" },
+              { key: "60+", label: "60d+", data: aging.buckets.days90plus, color: "text-red-600", bg: "bg-red-50 border-red-200" },
+            ].map((bucket) => (
+              <button
+                key={bucket.key}
+                onClick={() => setAgingFilter(agingFilter === bucket.key ? null : bucket.key)}
+                className={`p-2 rounded-lg border text-left transition-all ${
+                  agingFilter === bucket.key ? `${bucket.bg} ring-2 ring-offset-1 ring-slate-400` : "bg-white border-slate-200 hover:border-slate-300"
+                }`}
+              >
+                <p className="text-[10px] text-slate-500">{bucket.label}</p>
+                <p className={`text-sm font-bold ${bucket.color}`}>{bucket.data.count}</p>
+                <p className="text-[10px] text-slate-500 truncate">{formatCurrency(bucket.data.amount)}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Search */}
       <div className="relative mb-3">

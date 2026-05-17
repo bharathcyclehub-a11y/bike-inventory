@@ -24,11 +24,12 @@ export async function GET() {
       deadStockCount,
       zeroCostCount,
     ] = await Promise.all([
-      prisma.$queryRaw<[{ reorder_count: number; overstock_count: number; stock_value: number }]>`
+      prisma.$queryRaw<[{ reorder_count: number; overstock_count: number; stock_value: number; total_reserved: number }]>`
         SELECT
-          COUNT(*) FILTER (WHERE "reorderLevel" > 0 AND "currentStock" <= "reorderLevel")::int as reorder_count,
+          COUNT(*) FILTER (WHERE "reorderLevel" > 0 AND ("currentStock" - "reservedStock") <= "reorderLevel")::int as reorder_count,
           COUNT(*) FILTER (WHERE "maxStock" > 0 AND "currentStock" > "maxStock")::int as overstock_count,
-          COALESCE(SUM("currentStock" * "costPrice"), 0)::float as stock_value
+          COALESCE(SUM("currentStock" * "costPrice"), 0)::float as stock_value,
+          COALESCE(SUM("reservedStock"), 0)::int as total_reserved
         FROM "Product" WHERE status = 'ACTIVE'
       `,
       prisma.inventoryTransaction.aggregate({
@@ -67,6 +68,7 @@ export async function GET() {
     const reorderNum = stockMetrics[0]?.reorder_count || 0;
     const overstockCount = stockMetrics[0]?.overstock_count || 0;
     const totalStockValue = stockMetrics[0]?.stock_value || 0;
+    const totalReserved = stockMetrics[0]?.total_reserved || 0;
     const deadStock = deadStockCount[0]?.count || 0;
     const zeroCost = zeroCostCount[0]?.count || 0;
 
@@ -120,6 +122,12 @@ export async function GET() {
         severity: "info",
         value: totalStockValue,
       },
+      ...(totalReserved > 0 ? [{
+        type: "reserved_stock",
+        title: `${totalReserved} unit${totalReserved !== 1 ? "s" : ""} reserved for pending deliveries`,
+        severity: "info" as const,
+        value: totalReserved,
+      }] : []),
       ...(zeroCost > 0 ? [{
         type: "zero_cost",
         title: `${zeroCost} product${zeroCost !== 1 ? "s" : ""} with cost price = ₹0 (COGS inaccurate)`,

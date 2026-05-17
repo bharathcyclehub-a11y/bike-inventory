@@ -38,6 +38,7 @@ interface ProductDetail {
   status: string;
   condition: string;
   currentStock: number;
+  reservedStock: number;
   reorderLevel: number;
   maxStock: number;
   costPrice: number;
@@ -341,6 +342,9 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                 product.reorderLevel > 0 && product.currentStock <= product.reorderLevel ? "text-yellow-600" : "text-green-600"
               }`}>{product.currentStock}</p>
               <p className="text-xs text-slate-500">In Stock</p>
+              {product.reservedStock > 0 && (
+                <p className="text-[10px] text-orange-600 mt-0.5">{product.currentStock - product.reservedStock} avail · {product.reservedStock} reserved</p>
+              )}
             </div>
             <div>
               <p className="text-2xl font-bold text-yellow-600">{product.reorderLevel}</p>

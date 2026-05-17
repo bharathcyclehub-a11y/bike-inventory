@@ -258,6 +258,7 @@ model Product {
 
   // Stock
   currentStock  Int            @default(0)
+  reservedStock Int            @default(0)
   minStock      Int            @default(0)
   maxStock      Int            @default(0)
   reorderLevel  Int            @default(0)
@@ -895,6 +896,7 @@ model Delivery {
   scheduledDate   DateTime?
   dispatchedAt    DateTime?
   deliveredAt     DateTime?
+  stockReservedAt DateTime?
 
   expectedReadyDate DateTime?
   prebookNotes    String?

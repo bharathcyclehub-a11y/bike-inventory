@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { FileText, AlertTriangle, Search, Cloud, Loader2, Download } from "lucide-react";
+import { FileText, AlertTriangle, Search, Cloud, Loader2, Download, Clock, Zap } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -84,10 +84,23 @@ export default function BillsPage() {
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
 
+  // Aging + CD data
+  const [aging, setAging] = useState<{ buckets: { current: { count: number; amount: number }; days30: { count: number; amount: number }; days60: { count: number; amount: number }; days90plus: { count: number; amount: number } }; totalOutstanding: number; cdWarnings: Array<{ billId: string; vendorName: string; cdDeadline: string; cdPercentage: number; balance: number; daysLeft: number }> } | null>(null);
+  const [agingFilter, setAgingFilter] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/bills/aging-summary")
+      .then((r) => r.json())
+      .then((res) => { if (res.success) setAging(res.data); })
+      .catch(() => {});
+  }, []);
+
   const fetchData = useCallback(() => {
     setLoading(true);
     const params = new URLSearchParams({ limit: "50" });
-    if (filter === "OVERDUE") {
+    if (agingFilter) {
+      params.set("aging", agingFilter);
+    } else if (filter === "OVERDUE") {
       params.set("overdue", "true");
     } else if (filter !== "ALL") {
       params.set("status", filter);
@@ -102,7 +115,7 @@ export default function BillsPage() {
       .then((res) => { if (res.success) setBills(res.data); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch, dateFrom, dateTo, billedToFilter]);
+  }, [filter, agingFilter, debouncedSearch, dateFrom, dateTo, billedToFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -378,6 +391,61 @@ export default function BillsPage() {
         <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg p-3 mb-3">
           <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
           <span className="text-xs text-blue-700">Importing {selectedBills.size} bills...</span>
+        </div>
+      )}
+
+      {/* Aging Bucket Cards */}
+      {aging && (
+        <div className="mb-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Clock className="h-4 w-4 text-slate-500" />
+            <span className="text-xs font-semibold text-slate-700">Payables Aging</span>
+            <span className="text-xs text-slate-400">Total: {formatCurrency(aging.totalOutstanding)}</span>
+            {agingFilter && (
+              <button onClick={() => setAgingFilter(null)} className="ml-auto text-[10px] text-blue-600 underline">Clear</button>
+            )}
+          </div>
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { key: "current", label: "Current", data: aging.buckets.current, color: "text-green-600", bg: "bg-green-50 border-green-200" },
+              { key: "0-30", label: "1-30d", data: aging.buckets.days30, color: "text-yellow-600", bg: "bg-yellow-50 border-yellow-200" },
+              { key: "30-60", label: "31-60d", data: aging.buckets.days60, color: "text-orange-600", bg: "bg-orange-50 border-orange-200" },
+              { key: "60+", label: "60d+", data: aging.buckets.days90plus, color: "text-red-600", bg: "bg-red-50 border-red-200" },
+            ].map((bucket) => (
+              <button
+                key={bucket.key}
+                onClick={() => setAgingFilter(agingFilter === bucket.key ? null : bucket.key)}
+                className={`p-2 rounded-lg border text-left transition-all ${
+                  agingFilter === bucket.key ? `${bucket.bg} ring-2 ring-offset-1 ring-slate-400` : "bg-white border-slate-200 hover:border-slate-300"
+                }`}
+              >
+                <p className="text-[10px] text-slate-500">{bucket.label}</p>
+                <p className={`text-sm font-bold ${bucket.color}`}>{bucket.data.count}</p>
+                <p className="text-[10px] text-slate-500 truncate">{formatCurrency(bucket.data.amount)}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* CD Deadline Warnings */}
+      {aging && aging.cdWarnings.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <Zap className="h-3.5 w-3.5 text-amber-600" />
+            <span className="text-xs font-semibold text-amber-800">Cash Discount Deadlines</span>
+          </div>
+          <div className="space-y-1">
+            {aging.cdWarnings.slice(0, 5).map((w) => (
+              <Link key={w.billId} href={`/bills/${w.billId}`}
+                className="flex items-center justify-between text-xs hover:bg-amber-100 rounded px-1 py-0.5 transition-colors">
+                <span className="text-slate-700 truncate">{w.vendorName}</span>
+                <span className={`shrink-0 font-medium ${w.daysLeft <= 0 ? "text-red-600" : w.daysLeft <= 3 ? "text-orange-600" : "text-amber-600"}`}>
+                  {w.daysLeft <= 0 ? `Expired ${Math.abs(w.daysLeft)}d ago` : `${w.daysLeft}d left`} · {w.cdPercentage}% · {formatCurrency(w.balance)}
+                </span>
+              </Link>
+            ))}
+          </div>
         </div>
       )}
 

@@ -53,14 +53,16 @@ export async function PUT(req: NextRequest) {
 
           // Stock deduction — prefer BCH location
           const items = (delivery.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
+          const wasReserved = !!(delivery as unknown as { stockReservedAt: Date | null }).stockReservedAt;
+
           for (const item of items) {
             if (!item.sku) continue;
             const product = await tx.product.findFirst({
               where: { sku: item.sku, bin: { location: { startsWith: "Bharath Cycle Hub" } } },
-              select: { id: true, currentStock: true },
+              select: { id: true, currentStock: true, reservedStock: true },
             }) || await tx.product.findFirst({
               where: { sku: item.sku },
-              select: { id: true, currentStock: true },
+              select: { id: true, currentStock: true, reservedStock: true },
             });
             if (!product) continue;
 
@@ -70,7 +72,10 @@ export async function PUT(req: NextRequest) {
             }
             await tx.product.update({
               where: { id: product.id },
-              data: { currentStock: newStock },
+              data: {
+                currentStock: newStock,
+                ...(wasReserved && { reservedStock: Math.max(0, product.reservedStock - item.quantity) }),
+              },
             });
             await tx.inventoryTransaction.create({
               data: {

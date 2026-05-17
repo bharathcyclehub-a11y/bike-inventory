@@ -145,54 +145,117 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           updateData.deliveredAt = new Date();
         }
 
-        // Stock deduction on WALK_OUT, PACKED, or SCHEDULED
-        if (data.status === "WALK_OUT" || data.status === "PACKED" || data.status === "SCHEDULED") {
+        // RESERVE stock on SCHEDULED or PACKED (don't deduct yet)
+        if (data.status === "SCHEDULED" || data.status === "PACKED") {
+          if (!existing.stockReservedAt) {
+            const items = (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
+            for (const item of items) {
+              if (!item.sku) continue;
+              const product = await tx.product.findFirst({
+                where: { sku: item.sku, bin: { location: { startsWith: "Bharath Cycle Hub" } } },
+                select: { id: true, currentStock: true, reservedStock: true },
+              }) || await tx.product.findFirst({
+                where: { sku: item.sku },
+                select: { id: true, currentStock: true, reservedStock: true },
+              });
+              if (!product) continue;
+
+              const available = product.currentStock - product.reservedStock;
+              if (available < item.quantity) {
+                throw new Error(`Insufficient available stock for ${item.name} (SKU: ${item.sku}). Available: ${available}, Needed: ${item.quantity}`);
+              }
+              await tx.product.update({
+                where: { id: product.id },
+                data: { reservedStock: product.reservedStock + item.quantity },
+              });
+            }
+            updateData.stockReservedAt = new Date();
+          }
+        }
+
+        // DEDUCT stock on DELIVERED or WALK_OUT (final handover)
+        if (data.status === "DELIVERED" || data.status === "WALK_OUT") {
           if (data.status === "WALK_OUT") updateData.deliveredAt = new Date();
 
-          // Idempotency: skip if stock already deducted for this invoice
+          // Idempotency: skip if already deducted
           const alreadyDeducted = await tx.inventoryTransaction.findFirst({
             where: { referenceNo: existing.invoiceNo, type: "OUTWARD" },
           });
 
-          // Deduct stock (block if insufficient)
-          const items = (!alreadyDeducted ? (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) : []) || [];
+          if (!alreadyDeducted) {
+            const items = (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
+            for (const item of items) {
+              if (!item.sku) continue;
+              const product = await tx.product.findFirst({
+                where: { sku: item.sku, bin: { location: { startsWith: "Bharath Cycle Hub" } } },
+                select: { id: true, currentStock: true, reservedStock: true },
+              }) || await tx.product.findFirst({
+                where: { sku: item.sku },
+                select: { id: true, currentStock: true, reservedStock: true },
+              });
+              if (!product) continue;
 
+              const wasReserved = !!existing.stockReservedAt;
+              if (wasReserved) {
+                // Stock was reserved — deduct both
+                const newStock = product.currentStock - item.quantity;
+                if (newStock < 0) {
+                  throw new Error(`Insufficient stock for ${item.name} (SKU: ${item.sku}). Available: ${product.currentStock}, Needed: ${item.quantity}`);
+                }
+                await tx.product.update({
+                  where: { id: product.id },
+                  data: {
+                    currentStock: newStock,
+                    reservedStock: Math.max(0, product.reservedStock - item.quantity),
+                  },
+                });
+              } else {
+                // Direct walk-out (no prior reservation) — check available stock
+                const available = product.currentStock - product.reservedStock;
+                if (available < item.quantity) {
+                  throw new Error(`Insufficient available stock for ${item.name} (SKU: ${item.sku}). Available: ${available}, Needed: ${item.quantity}`);
+                }
+                await tx.product.update({
+                  where: { id: product.id },
+                  data: { currentStock: product.currentStock - item.quantity },
+                });
+              }
+
+              await tx.inventoryTransaction.create({
+                data: {
+                  type: "OUTWARD",
+                  productId: product.id,
+                  quantity: item.quantity,
+                  previousStock: product.currentStock,
+                  newStock: product.currentStock - item.quantity,
+                  referenceNo: existing.invoiceNo,
+                  notes: `[ZOHO][VERIFIED] Customer: ${existing.customerName} | Invoice: ${existing.invoiceNo} | ${item.name} x${item.quantity}`,
+                  userId: user.id,
+                },
+              });
+            }
+          }
+        }
+
+        // RELEASE reservation on rollback (SCHEDULED/PACKED → VERIFIED)
+        if (data.status === "VERIFIED" && existing.stockReservedAt) {
+          const items = (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
           for (const item of items) {
             if (!item.sku) continue;
-            // Prefer BCH location, fall back to any product with this SKU
             const product = await tx.product.findFirst({
-              where: {
-                sku: item.sku,
-                bin: { location: { startsWith: "Bharath Cycle Hub" } },
-              },
-              select: { id: true, currentStock: true },
+              where: { sku: item.sku, bin: { location: { startsWith: "Bharath Cycle Hub" } } },
+              select: { id: true, reservedStock: true },
             }) || await tx.product.findFirst({
               where: { sku: item.sku },
-              select: { id: true, currentStock: true },
+              select: { id: true, reservedStock: true },
             });
             if (!product) continue;
-
-            const newStock = product.currentStock - item.quantity;
-            if (newStock < 0) {
-              throw new Error(`Insufficient stock for ${item.name} (SKU: ${item.sku}). Available: ${product.currentStock}, Needed: ${item.quantity}`);
-            }
             await tx.product.update({
               where: { id: product.id },
-              data: { currentStock: newStock },
-            });
-            await tx.inventoryTransaction.create({
-              data: {
-                type: "OUTWARD",
-                productId: product.id,
-                quantity: item.quantity,
-                previousStock: product.currentStock,
-                newStock,
-                referenceNo: existing.invoiceNo,
-                notes: `[ZOHO][VERIFIED] Customer: ${existing.customerName} | Invoice: ${existing.invoiceNo} | ${item.name} x${item.quantity}`,
-                userId: user.id,
-              },
+              data: { reservedStock: Math.max(0, product.reservedStock - item.quantity) },
             });
           }
+          updateData.stockReservedAt = null;
         }
       }
 
