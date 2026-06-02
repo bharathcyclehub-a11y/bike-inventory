@@ -30,7 +30,6 @@ export function getPrimaryTabs(role: Role): NavItem[] {
     case "CEO":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
-        { href: "/sops", label: "SOPs", icon: ClipboardList, key: "sops" },
         { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
         { href: "/team", label: "Team", icon: Users, key: "team" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
@@ -88,7 +87,6 @@ export function getPrimaryTabs(role: Role): NavItem[] {
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/sops", label: "SOPs", icon: ClipboardList, key: "sops" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "SALES_MANAGER":
@@ -96,14 +94,12 @@ export function getPrimaryTabs(role: Role): NavItem[] {
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/sops", label: "SOPs", icon: ClipboardList, key: "sops" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
     case "SERVICE_MANAGER":
       return [
         { href: "/", label: "Home", icon: LayoutDashboard, key: "home" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
-        { href: "/sops", label: "SOPs", icon: ClipboardList, key: "sops" },
         { href: "/vendor-issues", label: "Issues", icon: AlertCircle, key: "issues" },
         { href: "/more", label: "More", icon: MoreHorizontal, key: "more" },
       ];
@@ -123,7 +119,6 @@ export function getDesktopExtraTabs(role: Role): NavItem[] {
   switch (role) {
     case "CEO":
       return [
-        { href: "/sops/dashboard", label: "SOP Dashboard", icon: ClipboardList, key: "sop-dashboard" },
         { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
         { href: "/stock", label: "Stock", icon: Package, key: "stock" },
         { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
@@ -161,7 +156,6 @@ export function getDesktopExtraTabs(role: Role): NavItem[] {
     case "INWARDS_EXECUTIVE":
       return [
         { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
-        { href: "/tasks", label: "Tasks", icon: ClipboardList, key: "tasks" },
         { href: "/activity", label: "Activity Log", icon: ClipboardList, key: "activity" },
       ];
     case "OUTWARDS_EXECUTIVE":
@@ -218,11 +212,9 @@ export const NAV_FEATURE_MAP: Record<string, string> = {
   "/barcode": "barcode",
   "/reorder": "reorder",
   "/second-hand": "second_hand",
-  "/sops": "dashboard", // SOPs visible if user can view dashboard
   "/vendor-issues": "vendor_issues",
   "/customers": "customers",
   "/receivables": "customers",
   "/accounts": "bills",
   "/prebookings": "deliveries",
-  "/tasks": "dashboard",
 };

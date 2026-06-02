@@ -6,7 +6,7 @@ import Link from "next/link";
 import {
   Package, ArrowDownCircle, ArrowUpCircle, AlertTriangle,
   IndianRupee, Brain, Truck, Clock, CheckCircle2, Flag,
-  Users, ShieldAlert, ListTodo, ChevronRight, Circle, Share2, Loader2, CheckSquare,
+  Users, ShieldAlert, ChevronRight, Circle, Share2, Loader2,
 } from "lucide-react";
 import { DashboardCard } from "@/components/dashboard-card";
 import { TransactionItem } from "@/components/transaction-item";
@@ -14,7 +14,6 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatINR, formatTime } from "@/lib/utils";
 import type { Role } from "@/types";
-import { TaskSuggestionInbox } from "@/components/task-suggestion-inbox";
 
 interface CEOData {
   // Revenue & Finance
@@ -40,99 +39,6 @@ interface CEOData {
   criticalAlerts: Array<{ type: string; message: string; owner: string; count: number }>;
 }
 
-/* ── My Tasks widget — shown on all dashboards ──────── */
-function MyTasksWidget() {
-  const [tasks, setTasks] = useState<Array<{
-    id: string; taskNo: string; title: string; priority: string; status: string;
-    assignees?: Array<{ user: { name: string } }>;
-  }>>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch("/api/tasks?limit=50")
-      .then((r) => r.json())
-      .then((res) => {
-        const data = res.data ?? res;
-        // Show non-done tasks, sorted: TODAY first, then WEEK, then MONTH
-        const priorityOrder: Record<string, number> = { TODAY: 0, TOMORROW: 1, THREE_DAYS: 2, WEEK: 3, MONTH: 4 };
-        const pending = data
-          .filter((t: { status: string }) => t.status !== "DONE")
-          .sort((a: { priority: string }, b: { priority: string }) => (priorityOrder[a.priority] ?? 9) - (priorityOrder[b.priority] ?? 9));
-        setTasks(pending);
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
-
-  const priorityDot: Record<string, string> = {
-    TODAY: "bg-red-500", TOMORROW: "bg-orange-500", THREE_DAYS: "bg-yellow-500",
-    WEEK: "bg-blue-500", MONTH: "bg-gray-400",
-  };
-  const statusBg: Record<string, string> = {
-    IN_PROGRESS: "text-blue-600 bg-blue-50", BLOCKED: "text-red-600 bg-red-50",
-  };
-
-  if (loading) {
-    return (
-      <Card className="mb-4">
-        <CardContent className="p-4 animate-pulse space-y-2">
-          <div className="h-4 bg-slate-200 rounded w-24" />
-          <div className="h-10 bg-slate-100 rounded" />
-          <div className="h-10 bg-slate-100 rounded" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (tasks.length === 0) return null;
-
-  const shown = tasks.slice(0, 5);
-  const remaining = tasks.length - shown.length;
-
-  return (
-    <Card className="mb-4 border-blue-200 bg-blue-50/30">
-      <CardHeader className="pb-1">
-        <CardTitle className="flex items-center justify-between">
-          <span className="flex items-center gap-1.5">
-            <ListTodo className="h-4 w-4 text-blue-600" />
-            My Tasks
-          </span>
-          <Link href="/tasks" className="text-xs text-blue-600 font-medium flex items-center gap-0.5">
-            View all <ChevronRight className="h-3 w-3" />
-          </Link>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="pt-1 space-y-1">
-        {shown.map((task) => (
-          <Link key={task.id} href="/tasks">
-            <div className="flex items-center gap-2.5 py-2 px-2 rounded-lg hover:bg-blue-50 transition-colors">
-              <div className={`w-2 h-2 rounded-full shrink-0 ${priorityDot[task.priority] || "bg-gray-400"}`} />
-              <div className="flex-1 min-w-0">
-                <p className="text-base text-slate-800 truncate">{task.title}</p>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-xs text-slate-400 font-mono">{task.taskNo}</span>
-                  {task.status !== "PENDING" && (
-                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full ${statusBg[task.status] || ""}`}>
-                      {task.status === "IN_PROGRESS" ? "In Progress" : task.status === "BLOCKED" ? "Blocked" : task.status}
-                    </span>
-                  )}
-                </div>
-              </div>
-              <ChevronRight className="h-3.5 w-3.5 text-slate-300 shrink-0" />
-            </div>
-          </Link>
-        ))}
-        {remaining > 0 && (
-          <Link href="/tasks">
-            <p className="text-xs text-blue-600 font-medium text-center py-1.5">
-              +{remaining} more tasks
-            </p>
-          </Link>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
 
 function ShareDailyReport() {
   const [sharing, setSharing] = useState(false);
@@ -296,209 +202,8 @@ function InwardsEODReport() {
   );
 }
 
-function DailyChecklistWidget() {
-  const [items, setItems] = useState<Array<{
-    id: string; title: string; completions: Array<{ id: string }>;
-  }>>([]);
-  const [loading, setLoading] = useState(true);
-  const today = new Date().toISOString().slice(0, 10);
 
-  useEffect(() => {
-    fetch(`/api/checklists?date=${today}`)
-      .then(r => r.json())
-      .then(res => { if (res.success) setItems(res.data); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [today]);
 
-  const toggle = async (templateId: string, isDone: boolean) => {
-    // Optimistic update
-    setItems(prev => prev.map(item =>
-      item.id === templateId
-        ? { ...item, completions: isDone ? [] : [{ id: "temp" }] }
-        : item
-    ));
-
-    if (isDone) {
-      await fetch(`/api/checklists/complete?templateId=${templateId}&date=${today}`, { method: "DELETE" });
-    } else {
-      await fetch("/api/checklists/complete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ templateId, date: today }),
-      });
-    }
-  };
-
-  if (loading || items.length === 0) return null;
-
-  const done = items.filter(i => i.completions?.length > 0).length;
-
-  return (
-    <Card className="mb-3 border-indigo-200 bg-indigo-50/30">
-      <CardContent className="p-3">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-1.5">
-            <CheckSquare className="h-4 w-4 text-indigo-600" />
-            <p className="text-base font-semibold text-indigo-800">Today&apos;s Checklist</p>
-          </div>
-          <span className="text-sm font-semibold text-indigo-600">{done}/{items.length}</span>
-        </div>
-        <div className="space-y-1.5">
-          {items.map((item) => {
-            const isDone = item.completions?.length > 0;
-            return (
-              <button key={item.id} onClick={() => toggle(item.id, isDone)}
-                className={`w-full flex items-center gap-2 p-2 rounded-lg text-left transition-colors ${
-                  isDone ? "bg-green-50 border border-green-200" : "bg-white border border-slate-200"
-                }`}>
-                <div className={`w-4 h-4 rounded flex-shrink-0 border-2 flex items-center justify-center ${
-                  isDone ? "bg-green-500 border-green-500" : "border-slate-300"
-                }`}>
-                  {isDone && <CheckCircle2 className="h-3 w-3 text-white" />}
-                </div>
-                <span className={`text-sm ${isDone ? "text-green-700 line-through" : "text-slate-700"}`}>
-                  {item.title}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function SOPCheckoffWidget() {
-  const [sops, setSops] = useState<Array<{ id: string; title: string; category: string }>>([]);
-  const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [loading, setLoading] = useState(true);
-  const [togglingId, setTogglingId] = useState<string | null>(null);
-  const today = new Date().toISOString().slice(0, 10);
-
-  useEffect(() => {
-    Promise.all([
-      fetch("/api/sops?isActive=true&forMyRole=true").then(r => r.json()),
-      fetch(`/api/sops/compliance?date=${today}`).then(r => r.json()),
-    ]).then(([sopsRes, compRes]) => {
-      if (sopsRes.success) setSops(sopsRes.data ?? []);
-      if (compRes.success) setChecked(new Set((compRes.data ?? []).map((c: { sopId: string }) => c.sopId)));
-    }).catch(() => {}).finally(() => setLoading(false));
-  }, [today]);
-
-  const toggle = async (sopId: string) => {
-    setTogglingId(sopId);
-    const wasChecked = checked.has(sopId);
-    setChecked(prev => {
-      const next = new Set(prev);
-      wasChecked ? next.delete(sopId) : next.add(sopId);
-      return next;
-    });
-    try {
-      await fetch("/api/sops/compliance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sopId, date: today }),
-      });
-    } catch {
-      setChecked(prev => {
-        const next = new Set(prev);
-        wasChecked ? next.add(sopId) : next.delete(sopId);
-        return next;
-      });
-    }
-    setTogglingId(null);
-  };
-
-  if (loading || sops.length === 0) return null;
-
-  const done = sops.filter(s => checked.has(s.id)).length;
-  const pct = Math.round((done / sops.length) * 100);
-
-  return (
-    <Card className="mb-3 border-teal-200 bg-teal-50/30">
-      <CardContent className="p-3">
-        <div className="flex items-center justify-between mb-2">
-          <Link href="/sops/my-checkoffs" className="flex items-center gap-1.5">
-            <CheckCircle2 className="h-4 w-4 text-teal-600" />
-            <p className="text-base font-semibold text-teal-800">My SOPs</p>
-          </Link>
-          <span className="text-sm font-semibold text-teal-600">{done}/{sops.length} ({pct}%)</span>
-        </div>
-        <div className="w-full bg-gray-100 h-1.5 rounded-full overflow-hidden mb-2">
-          <div className="bg-teal-500 h-1.5 rounded-full transition-all" style={{ width: `${pct}%` }} />
-        </div>
-        <div className="space-y-1">
-          {sops.slice(0, 5).map((sop, i) => {
-            const isDone = checked.has(sop.id);
-            return (
-              <button key={sop.id} onClick={() => toggle(sop.id)} disabled={togglingId === sop.id}
-                className={`w-full flex items-center gap-2 p-1.5 rounded-lg text-left transition-colors ${
-                  isDone ? "bg-teal-50" : "bg-white"
-                }`}>
-                <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
-                  isDone ? "bg-teal-500 border-teal-500" : "border-gray-300"
-                }`}>
-                  {isDone && <CheckCircle2 className="h-2.5 w-2.5 text-white" />}
-                </div>
-                <span className={`text-sm flex-1 ${isDone ? "text-gray-400 line-through" : "text-gray-700"}`}>
-                  {i + 1}. {sop.title}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-        {sops.length > 5 && (
-          <Link href="/sops/my-checkoffs" className="text-[10px] text-teal-600 font-medium block text-center mt-1.5">
-            +{sops.length - 5} more SOPs
-          </Link>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function ChecklistStatsWidget() {
-  const [stats, setStats] = useState<Array<{
-    name: string; role: string; total: number; completed: number; percentage: number;
-  }>>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    fetch("/api/checklists/stats")
-      .then(r => r.json())
-      .then(res => { if (res.success) setStats(res.data.users || []); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
-
-  if (loading || stats.length === 0) return null;
-
-  return (
-    <Card className="mb-3">
-      <CardContent className="p-3">
-        <div className="flex items-center gap-1.5 mb-2">
-          <CheckSquare className="h-4 w-4 text-indigo-600" />
-          <p className="text-xs font-semibold text-slate-900">Team Checklists</p>
-        </div>
-        <div className="space-y-1.5">
-          {stats.map((u) => (
-            <div key={u.name} className="flex items-center gap-2">
-              <span className="text-xs text-slate-700 flex-1 truncate">{u.name}</span>
-              <div className="w-20 h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${u.percentage === 100 ? "bg-green-500" : u.percentage > 0 ? "bg-amber-400" : "bg-red-300"}`}
-                  style={{ width: `${u.percentage}%` }} />
-              </div>
-              <span className={`text-[10px] font-medium w-8 text-right ${
-                u.percentage === 100 ? "text-green-600" : u.percentage > 0 ? "text-amber-600" : "text-red-500"
-              }`}>{u.percentage}%</span>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function AdminDashboard() {
   const [data, setData] = useState<CEOData | null>(null);
@@ -689,34 +394,6 @@ function AdminDashboard() {
         </Card>
       </div>
 
-      {/* Primary Actions — SOPs & Tasks */}
-      <div className="grid grid-cols-2 gap-3 mt-4">
-        <Link href="/sops?action=add"
-          className="flex flex-col items-center justify-center gap-2 p-5 rounded-2xl bg-teal-600 text-white shadow-md hover:bg-teal-700 transition-colors">
-          <ShieldAlert className="h-7 w-7" />
-          <span className="text-sm font-bold">SOPs</span>
-        </Link>
-        <Link href="/tasks"
-          className="flex flex-col items-center justify-center gap-2 p-5 rounded-2xl bg-blue-600 text-white shadow-md hover:bg-blue-700 transition-colors">
-          <ListTodo className="h-7 w-7" />
-          <span className="text-sm font-bold">Tasks</span>
-        </Link>
-      </div>
-
-      {/* SOP Check-off Progress */}
-      <div className="mt-3">
-        <SOPCheckoffWidget />
-      </div>
-
-      {/* System Suggestions */}
-      <div className="mt-3">
-        <TaskSuggestionInbox />
-      </div>
-
-      {/* My Tasks */}
-      <div className="mt-1">
-        <MyTasksWidget />
-      </div>
       <div className="mb-3">
         <ShareDailyReport />
       </div>
@@ -847,8 +524,6 @@ function AdminDashboard() {
         </Card>
       )}
 
-      {/* Team Checklist Stats */}
-      <ChecklistStatsWidget />
     </>
   );
 }
@@ -929,12 +604,7 @@ function SupervisorDashboard() {
 
   return (
     <>
-      {/* System Suggestions */}
-      <TaskSuggestionInbox />
-
       {/* Tasks */}
-      <MyTasksWidget />
-
       {/* Daily Report */}
       <div className="mb-3">
         <ShareDailyReport />
@@ -1017,15 +687,6 @@ function SupervisorDashboard() {
           </CardContent>
         </Card>
       )}
-
-      {/* System Suggestions */}
-      <TaskSuggestionInbox />
-
-      {/* SOP Check-offs */}
-      <SOPCheckoffWidget />
-
-      {/* Daily Checklist */}
-      <DailyChecklistWidget />
     </>
   );
 }
@@ -1145,15 +806,6 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
           </CardContent>
         </Card>
       )}
-
-      {/* System Suggestions */}
-      <TaskSuggestionInbox />
-
-      {/* SOP Check-offs */}
-      <SOPCheckoffWidget />
-
-      {/* Daily Checklist */}
-      <DailyChecklistWidget />
     </>
   );
 }
@@ -1267,15 +919,6 @@ function OutwardsClerkDashboard() {
           </Link>
         )}
       </div>
-
-      {/* System Suggestions */}
-      <TaskSuggestionInbox />
-
-      {/* SOP Check-offs */}
-      <SOPCheckoffWidget />
-
-      {/* Daily Checklist */}
-      <DailyChecklistWidget />
     </>
   );
 }
@@ -1317,15 +960,6 @@ function PurchaseManagerDashboard() {
       <DashboardCard label="Inwards Today" value={stats.todayInwards} icon={ArrowDownCircle} color="bg-blue-100 text-blue-600" />
       <Link href="/purchase-orders"><DashboardCard label="Pending POs" value="—" icon={Package} color="bg-orange-100 text-orange-600" /></Link>
     </div>
-
-    {/* System Suggestions */}
-    <TaskSuggestionInbox />
-
-    {/* SOP Check-offs */}
-    <SOPCheckoffWidget />
-
-    {/* Daily Checklist */}
-    <DailyChecklistWidget />
     </>
   );
 }
@@ -1367,15 +1001,6 @@ function AccountsManagerDashboard() {
       <Link href="/stock-audit"><DashboardCard label="Pending Audits" value={stats.pendingAudits} icon={Package} color="bg-blue-100 text-blue-700" /></Link>
       <Link href="/expenses"><DashboardCard label="Expenses (30d)" value={formatINR(stats.expenses30d)} icon={IndianRupee} color="bg-green-100 text-green-700" /></Link>
     </div>
-
-    {/* System Suggestions */}
-    <TaskSuggestionInbox />
-
-    {/* SOP Check-offs */}
-    <SOPCheckoffWidget />
-
-    {/* Daily Checklist */}
-    <DailyChecklistWidget />
     </>
   );
 }
@@ -1395,8 +1020,6 @@ export default function DashboardPage() {
       </div>
 
       {/* Morning SOP Nudge — shows for all roles */}
-      <SOPNudgeBanner />
-
       {role === "CEO" && <AdminDashboard />}
       {role === "ADMIN" && <AdminDashboard />}
       {role === "SUPERVISOR" && <SupervisorDashboard />}
@@ -1412,43 +1035,3 @@ export default function DashboardPage() {
   );
 }
 
-/* ── SOP Morning Nudge Banner ────────────────────────── */
-function SOPNudgeBanner() {
-  const [pending, setPending] = useState(0);
-  const [total, setTotal] = useState(0);
-  const [dismissed, setDismissed] = useState(false);
-
-  useEffect(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    Promise.all([
-      fetch("/api/sops?isActive=true&forMyRole=true").then(r => r.json()),
-      fetch(`/api/sops/compliance?date=${today}`).then(r => r.json()),
-    ]).then(([sopsRes, compRes]) => {
-      const sops = sopsRes.success ? (sopsRes.data ?? []) : [];
-      const dailySops = sops.filter((s: { frequency: string }) => s.frequency === "SOP_DAILY");
-      const checkedIds = new Set((compRes.success ? compRes.data ?? [] : []).map((c: { sopId: string }) => c.sopId));
-      const pendingCount = dailySops.filter((s: { id: string }) => !checkedIds.has(s.id)).length;
-      setPending(pendingCount);
-      setTotal(dailySops.length);
-    }).catch(() => {});
-  }, []);
-
-  if (pending === 0 || dismissed || total === 0) return null;
-
-  return (
-    <div className="mb-3 p-3 rounded-lg bg-amber-50 border border-amber-200 flex items-center gap-2">
-      <ShieldAlert className="h-5 w-5 text-amber-600 shrink-0" />
-      <div className="flex-1 min-w-0">
-        <p className="text-sm font-semibold text-amber-800">
-          {pending} SOP{pending > 1 ? "s" : ""} pending today
-        </p>
-        <p className="text-xs text-amber-600">{total - pending}/{total} done — tap to check off</p>
-      </div>
-      <Link href="/sops/my-checkoffs"
-        className="px-2.5 py-1 bg-amber-600 text-white text-[10px] font-bold rounded-lg shrink-0">
-        Check Off
-      </Link>
-      <button onClick={() => setDismissed(true)} className="text-amber-400 text-xs ml-1">✕</button>
-    </div>
-  );
-}

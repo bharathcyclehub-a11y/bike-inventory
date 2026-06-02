@@ -34,10 +34,7 @@ import {
   IndianRupee,
   Wrench,
   ClipboardList,
-  ListTodo,
-  BookOpenCheck,
   Activity,
-  CheckSquare,
 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
@@ -75,12 +72,8 @@ const ROLE_LABELS: Record<Role, string> = {
 
 const MENU_GROUPS: MenuGroup[] = [
   {
-    title: "Operations Hub",
+    title: "Operations",
     items: [
-      { label: "Tasks", icon: ListTodo, href: "/tasks", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "CUSTOM"] },
-      { label: "SOPs", icon: BookOpenCheck, href: "/sops", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "CUSTOM"] },
-      { label: "My Check-offs", icon: ClipboardCheck, href: "/sops/my-checkoffs", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "CUSTOM"] },
-      { label: "SOP Dashboard", icon: Activity, href: "/sops/dashboard", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "CUSTOM"] },
       { label: "Ops Stats", icon: Activity, href: "/ops-stats", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER"] },
     ],
   },
@@ -128,8 +121,6 @@ const MENU_GROUPS: MenuGroup[] = [
       { label: "Brand Lead Times", icon: Clock, href: "/more/brand-lead-times", roles: ["ADMIN"] },
       { label: "Price Correction", icon: IndianRupee, href: "/price-correction", roles: ["ADMIN"] },
       { label: "WhatsApp Templates", icon: MessageSquare, href: "/more/whatsapp-templates", roles: ["ADMIN"], featureKey: "whatsapp_templates" },
-      { label: "SOP Departments", icon: BookOpenCheck, href: "/more/sop-departments", roles: ["ADMIN"] },
-      { label: "Daily Checklists", icon: CheckSquare, href: "/more/checklists", roles: ["ADMIN"] },
       { label: "Alert Config", icon: Bell, href: "/more/alerts", roles: ["ADMIN"] },
       { label: "Zoho Books Sync", icon: Cloud, href: "/more/zoho", roles: ["ADMIN"], featureKey: "zoho" },
       { label: "App Logic", icon: Activity, href: "/more/app-logic", roles: ["ADMIN"] },

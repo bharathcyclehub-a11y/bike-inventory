@@ -355,58 +355,7 @@ export const preBookingSchema = z.object({
   brandId: z.string().optional(),
 });
 
-// ─── Operations Hub: Tasks ───────────────────────
-
-export const taskSchema = z.object({
-  title: z.string().min(1, "Title is required").max(500),
-  notes: z.string().optional(),
-  priority: z.enum(["TODAY", "TOMORROW", "THREE_DAYS", "WEEK", "MONTH"]),
-  timeSlot: z.enum(["MORNING", "AFTERNOON", "EVENING"]).optional(),
-  dueDate: z.string().optional(),
-  assigneeIds: z.array(z.string()).min(1, "At least one assignee required"),
-  recurrenceType: z.enum(["DAILY", "WEEKLY", "MONTHLY"]).optional(),
-  recurrenceDays: z.array(z.string()).optional(),
-  subtasks: z.array(z.object({ title: z.string().min(1) })).optional(),
-  estimatedMinutes: z.number().int().refine((v) => [30, 60, 120, 240].includes(v), "Must be 30, 60, 120, or 240").optional(),
-});
-
-export const taskUpdateSchema = taskSchema.partial().extend({
-  status: z.enum(["PENDING", "IN_PROGRESS", "DONE", "BLOCKED"]).optional(),
-  sortOrder: z.number().int().optional(),
-  recurringDoneDate: z.string().optional(),
-  isMyDay: z.boolean().optional(),
-  myDayDate: z.string().optional(),
-});
-
 export const storeUpdateSchema = z.object({
   text: z.string().min(1, "Text is required").max(2000),
   category: z.enum(["Sales", "Staff", "Ops", "Issue", "Win", "Other"]),
-});
-
-// ─── Operations Hub: SOPs ───────────────────────
-
-export const sopSchema = z.object({
-  title: z.string().min(1, "Title is required").max(300),
-  description: z.string().min(1, "Description is required"),
-  category: z.string().min(1, "Category is required"),
-  frequency: z.enum(["SOP_DAILY", "SOP_WEEKLY", "SOP_MONTHLY"]),
-  timeSlots: z.array(z.enum(["MORNING", "AFTERNOON", "EVENING"])).optional(),
-  assigneeIds: z.array(z.string()).optional(),
-  roleIds: z.array(z.string()).optional(),
-});
-
-export const sopUpdateSchema = sopSchema.partial().extend({
-  isActive: z.boolean().optional(),
-});
-
-export const sopCheckOffSchema = z.object({
-  sopId: z.string().min(1, "SOP ID is required"),
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  timeSlot: z.enum(["MORNING", "AFTERNOON", "EVENING"]).optional(),
-});
-
-export const sopViolationSchema = z.object({
-  sopId: z.string().min(1, "SOP ID is required"),
-  userId: z.string().min(1, "Staff member is required"),
-  notes: z.string().optional(),
 });

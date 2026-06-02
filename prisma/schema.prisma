@@ -189,19 +189,8 @@ model User {
   verifiedSettlements DailySettlement[] @relation("SettlementCashVerifier")
 
   // Operations Hub (Tasks, SOPs, Updates)
-  createdTasks       Task[]          @relation("TaskCreatedBy")
-  taskAssignments    TaskAssignee[]  @relation("TaskAssignments")
   postedUpdates      StoreUpdate[]   @relation("UpdatePostedBy")
   opsActivityLogs    OpsActivityLog[] @relation("OpsActivityLoggedBy")
-  createdSOPs        SOP[]           @relation("SOPCreatedBy")
-  sopAssignments     SOPAssignee[]   @relation("SOPAssignments")
-  sopCheckOffs       SOPCheckOff[]   @relation("SOPCheckOffs")
-  sopViolations      SOPViolation[]  @relation("SOPViolations")
-  violationsRecorded SOPViolation[]  @relation("ViolationRecordedBy")
-  triagedSuggestions TaskSuggestion[] @relation("SuggestionTriagedBy")
-
-  // Daily Checklists
-  checklistCompletions ChecklistCompletion[] @relation("ChecklistCompletions")
 }
 
 model Category {
@@ -1322,132 +1311,6 @@ model PreBooking {
   @@index([createdAt])
 }
 
-// ─── OPERATIONS HUB: Tasks ───────────────────────
-
-enum TaskPriority {
-  TODAY
-  TOMORROW
-  THREE_DAYS
-  WEEK
-  MONTH
-}
-
-enum TaskStatus {
-  PENDING
-  IN_PROGRESS
-  DONE
-  BLOCKED
-}
-
-enum TimeSlot {
-  MORNING
-  AFTERNOON
-  EVENING
-}
-
-enum RecurrenceType {
-  DAILY
-  WEEKLY
-  MONTHLY
-}
-
-model Task {
-  id                String          @id @default(cuid())
-  taskNo            String          @unique
-  title             String
-  notes             String?         @db.Text
-  priority          TaskPriority    @default(WEEK)
-  status            TaskStatus      @default(PENDING)
-  timeSlot          TimeSlot?
-  dueDate           DateTime?
-  completedAt       DateTime?
-  recurrenceType    RecurrenceType?
-  recurrenceDays    String[]
-  recurringDoneDate String?
-  isMyDay           Boolean         @default(false)
-  myDayDate         String?
-  estimatedMinutes  Int?            // How long this task takes: 30, 60, 120, or 240 minutes
-  photoUrls         String[]
-  sortOrder         Int             @default(0)
-  createdById       String
-  createdBy         User            @relation("TaskCreatedBy", fields: [createdById], references: [id])
-  assignees         TaskAssignee[]
-  subtasks          Subtask[]
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-
-  @@index([status])
-  @@index([priority])
-  @@index([dueDate])
-  @@index([createdById])
-}
-
-model TaskAssignee {
-  id        String   @id @default(cuid())
-  taskId    String
-  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation("TaskAssignments", fields: [userId], references: [id])
-  createdAt DateTime @default(now())
-
-  @@unique([taskId, userId])
-  @@index([userId])
-  @@index([taskId])
-}
-
-model Subtask {
-  id        String   @id @default(cuid())
-  taskId    String
-  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  title     String
-  done      Boolean  @default(false)
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
-
-  @@index([taskId])
-}
-
-model TaskCounter {
-  id      String @id @default("singleton")
-  current Int    @default(0)
-}
-
-enum SuggestionSource {
-  OVERDUE_BILL
-  STUCK_DELIVERY
-  LOW_STOCK
-  EXPIRING_CD
-  UNBINNED_INBOUND
-  MISSED_SOP
-}
-
-enum SuggestionStatus {
-  PENDING
-  ACCEPTED
-  DISMISSED
-}
-
-model TaskSuggestion {
-  id                String           @id @default(cuid())
-  source            SuggestionSource
-  sourceId          String?
-  title             String
-  description       String?
-  suggestedRole     Role
-  urgencyScore      Int              @default(50)
-  status            SuggestionStatus @default(PENDING)
-  triageById        String?
-  triageBy          User?            @relation("SuggestionTriagedBy", fields: [triageById], references: [id])
-  createdTaskId     String?
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
-
-  @@index([status])
-  @@index([suggestedRole])
-  @@index([source, sourceId])
-  @@index([createdAt])
-}
-
 model StoreUpdate {
   id        String   @id @default(cuid())
   text      String   @db.Text
@@ -1472,130 +1335,15 @@ model OpsActivityLog {
   @@index([createdAt])
 }
 
-// ─── OPERATIONS HUB: SOPs ───────────────────────
-
-enum SOPFrequency {
-  SOP_DAILY
-  SOP_WEEKLY
-  SOP_MONTHLY
-}
-
-model SOP {
-  id          String       @id @default(cuid())
-  title       String
-  description String       @db.Text
-  category    String
-  frequency   SOPFrequency @default(SOP_DAILY)
-  timeSlots   String[]     @default(["MORNING", "AFTERNOON", "EVENING"]) // Which time slots this SOP appears in
-  isActive    Boolean      @default(true)
-  createdById String
-  createdBy   User         @relation("SOPCreatedBy", fields: [createdById], references: [id])
-  assignees   SOPAssignee[]
-  roleAssignments SOPRoleAssignment[]
-  checkOffs   SOPCheckOff[]
-  violations  SOPViolation[]
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-
-  @@index([isActive])
-  @@index([category])
-}
-
-model SOPRoleAssignment {
-  id     String @id @default(cuid())
-  sopId  String
-  sop    SOP    @relation(fields: [sopId], references: [id], onDelete: Cascade)
-  role   Role
-
-  @@unique([sopId, role])
-  @@index([role])
-}
-
-model SOPAssignee {
-  id     String @id @default(cuid())
-  sopId  String
-  sop    SOP    @relation(fields: [sopId], references: [id], onDelete: Cascade)
-  userId String
-  user   User   @relation("SOPAssignments", fields: [userId], references: [id])
-
-  @@unique([sopId, userId])
-  @@index([userId])
-}
-
-model SOPCheckOff {
-  id        String   @id @default(cuid())
-  sopId     String
-  sop       SOP      @relation(fields: [sopId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation("SOPCheckOffs", fields: [userId], references: [id])
-  date      String
-  timeSlot  String   @default("MORNING") // MORNING, AFTERNOON, EVENING
-  checkedAt DateTime @default(now())
-
-  @@unique([sopId, userId, date, timeSlot])
-  @@index([sopId])
-  @@index([userId])
-  @@index([date])
-}
-
-model SOPViolation {
-  id          String   @id @default(cuid())
-  sopId       String
-  sop         SOP      @relation(fields: [sopId], references: [id])
-  userId      String
-  user        User     @relation("SOPViolations", fields: [userId], references: [id])
-  notes       String?  @db.Text
-  createdById String
-  createdBy   User     @relation("ViolationRecordedBy", fields: [createdById], references: [id])
-  createdAt   DateTime @default(now())
-
-  @@index([sopId])
-  @@index([userId])
-  @@index([createdAt])
-}
-
-// ─── DAILY CHECKLISTS (role-based task checklists) ───────
-
-model ChecklistTemplate {
-  id          String   @id @default(cuid())
-  title       String
-  role        Role                        // Which role sees this checklist item
-  sortOrder   Int      @default(0)
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  completions ChecklistCompletion[]
-
-  @@index([role])
-}
-
-model ChecklistCompletion {
-  id          String   @id @default(cuid())
-  templateId  String
-  template    ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
-  userId      String
-  user        User     @relation("ChecklistCompletions", fields: [userId], references: [id])
-  date        String                      // YYYY-MM-DD
-  completedAt DateTime @default(now())
-
-  @@unique([templateId, userId, date])
-  @@index([userId])
-  @@index([date])
-}
-
-// ─── APP SETTINGS (key-value store) ──────────────────────
-
 model AppSetting {
   key       String   @id
   value     String   @db.Text
   updatedAt DateTime @updatedAt
 }
 
-// ─── OPERATIONS HUB: Daily Snapshot ───────────────────────
-
 model DailySnapshot {
   id          String   @id @default("latest")
   markdown    String   @db.Text
   generatedAt DateTime @default(now())
 }
+
