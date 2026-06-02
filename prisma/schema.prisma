@@ -198,6 +198,7 @@ model User {
   sopCheckOffs       SOPCheckOff[]   @relation("SOPCheckOffs")
   sopViolations      SOPViolation[]  @relation("SOPViolations")
   violationsRecorded SOPViolation[]  @relation("ViolationRecordedBy")
+  triagedSuggestions TaskSuggestion[] @relation("SuggestionTriagedBy")
 
   // Daily Checklists
   checklistCompletions ChecklistCompletion[] @relation("ChecklistCompletions")
@@ -1409,6 +1410,42 @@ model Subtask {
 model TaskCounter {
   id      String @id @default("singleton")
   current Int    @default(0)
+}
+
+enum SuggestionSource {
+  OVERDUE_BILL
+  STUCK_DELIVERY
+  LOW_STOCK
+  EXPIRING_CD
+  UNBINNED_INBOUND
+  MISSED_SOP
+}
+
+enum SuggestionStatus {
+  PENDING
+  ACCEPTED
+  DISMISSED
+}
+
+model TaskSuggestion {
+  id                String           @id @default(cuid())
+  source            SuggestionSource
+  sourceId          String?
+  title             String
+  description       String?
+  suggestedRole     Role
+  urgencyScore      Int              @default(50)
+  status            SuggestionStatus @default(PENDING)
+  triageById        String?
+  triageBy          User?            @relation("SuggestionTriagedBy", fields: [triageById], references: [id])
+  createdTaskId     String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@index([status])
+  @@index([suggestedRole])
+  @@index([source, sourceId])
+  @@index([createdAt])
 }
 
 model StoreUpdate {

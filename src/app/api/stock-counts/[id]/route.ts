@@ -126,9 +126,16 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.status === "COMPLETED") {
         updateData.completedAt = new Date();
 
-        // Baseline mode: auto-set uncounted items to countedQty=0 (not found = 0 stock)
+        // After baseline: require all items to have countedQty
         const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
-        if (new Date() <= BASELINE_END) {
+        if (new Date() > BASELINE_END) {
+          const uncountedItems = await tx.stockCountItem.count({
+            where: { stockCountId: id, countedQty: null },
+          });
+          if (uncountedItems > 0) {
+            throw new Error(`${uncountedItems} item${uncountedItems > 1 ? "s" : ""} not yet counted. Count all items before completing.`);
+          }
+        } else if (new Date() <= BASELINE_END) {
           // Bulk update: set all uncounted items to 0 in one query
           await tx.stockCountItem.updateMany({
             where: { stockCountId: id, countedQty: null },

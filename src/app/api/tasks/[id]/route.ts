@@ -30,16 +30,32 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth();
+    const user = await requireAuth();
     const { id } = await params;
     const body = await req.json();
     const data = taskUpdateSchema.parse(body);
 
     const existing = await prisma.task.findUnique({
       where: { id },
-      select: { recurrenceType: true },
+      select: { recurrenceType: true, assignees: { select: { userId: true } } },
     });
     if (!existing) return errorResponse("Task not found", 404);
+
+    // WIP limit: max 3 IN_PROGRESS tasks per person
+    if (data.status === "IN_PROGRESS") {
+      const assigneeIds = existing.assignees.map((a) => a.userId);
+      const checkUserId = assigneeIds.length > 0 ? assigneeIds[0] : user.id;
+      const wipCount = await prisma.task.count({
+        where: {
+          id: { not: id },
+          status: "IN_PROGRESS",
+          assignees: { some: { userId: checkUserId } },
+        },
+      });
+      if (wipCount >= 3) {
+        return errorResponse("WIP limit reached: complete one of your 3 in-progress tasks before starting another", 400);
+      }
+    }
 
     // Recurring task completion: mark today's date, keep PENDING
     let statusUpdate = data.status as never | undefined;

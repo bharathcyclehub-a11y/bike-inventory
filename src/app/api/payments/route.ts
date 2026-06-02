@@ -50,6 +50,10 @@ export async function POST(req: NextRequest) {
         ? [{ billId: data.billId, amount: data.amount }]
         : [];
 
+    if (allocations.length === 0 && !data.creditId) {
+      return errorResponse("Payment must be linked to at least one bill or credit note", 400);
+    }
+
     const result = await prisma.$transaction(async (tx) => {
       const cdDiscount = data.cdDiscountAmount || 0;
 

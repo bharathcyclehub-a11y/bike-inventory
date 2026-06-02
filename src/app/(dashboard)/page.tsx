@@ -14,6 +14,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatINR, formatTime } from "@/lib/utils";
 import type { Role } from "@/types";
+import { TaskSuggestionInbox } from "@/components/task-suggestion-inbox";
 
 interface CEOData {
   // Revenue & Finance
@@ -707,6 +708,11 @@ function AdminDashboard() {
         <SOPCheckoffWidget />
       </div>
 
+      {/* System Suggestions */}
+      <div className="mt-3">
+        <TaskSuggestionInbox />
+      </div>
+
       {/* My Tasks */}
       <div className="mt-1">
         <MyTasksWidget />
@@ -923,6 +929,9 @@ function SupervisorDashboard() {
 
   return (
     <>
+      {/* System Suggestions */}
+      <TaskSuggestionInbox />
+
       {/* Tasks */}
       <MyTasksWidget />
 
@@ -1008,6 +1017,9 @@ function SupervisorDashboard() {
           </CardContent>
         </Card>
       )}
+
+      {/* System Suggestions */}
+      <TaskSuggestionInbox />
 
       {/* SOP Check-offs */}
       <SOPCheckoffWidget />
@@ -1134,6 +1146,9 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
         </Card>
       )}
 
+      {/* System Suggestions */}
+      <TaskSuggestionInbox />
+
       {/* SOP Check-offs */}
       <SOPCheckoffWidget />
 
@@ -1253,6 +1268,9 @@ function OutwardsClerkDashboard() {
         )}
       </div>
 
+      {/* System Suggestions */}
+      <TaskSuggestionInbox />
+
       {/* SOP Check-offs */}
       <SOPCheckoffWidget />
 
@@ -1300,6 +1318,9 @@ function PurchaseManagerDashboard() {
       <Link href="/purchase-orders"><DashboardCard label="Pending POs" value="—" icon={Package} color="bg-orange-100 text-orange-600" /></Link>
     </div>
 
+    {/* System Suggestions */}
+    <TaskSuggestionInbox />
+
     {/* SOP Check-offs */}
     <SOPCheckoffWidget />
 
@@ -1346,6 +1367,9 @@ function AccountsManagerDashboard() {
       <Link href="/stock-audit"><DashboardCard label="Pending Audits" value={stats.pendingAudits} icon={Package} color="bg-blue-100 text-blue-700" /></Link>
       <Link href="/expenses"><DashboardCard label="Expenses (30d)" value={formatINR(stats.expenses30d)} icon={IndianRupee} color="bg-green-100 text-green-700" /></Link>
     </div>
+
+    {/* System Suggestions */}
+    <TaskSuggestionInbox />
 
     {/* SOP Check-offs */}
     <SOPCheckoffWidget />
