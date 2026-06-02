@@ -3,8 +3,15 @@ export const dynamic = "force-dynamic";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 
-export async function POST() {
+export async function POST(req: Request) {
   try {
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret) {
+      const authHeader = req.headers.get("authorization");
+      if (authHeader !== `Bearer ${cronSecret}`) {
+        return errorResponse("Unauthorized", 401);
+      }
+    }
     const now = new Date();
     const suggestions: Array<{
       source: "OVERDUE_BILL" | "STUCK_DELIVERY" | "LOW_STOCK" | "EXPIRING_CD" | "UNBINNED_INBOUND";
