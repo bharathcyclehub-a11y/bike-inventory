@@ -197,15 +197,32 @@ export function DetailActions({
         </button>
       )}
 
-      {/* Outstation: PACKED -> SHIPPED */}
+      {/* Outstation: PACKED -> SHIPPED or rollback */}
       {data.status === "PACKED" && (
-        <button
-          onClick={() => handleStatusUpdate("SHIPPED")}
-          disabled={actionLoading}
-          className="w-full flex items-center justify-center gap-2 bg-amber-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50"
-        >
-          <Truck className="h-4 w-4" /> Mark Shipped
-        </button>
+        <div className="space-y-2">
+          <button
+            onClick={() => {
+              if (data.isOutstation) {
+                const trackingNo = prompt("Enter courier tracking number:");
+                if (!trackingNo?.trim()) return;
+                handleStatusUpdate("SHIPPED", { courierTrackingNo: trackingNo.trim() });
+              } else {
+                handleStatusUpdate("SHIPPED");
+              }
+            }}
+            disabled={actionLoading}
+            className="w-full flex items-center justify-center gap-2 bg-amber-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50"
+          >
+            <Truck className="h-4 w-4" /> Mark Shipped
+          </button>
+          <button
+            onClick={() => handleStatusUpdate("VERIFIED")}
+            disabled={actionLoading}
+            className="w-full flex items-center justify-center gap-2 bg-slate-200 text-slate-700 py-2 rounded-lg text-xs font-medium disabled:opacity-50"
+          >
+            Cancel Pack (Return to Verified)
+          </button>
+        </div>
       )}
 
       {/* Outstation: SHIPPED -> IN_TRANSIT */}

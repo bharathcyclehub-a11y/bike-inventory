@@ -209,11 +209,16 @@ export default function DispatchPage() {
     if (selected.size === 0) return;
     setDispatching(true);
     try {
-      await fetch("/api/deliveries/batch", {
+      const res = await fetch("/api/deliveries/batch", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deliveryIds: Array.from(selected), action: "OUT_FOR_DELIVERY" }),
       });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setActionError(json.error || "Dispatch failed");
+        return;
+      }
       setDeliveries((prev) => prev.filter((d) => !selected.has(d.id)));
       setSelected(new Set());
     } catch (e) { setActionError(e instanceof Error ? e.message : "Dispatch failed"); }
@@ -224,11 +229,16 @@ export default function DispatchPage() {
     if (selectedOut.size === 0) return;
     setDelivering(true);
     try {
-      await fetch("/api/deliveries/batch", {
+      const res = await fetch("/api/deliveries/batch", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ deliveryIds: Array.from(selectedOut), action: "DELIVERED" }),
       });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setActionError(json.error || "Mark delivered failed");
+        return;
+      }
       setOutDeliveries((prev) => prev.filter((d) => !selectedOut.has(d.id)));
       setSelectedOut(new Set());
     } catch (e) { setActionError(e instanceof Error ? e.message : "Mark delivered failed"); }

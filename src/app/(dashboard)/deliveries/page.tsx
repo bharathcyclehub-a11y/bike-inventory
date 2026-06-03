@@ -144,11 +144,21 @@ export default function DeliveriesPage() {
         return;
       }
 
-      await fetch(`/api/deliveries/${d.id}`, {
+      const statusRes = await fetch(`/api/deliveries/${d.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "PREBOOKED" }),
       });
+      const statusJson = await statusRes.json();
+      if (!statusRes.ok || !statusJson.success) {
+        setConfirmation({
+          type: "error",
+          title: "Pre-booking Status Failed",
+          referenceId: d.invoiceNo,
+          details: statusJson.error || "Failed to update delivery status to PREBOOKED",
+        });
+        return;
+      }
 
       setConfirmation({
         type: "success",
