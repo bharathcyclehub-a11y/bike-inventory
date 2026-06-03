@@ -78,11 +78,16 @@ export function ScheduleForm({ data, deliveryId, templates, onScheduled, onCance
               reversePickup,
             }),
       };
-      await fetch(`/api/deliveries/${deliveryId}`, {
+      const res = await fetch(`/api/deliveries/${deliveryId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setError(json.error || "Schedule failed");
+        return;
+      }
 
       onConfirmation({
         type: "success",

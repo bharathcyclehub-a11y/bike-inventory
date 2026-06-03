@@ -90,10 +90,10 @@ export default function DeliveriesPage() {
       const res = await fetch(`/api/deliveries/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "PENDING" }),
+        body: JSON.stringify({ status: "VERIFIED" }),
       });
       const data = await res.json();
-      if (!data.success) {
+      if (!res.ok || !data.success) {
         setActionError(data.error || "Mark ready failed");
         return;
       }

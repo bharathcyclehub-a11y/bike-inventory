@@ -88,11 +88,16 @@ export default function DeliveryDetailPage({ params }: { params: Promise<{ id: s
 
   const handleStatusChange = async (status: string, extra?: Record<string, unknown>) => {
     try {
-      await fetch(`/api/deliveries/${id}`, {
+      const res = await fetch(`/api/deliveries/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status, ...extra }),
       });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setActionError(json.error || "Status update failed");
+        return;
+      }
       fetchData();
       if (data) {
         if (status === "OUT_FOR_DELIVERY") {

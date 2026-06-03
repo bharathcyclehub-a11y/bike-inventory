@@ -66,24 +66,35 @@ export async function PUT(req: NextRequest) {
             });
             if (!product) continue;
 
-            const newStock = product.currentStock - item.quantity;
-            if (newStock < 0) {
-              throw new Error(`Insufficient stock for ${item.name} (SKU: ${item.sku}) on invoice ${delivery.invoiceNo}. Available: ${product.currentStock}, Needed: ${item.quantity}`);
+            if (wasReserved) {
+              const newStock = product.currentStock - item.quantity;
+              if (newStock < 0) {
+                throw new Error(`Insufficient stock for ${item.name} (SKU: ${item.sku}) on invoice ${delivery.invoiceNo}. Available: ${product.currentStock}, Needed: ${item.quantity}`);
+              }
+              await tx.product.update({
+                where: { id: product.id },
+                data: {
+                  currentStock: newStock,
+                  reservedStock: Math.max(0, product.reservedStock - item.quantity),
+                },
+              });
+            } else {
+              const available = product.currentStock - product.reservedStock;
+              if (available < item.quantity) {
+                throw new Error(`Insufficient available stock for ${item.name} (SKU: ${item.sku}) on invoice ${delivery.invoiceNo}. Available: ${available}, Needed: ${item.quantity}`);
+              }
+              await tx.product.update({
+                where: { id: product.id },
+                data: { currentStock: product.currentStock - item.quantity },
+              });
             }
-            await tx.product.update({
-              where: { id: product.id },
-              data: {
-                currentStock: newStock,
-                ...(wasReserved && { reservedStock: Math.max(0, product.reservedStock - item.quantity) }),
-              },
-            });
             await tx.inventoryTransaction.create({
               data: {
                 type: "OUTWARD",
                 productId: product.id,
                 quantity: item.quantity,
                 previousStock: product.currentStock,
-                newStock,
+                newStock: product.currentStock - item.quantity,
                 referenceNo: delivery.invoiceNo,
                 notes: `[ZOHO][VERIFIED] Customer: ${delivery.customerName} | Invoice: ${delivery.invoiceNo} | ${item.name} x${item.quantity}`,
                 userId: user.id,

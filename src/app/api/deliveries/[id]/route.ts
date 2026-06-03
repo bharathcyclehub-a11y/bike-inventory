@@ -281,9 +281,35 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     const delivery = await prisma.delivery.findUnique({ where: { id } });
     if (!delivery) return errorResponse("Delivery not found", 404);
 
-    // Admin can delete deliveries in any status
+    // Prevent deletion of in-flight deliveries
+    if (["SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(delivery.status)) {
+      return errorResponse(`Cannot delete a delivery in ${delivery.status} status — it is in transit`, 400);
+    }
 
-    await prisma.delivery.delete({ where: { id } });
+    await prisma.$transaction(async (tx) => {
+      // Release reserved stock if delivery had a reservation
+      if (delivery.stockReservedAt) {
+        const items = (delivery.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
+        for (const item of items) {
+          if (!item.sku) continue;
+          const product = await tx.product.findFirst({
+            where: { sku: item.sku, bin: { location: { startsWith: "Bharath Cycle Hub" } } },
+            select: { id: true, reservedStock: true },
+          }) || await tx.product.findFirst({
+            where: { sku: item.sku },
+            select: { id: true, reservedStock: true },
+          });
+          if (!product) continue;
+          await tx.product.update({
+            where: { id: product.id },
+            data: { reservedStock: Math.max(0, product.reservedStock - item.quantity) },
+          });
+        }
+      }
+
+      await tx.delivery.delete({ where: { id } });
+    });
+
     return successResponse({ deleted: true });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);

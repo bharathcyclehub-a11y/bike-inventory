@@ -136,7 +136,7 @@ export function DetailActions({
       )}
 
       {/* Action Buttons */}
-      {data.status === "PENDING" && !showSchedule && !showHandover && (
+      {(data.status === "PENDING" || data.status === "VERIFIED") && !showSchedule && !showHandover && (
         <div className="space-y-2">
           {!contactSaved && data.customerPhone ? (
             <p className="text-xs text-amber-600 font-medium py-2">
@@ -259,10 +259,10 @@ export function DetailActions({
         </button>
       )}
 
-      {/* PREBOOKED -> Ready */}
+      {/* PREBOOKED -> VERIFIED (cycle is now available) */}
       {data.status === "PREBOOKED" && (
         <button
-          onClick={() => handleStatusUpdate("PENDING")}
+          onClick={() => handleStatusUpdate("VERIFIED")}
           disabled={actionLoading}
           className="w-full bg-blue-600 text-white py-2.5 rounded-lg text-sm font-medium disabled:opacity-50"
         >
