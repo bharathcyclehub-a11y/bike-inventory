@@ -94,7 +94,7 @@ export default function BrandStockUploadPage() {
             <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl p-6 cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-colors">
               <input
                 type="file"
-                accept=".xlsx,.xls,.csv"
+                accept=".xlsx,.xls,.csv,.pdf,.png,.jpg,.jpeg,.webp"
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
                 className="hidden"
               />
@@ -109,7 +109,7 @@ export default function BrandStockUploadPage() {
                 <div className="text-center">
                   <Upload className="h-8 w-8 text-slate-400 mx-auto mb-2" />
                   <p className="text-sm text-slate-600">Tap to select file</p>
-                  <p className="text-xs text-slate-400 mt-0.5">.xlsx, .xls, or .csv</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Excel, CSV, PDF, or Image</p>
                 </div>
               )}
             </label>
