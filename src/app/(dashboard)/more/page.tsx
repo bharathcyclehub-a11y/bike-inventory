@@ -92,6 +92,7 @@ const MENU_GROUPS: MenuGroup[] = [
     items: [
       { label: "Vendors", icon: Building2, href: "/vendors", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "vendors" },
       { label: "Purchase Orders", icon: ShoppingCart, href: "/purchase-orders", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "purchase_orders" },
+      { label: "Brand Stock Upload", icon: FileText, href: "/brand-stock", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "purchase_orders" },
       { label: "Vendor Issues", icon: AlertCircle, href: "/vendor-issues", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SERVICE_MANAGER", "CUSTOM"], featureKey: "vendor_issues" },
       { label: "Inbound Tracking", icon: Truck, href: "/inbound", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "inbound" },
     ],

@@ -191,6 +191,7 @@ model User {
   // Operations Hub (Tasks, SOPs, Updates)
   postedUpdates      StoreUpdate[]   @relation("UpdatePostedBy")
   opsActivityLogs    OpsActivityLog[] @relation("OpsActivityLoggedBy")
+  brandStockUploads  BrandStockUpload[] @relation("BrandStockUploadedBy")
 }
 
 model Category {
@@ -222,7 +223,9 @@ model Brand {
   products      Product[]
   leadTime      BrandLeadTime?
   inboundShipments InboundShipment[]
-  preBookings   PreBooking[]
+  preBookings     PreBooking[]
+  stockUploads    BrandStockUpload[] @relation("BrandStockUploads")
+  skuMappings     BrandSkuMapping[]  @relation("BrandSkuMappings")
 }
 
 model Product {
@@ -275,6 +278,8 @@ model Product {
   purchaseOrderItems PurchaseOrderItem[]
   transferOrderItems TransferOrderItem[]
   inboundLineItems InboundLineItem[]
+  brandStockMatches  BrandStockItem[]  @relation("BrandStockMatches")
+  brandSkuMappings   BrandSkuMapping[] @relation("BrandSkuMappingProducts")
 
   @@index([status])
   @@index([categoryId])
@@ -1345,5 +1350,85 @@ model DailySnapshot {
   id          String   @id @default("latest")
   markdown    String   @db.Text
   generatedAt DateTime @default(now())
+}
+
+// ─── Brand Stock Upload + Smart Reorder ───────────
+
+enum BrandStockUploadStatus {
+  PROCESSING
+  PARSED
+  REVIEWED
+  FAILED
+}
+
+enum BrandStockMatchStatus {
+  AUTO_MATCHED
+  FUZZY_MATCHED
+  MANUAL_MATCHED
+  UNMATCHED
+}
+
+model BrandStockUpload {
+  id             String                  @id @default(cuid())
+  brandId        String
+  brand          Brand                   @relation("BrandStockUploads", fields: [brandId], references: [id])
+  fileName       String
+  fileType       String
+  status         BrandStockUploadStatus  @default(PROCESSING)
+  totalItems     Int                     @default(0)
+  matchedItems   Int                     @default(0)
+  unmatchedItems Int                     @default(0)
+  notes          String?
+  uploadedById   String
+  uploadedBy     User                    @relation("BrandStockUploadedBy", fields: [uploadedById], references: [id])
+  items          BrandStockItem[]
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  @@index([brandId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model BrandStockItem {
+  id                String                @id @default(cuid())
+  uploadId          String
+  upload            BrandStockUpload      @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  rawSku            String?
+  rawName           String
+  rawCategory       String?
+  brandAvailableQty Int                   @default(0)
+  brandPrice        Float?
+  brandMrp          Float?
+  rawSize           String?
+  matchStatus       BrandStockMatchStatus @default(UNMATCHED)
+  matchConfidence   Float?
+  productId         String?
+  product           Product?              @relation("BrandStockMatches", fields: [productId], references: [id])
+  bchCurrentStock   Int?
+  bchReorderLevel   Int?
+  suggestedQty      Int?
+  orderQty          Int?
+  selected          Boolean               @default(false)
+  createdAt         DateTime              @default(now())
+
+  @@index([uploadId])
+  @@index([matchStatus])
+  @@index([productId])
+}
+
+model BrandSkuMapping {
+  id         String   @id @default(cuid())
+  brandId    String
+  brand      Brand    @relation("BrandSkuMappings", fields: [brandId], references: [id])
+  brandSku   String?
+  brandName  String
+  productId  String
+  product    Product  @relation("BrandSkuMappingProducts", fields: [productId], references: [id])
+  createdAt  DateTime @default(now())
+
+  @@unique([brandId, brandName])
+  @@index([brandId])
+  @@index([productId])
 }
 
