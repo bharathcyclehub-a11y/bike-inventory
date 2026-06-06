@@ -8,7 +8,7 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE", "ACCOUNTS_MANAGER"]);
+    await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SALES_MANAGER"]);
     const { id } = await params;
 
     const delivery = await prisma.delivery.findUnique({
@@ -45,7 +45,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE"]);
+    const user = await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER"]);
     const { id } = await params;
     const body = await req.json();
     const data = deliveryUpdateSchema.parse(body);
@@ -140,9 +140,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           updateData.flagResolvedBy = user.id;
         }
 
-        // Mark delivered timestamp
+        // Mark delivered timestamp + clear reservation
         if (data.status === "DELIVERED") {
           updateData.deliveredAt = new Date();
+          updateData.stockReservedAt = null;
+        }
+        if (data.status === "WALK_OUT") {
+          updateData.stockReservedAt = null;
         }
 
         // RESERVE stock on SCHEDULED or PACKED (don't deduct yet)
@@ -275,15 +279,15 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN"]);
+    await requireAuth(["ADMIN", "CEO"]);
     const { id } = await params;
 
     const delivery = await prisma.delivery.findUnique({ where: { id } });
     if (!delivery) return errorResponse("Delivery not found", 404);
 
-    // Prevent deletion of in-flight deliveries
-    if (["SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY"].includes(delivery.status)) {
-      return errorResponse(`Cannot delete a delivery in ${delivery.status} status — it is in transit`, 400);
+    const blockedStatuses = ["SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "WALK_OUT"];
+    if (blockedStatuses.includes(delivery.status)) {
+      return errorResponse(`Cannot delete a delivery in ${delivery.status} status`, 400);
     }
 
     await prisma.$transaction(async (tx) => {

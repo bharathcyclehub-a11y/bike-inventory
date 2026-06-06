@@ -11,8 +11,11 @@ export async function PUT(req: NextRequest) {
     const body = await req.json();
     const { deliveryIds, action } = body as { deliveryIds: string[]; action: string };
 
-    if (!deliveryIds || deliveryIds.length === 0) {
+    if (!deliveryIds || !Array.isArray(deliveryIds) || deliveryIds.length === 0) {
       return errorResponse("No deliveries selected", 400);
+    }
+    if (deliveryIds.length > 50) {
+      return errorResponse("Maximum 50 deliveries per batch", 400);
     }
 
     if (!["OUT_FOR_DELIVERY", "DELIVERED"].includes(action)) {

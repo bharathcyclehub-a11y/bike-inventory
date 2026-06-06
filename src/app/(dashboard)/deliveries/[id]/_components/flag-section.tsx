@@ -16,23 +16,34 @@ export function FlagSection({ data, deliveryId, onFlagged, onResolved }: FlagSec
   const [flagModalOpen, setFlagModalOpen] = useState(false);
   const [flagReasonInput, setFlagReasonInput] = useState("");
 
+  const [flagError, setFlagError] = useState("");
+
   const handleFlag = async (reason: string) => {
-    const res = await fetch(`/api/deliveries/${deliveryId}/flag`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ reason }),
-    });
-    const result = await res.json();
-    if (result.success && result.data.alertPhones?.length > 0) {
-      const phone = result.data.alertPhones[0].replace(/\D/g, "");
-      window.open(
-        `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(result.data.whatsappMessage)}`,
-        "_blank"
-      );
+    setFlagError("");
+    try {
+      const res = await fetch(`/api/deliveries/${deliveryId}/flag`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        setFlagError(result.error || "Flag failed");
+        return;
+      }
+      if (result.data.alertPhones?.length > 0) {
+        const phone = result.data.alertPhones[0].replace(/\D/g, "");
+        window.open(
+          `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(result.data.whatsappMessage)}`,
+          "_blank"
+        );
+      }
+      setFlagModalOpen(false);
+      setFlagReasonInput("");
+      onFlagged();
+    } catch (e) {
+      setFlagError(e instanceof Error ? e.message : "Flag failed");
     }
-    setFlagModalOpen(false);
-    setFlagReasonInput("");
-    onFlagged();
   };
 
   return (
@@ -90,6 +101,7 @@ export function FlagSection({ data, deliveryId, onFlagged, onResolved }: FlagSec
               rows={3}
               autoFocus
             />
+            {flagError && <p className="text-xs text-red-600 mt-2">{flagError}</p>}
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => handleFlag(flagReasonInput)}

@@ -14,9 +14,11 @@ interface ServiceInvoiceSectionProps {
 export function ServiceInvoiceSection({ data, deliveryId, onMarked }: ServiceInvoiceSectionProps) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   const markAsService = async () => {
     setLoading(true);
+    setError("");
     try {
       const res = await fetch(`/api/deliveries/${deliveryId}`, {
         method: "PUT",
@@ -24,12 +26,17 @@ export function ServiceInvoiceSection({ data, deliveryId, onMarked }: ServiceInv
         body: JSON.stringify({ invoiceType: "SERVICE" }),
       });
       const result = await res.json();
-      if (result.success) {
-        onMarked();
+      if (!res.ok || !result.success) {
+        setError(result.error || "Failed to mark as service");
+        return;
       }
-    } catch { /* silent */ }
-    setLoading(false);
-    setShowConfirm(false);
+      onMarked();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to mark as service");
+    } finally {
+      setLoading(false);
+      setShowConfirm(false);
+    }
   };
 
   return (
@@ -44,6 +51,8 @@ export function ServiceInvoiceSection({ data, deliveryId, onMarked }: ServiceInv
           </CardContent>
         </Card>
       )}
+
+      {error && <p className="text-xs text-red-600 mb-2">{error}</p>}
 
       {/* Mark as Service button (PENDING only, not already tagged) */}
       {data.status === "PENDING" && data.invoiceType !== "SERVICE" && !showConfirm && (
