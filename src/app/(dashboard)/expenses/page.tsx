@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Plus, Receipt, Search } from "lucide-react";
-import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { type DateRangeKey } from "@/components/date-filter";
+import { FilterSheet } from "@/components/filter-sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -122,25 +123,18 @@ export default function ExpensesPage() {
         </Card>
       )}
 
-      <DateFilter
-        value={dateFilter}
-        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
-        className="mb-2"
+      <FilterSheet
+        className="mb-4"
+        dateValue={dateFilter}
+        onDateChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        groups={[{
+          label: "Category",
+          value: filter,
+          defaultValue: "ALL",
+          options: CATEGORY_FILTERS.map((c) => ({ key: c, label: c === "ALL" ? "All" : c.replace(/_/g, " ") })),
+          onChange: (key) => setFilter(key),
+        }]}
       />
-
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
-        {CATEGORY_FILTERS.map((c) => (
-          <button
-            key={c}
-            onClick={() => setFilter(c)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === c ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            {c === "ALL" ? "All" : c.replace(/_/g, " ")}
-          </button>
-        ))}
-      </div>
 
       {loading ? (
         <div className="flex items-center justify-center py-12">

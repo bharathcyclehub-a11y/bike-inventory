@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { useDebounce, getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
-import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { type DateRangeKey } from "@/components/date-filter";
+import { FilterSheet } from "@/components/filter-sheet";
 
 const PO_COLUMNS: ExportColumn[] = [
   { header: "PO Number", key: "poNumber" },
@@ -102,25 +103,18 @@ export default function PurchaseOrdersPage() {
         />
       </div>
 
-      <DateFilter
-        value={dateFilter}
-        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
-        className="mb-2"
+      <FilterSheet
+        className="mb-4"
+        dateValue={dateFilter}
+        onDateChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        groups={[{
+          label: "Status",
+          value: statusFilter,
+          defaultValue: "ALL",
+          options: STATUS_FILTERS.map((s) => ({ key: s, label: s === "ALL" ? "All" : s.replace(/_/g, " ") })),
+          onChange: (key) => setStatusFilter(key),
+        }]}
       />
-
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
-        {STATUS_FILTERS.map((s) => (
-          <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              statusFilter === s ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            {s === "ALL" ? "All" : s.replace(/_/g, " ")}
-          </button>
-        ))}
-      </div>
 
       {loading ? (
         <div className="space-y-2">

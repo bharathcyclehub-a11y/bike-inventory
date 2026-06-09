@@ -5,7 +5,8 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Plus, ArrowRightLeft, ArrowRight, CheckCircle2, XCircle, Clock, Loader2, Package } from "lucide-react";
 import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
-import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { type DateRangeKey } from "@/components/date-filter";
+import { FilterSheet } from "@/components/filter-sheet";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -152,22 +153,23 @@ export default function TransfersPage() {
         </Link>
       </div>
 
-      <DateFilter
-        value={dateFilter}
-        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
-        className="mb-2"
+      <FilterSheet
+        className="mb-3"
+        dateValue={dateFilter}
+        onDateChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        groups={[{
+          label: "Status",
+          value: filter,
+          defaultValue: "all",
+          options: [
+            { key: "all", label: "All" },
+            { key: "PENDING", label: "Pending" },
+            { key: "APPROVED", label: "Approved" },
+            { key: "REJECTED", label: "Rejected" },
+          ],
+          onChange: (key) => setFilter(key as StatusFilter),
+        }]}
       />
-
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1">
-        {(["all", "PENDING", "APPROVED", "REJECTED"] as StatusFilter[]).map((f) => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}>
-            {f === "all" ? "All" : f === "PENDING" ? "Pending" : f === "APPROVED" ? "Approved" : "Rejected"}
-          </button>
-        ))}
-      </div>
 
       {/* Data Load Error */}
       {dataError && (

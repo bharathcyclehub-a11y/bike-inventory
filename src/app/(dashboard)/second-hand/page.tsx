@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDebounce } from "@/lib/utils";
 import { usePermissions } from "@/lib/use-permissions";
+import { FilterSheet } from "@/components/filter-sheet";
 
 interface SecondHandItem {
   id: string;
@@ -158,49 +159,53 @@ export default function SecondHandPage() {
         </div>
       )}
 
-      {/* Status Filter */}
-      <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide mb-2 pb-1">
-        {(["ALL", "IN_STOCK", "SOLD"] as StatusFilter[]).map((f) => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}>
-            {f === "ALL" ? "All" : f === "IN_STOCK" ? "In Stock" : "Sold"}
-          </button>
-        ))}
+      {/* Filters */}
+      <div className="flex items-center gap-2 mb-2">
+        <FilterSheet
+          className="flex-1 min-w-0"
+          groups={[
+            {
+              label: "Status",
+              value: filter,
+              defaultValue: "ALL",
+              options: [
+                { key: "ALL", label: "All" },
+                { key: "IN_STOCK", label: "In Stock" },
+                { key: "SOLD", label: "Sold" },
+              ],
+              onChange: (key) => setFilter(key as StatusFilter),
+            },
+            {
+              label: "Size",
+              value: sizeFilter,
+              defaultValue: "ALL",
+              options: ["ALL", '12"', '16"', '20"', '24"', '26"', '27.5"', '29"'].map((s) => ({
+                key: s,
+                label: s === "ALL" ? "All" : s,
+              })),
+              onChange: (key) => setSizeFilter(key),
+            },
+            {
+              label: "Condition",
+              value: conditionFilter,
+              defaultValue: "ALL",
+              options: ["ALL", "EXCELLENT", "GOOD", "FAIR", "SCRAP"].map((c) => ({
+                key: c,
+                label: c === "ALL" ? "All" : c.charAt(0) + c.slice(1).toLowerCase(),
+              })),
+              onChange: (key) => setConditionFilter(key),
+            },
+          ]}
+        />
         {isAdmin && (
           <button onClick={() => setShowArchived(!showArchived)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ml-auto ${
+            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
               showArchived ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}>
             <Archive className="h-3 w-3 inline mr-1" />
             {showArchived ? "Showing Archived" : "Show Archived"}
           </button>
         )}
-      </div>
-
-      {/* Size + Condition Filters */}
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-1 pb-1">
-        <span className="shrink-0 text-[10px] text-slate-400 self-center">Size:</span>
-        {["ALL", '12"', '16"', '20"', '24"', '26"', '27.5"', '29"'].map((s) => (
-          <button key={s} onClick={() => setSizeFilter(s)}
-            className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-medium transition-colors ${
-              sizeFilter === s ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"
-            }`}>
-            {s === "ALL" ? "All" : s}
-          </button>
-        ))}
-      </div>
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-2 pb-1">
-        <span className="shrink-0 text-[10px] text-slate-400 self-center">Cond:</span>
-        {["ALL", "EXCELLENT", "GOOD", "FAIR", "SCRAP"].map((c) => (
-          <button key={c} onClick={() => setConditionFilter(c)}
-            className={`shrink-0 px-2 py-1 rounded-full text-[10px] font-medium transition-colors ${
-              conditionFilter === c ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-500"
-            }`}>
-            {c === "ALL" ? "All" : c.charAt(0) + c.slice(1).toLowerCase()}
-          </button>
-        ))}
       </div>
 
       {/* Search */}

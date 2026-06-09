@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDebounce } from "@/lib/utils";
 import { ExportButtons } from "@/components/export-buttons";
+import { FilterSheet } from "@/components/filter-sheet";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 const VENDOR_COLUMNS: ExportColumn[] = [
@@ -112,16 +113,20 @@ export default function VendorsPage() {
         />
       </div>
 
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-2 pb-1">
-        {(["ALL", "ACTIVE", "INACTIVE"] as VendorFilter[]).map((f) => (
-          <button key={f} onClick={() => setActiveFilter(f)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              activeFilter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}>
-            {f === "ALL" ? "All" : f === "ACTIVE" ? "Active" : "Inactive"}
-          </button>
-        ))}
-      </div>
+      <FilterSheet
+        className="mb-2"
+        groups={[{
+          label: "Status",
+          value: activeFilter,
+          defaultValue: "ALL",
+          options: [
+            { key: "ALL", label: "All" },
+            { key: "ACTIVE", label: "Active" },
+            { key: "INACTIVE", label: "Inactive" },
+          ],
+          onChange: (key) => setActiveFilter(key as VendorFilter),
+        }]}
+      />
 
       <div className="flex gap-1.5 mb-3 pb-1">
         {([

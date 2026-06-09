@@ -7,6 +7,7 @@ import { Plus, ClipboardCheck, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
+import { FilterSheet } from "@/components/filter-sheet";
 import { usePermissions } from "@/lib/use-permissions";
 
 interface StockCountItem {
@@ -96,16 +97,23 @@ export default function StockAuditPage() {
         </div>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1">
-        {["ALL", "PENDING", "IN_PROGRESS", "COMPLETED", "APPROVED", "REJECTED"].map((s) => (
-          <button key={s} onClick={() => setFilter(s)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === s ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-            }`}>
-            {s === "ALL" ? "All" : s === "IN_PROGRESS" ? "In Progress" : s.charAt(0) + s.slice(1).toLowerCase()}
-          </button>
-        ))}
-      </div>
+      <FilterSheet
+        className="mb-3"
+        groups={[{
+          label: "Status",
+          value: filter,
+          defaultValue: "ALL",
+          options: [
+            { key: "ALL", label: "All" },
+            { key: "PENDING", label: "Pending" },
+            { key: "IN_PROGRESS", label: "In Progress" },
+            { key: "COMPLETED", label: "Completed" },
+            { key: "APPROVED", label: "Approved" },
+            { key: "REJECTED", label: "Rejected" },
+          ],
+          onChange: (key) => setFilter(key),
+        }]}
+      />
 
       {loading ? (
         <div className="flex items-center justify-center py-12">

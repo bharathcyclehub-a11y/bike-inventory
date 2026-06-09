@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { FilterSheet } from "@/components/filter-sheet";
 import { usePermissions } from "@/lib/use-permissions";
 
 interface PreBooking {
@@ -331,16 +332,21 @@ export default function PreBookingsPage() {
       )}
 
       {/* Filter */}
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1">
-        {(["WAITING", "MATCHED", "FULFILLED", "ALL"] as StatusFilter[]).map((f) => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === f ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}>
-            {f === "ALL" ? "All" : STATUS_BADGE[f]?.label || f}
-          </button>
-        ))}
-      </div>
+      <FilterSheet
+        className="mb-3"
+        groups={[{
+          label: "Status",
+          value: filter,
+          defaultValue: "ALL",
+          options: [
+            { key: "WAITING", label: STATUS_BADGE.WAITING.label },
+            { key: "MATCHED", label: STATUS_BADGE.MATCHED.label },
+            { key: "FULFILLED", label: STATUS_BADGE.FULFILLED.label },
+            { key: "ALL", label: "All" },
+          ],
+          onChange: (key) => setFilter(key as StatusFilter),
+        }]}
+      />
 
       {/* List */}
       {loading ? (

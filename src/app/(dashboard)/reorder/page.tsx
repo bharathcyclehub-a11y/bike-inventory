@@ -9,6 +9,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { FilterSheet } from "@/components/filter-sheet";
 import { useDebounce } from "@/lib/utils";
 
 interface ReorderProduct {
@@ -264,20 +265,20 @@ export default function ReorderDashboardPage() {
             </button>
           ))}
         </div>
-        <div className="flex gap-1.5 overflow-x-auto scrollbar-hide">
-          {[
-            { key: "all", label: "All" },
-            { key: "low", label: "Low Stock" },
-            { key: "zero", label: "Zero" },
-          ].map((f) => (
-            <button key={f.key} onClick={() => setFilter(f.key)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-                filter === f.key ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-              }`}>
-              {f.label}
-            </button>
-          ))}
-        </div>
+        <FilterSheet
+          className="flex-1 min-w-0"
+          groups={[{
+            label: "Stock Status",
+            value: filter,
+            defaultValue: "all",
+            options: [
+              { key: "all", label: "All" },
+              { key: "low", label: "Low Stock" },
+              { key: "zero", label: "Zero" },
+            ],
+            onChange: (key) => setFilter(key),
+          }]}
+        />
       </div>
 
       {/* Action Bar */}

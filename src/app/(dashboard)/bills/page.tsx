@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { useDebounce } from "@/lib/utils";
-import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { type DateRangeKey } from "@/components/date-filter";
+import { FilterSheet } from "@/components/filter-sheet";
 import { usePermissions } from "@/lib/use-permissions";
 
 const BILL_COLUMNS: ExportColumn[] = [
@@ -459,36 +460,30 @@ export default function BillsPage() {
         />
       </div>
 
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-2 pb-1">
-        {STATUS_FILTERS.map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === s ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            {s === "ALL" ? "All" : s.replace(/_/g, " ")}
-          </button>
-        ))}
-      </div>
-
-      {/* Billed To filter */}
-      <div className="flex gap-1.5 mb-2 pb-1">
-        {(["ALL", "HUB", "CENTRE"] as const).map((bt) => (
-          <button key={bt} onClick={() => setBilledToFilter(bt)}
-            className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors ${
-              billedToFilter === bt ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
-            }`}>
-            {bt === "ALL" ? "All Locations" : bt === "HUB" ? "Hub" : "Centre"}
-          </button>
-        ))}
-      </div>
-
-      <DateFilter
-        value={dateFilter}
-        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+      <FilterSheet
         className="mb-3"
+        dateValue={dateFilter}
+        onDateChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        groups={[
+          {
+            label: "Status",
+            value: filter,
+            defaultValue: "ALL",
+            options: STATUS_FILTERS.map((s) => ({ key: s, label: s === "ALL" ? "All" : s.replace(/_/g, " ") })),
+            onChange: (key) => setFilter(key),
+          },
+          {
+            label: "Location",
+            value: billedToFilter,
+            defaultValue: "ALL",
+            options: [
+              { key: "ALL", label: "All Locations" },
+              { key: "HUB", label: "Hub" },
+              { key: "CENTRE", label: "Centre" },
+            ],
+            onChange: (key) => setBilledToFilter(key as "ALL" | "HUB" | "CENTRE"),
+          },
+        ]}
       />
 
       {loading ? (

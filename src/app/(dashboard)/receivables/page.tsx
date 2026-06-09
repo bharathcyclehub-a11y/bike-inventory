@@ -8,7 +8,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useDebounce } from "@/lib/utils";
-import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { type DateRangeKey } from "@/components/date-filter";
+import { FilterSheet } from "@/components/filter-sheet";
 import { usePermissions } from "@/lib/use-permissions";
 
 interface InvoiceItem {
@@ -439,27 +440,19 @@ export default function ReceivablesPage() {
         />
       </div>
 
-      {/* Date Filter */}
-      <DateFilter
-        value={dateFilter}
-        onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
-        className="mb-2"
+      {/* Filters */}
+      <FilterSheet
+        className="mb-4"
+        dateValue={dateFilter}
+        onDateChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        groups={[{
+          label: "Status",
+          value: filter,
+          defaultValue: "ALL",
+          options: STATUS_FILTERS.map((s) => ({ key: s, label: s === "ALL" ? "All" : s.replace(/_/g, " ") })),
+          onChange: (key) => setFilter(key),
+        }]}
       />
-
-      {/* Status Filters */}
-      <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-4 pb-1">
-        {STATUS_FILTERS.map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              filter === s ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
-          >
-            {s === "ALL" ? "All" : s.replace(/_/g, " ")}
-          </button>
-        ))}
-      </div>
 
       {/* Invoice List */}
       {loading ? (
