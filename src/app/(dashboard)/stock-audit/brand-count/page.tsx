@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
-  ArrowLeft, MapPin, Check, Loader2, ChevronDown, ChevronRight, Send, X, Pencil,
+  ArrowLeft, MapPin, Check, Loader2, ChevronDown, ChevronRight, Send, X, Pencil, Search,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +43,7 @@ export default function BrandCountPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
+  const [brandSearch, setBrandSearch] = useState("");
   const [resultId, setResultId] = useState("");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
@@ -329,16 +330,44 @@ export default function BrandCountPage() {
       {step === "brand" && (
         <div className="space-y-2">
           <p className="text-xs text-slate-600 mb-2">Which brand are you counting?</p>
-          {brands.map((b) => (
-            <button key={b.id} onClick={() => handleSelectBrand(b)}
-              className="w-full flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg hover:border-blue-400 transition-colors text-left">
-              <div>
-                <p className="text-sm font-medium text-slate-900">{b.name}</p>
-                <p className="text-[10px] text-slate-500">{b._count.products} products</p>
-              </div>
-              <ChevronRight className="h-4 w-4 text-slate-400" />
-            </button>
-          ))}
+
+          {/* Brand search */}
+          <div className="relative mb-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+            <Input
+              placeholder="Search brand..."
+              value={brandSearch}
+              onChange={(e) => setBrandSearch(e.target.value)}
+              className="pl-9 pr-9"
+            />
+            {brandSearch && (
+              <button
+                onClick={() => setBrandSearch("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 cursor-pointer"
+                aria-label="Clear search"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          {(() => {
+            const q = brandSearch.trim().toLowerCase();
+            const visible = q ? brands.filter((b) => b.name.toLowerCase().includes(q)) : brands;
+            if (visible.length === 0) {
+              return <p className="text-xs text-slate-400 text-center py-6">No brand matches &quot;{brandSearch}&quot;</p>;
+            }
+            return visible.map((b) => (
+              <button key={b.id} onClick={() => handleSelectBrand(b)}
+                className="w-full flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg hover:border-blue-400 transition-colors text-left">
+                <div>
+                  <p className="text-sm font-medium text-slate-900">{b.name}</p>
+                  <p className="text-[10px] text-slate-500">{b._count.products} products</p>
+                </div>
+                <ChevronRight className="h-4 w-4 text-slate-400" />
+              </button>
+            ));
+          })()}
         </div>
       )}
 
