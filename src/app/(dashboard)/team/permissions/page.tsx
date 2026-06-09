@@ -26,9 +26,9 @@ interface FeaturePermission {
 type RolePermissions = Record<string, Record<string, FeaturePermission>>;
 
 const ROLE_LABELS: Record<string, string> = {
-  SUPERVISOR: "Ops Manager",
+  SUPERVISOR: "Supervisor",
   PURCHASE_MANAGER: "Purchase Mgr",
-  ACCOUNTS_MANAGER: "Finance Head",
+  ACCOUNTS_MANAGER: "Accounts Mgr",
   INWARDS_EXECUTIVE: "Inwards Executive",
   OUTWARDS_EXECUTIVE: "Outwards Executive",
   STORE_MANAGER: "Store Manager",

@@ -23,10 +23,10 @@ interface TeamUser {
 
 const ROLE_CONFIG: Record<string, { label: string; icon: typeof Shield; color: "danger" | "warning" | "info" | "success" | "default" }> = {
   CEO: { label: "CEO", icon: ShieldCheck, color: "danger" },
-  ADMIN: { label: "Owner / Director", icon: ShieldCheck, color: "danger" },
-  SUPERVISOR: { label: "Ops Manager", icon: Shield, color: "warning" },
+  ADMIN: { label: "Admin", icon: ShieldCheck, color: "danger" },
+  SUPERVISOR: { label: "Supervisor", icon: Shield, color: "warning" },
   PURCHASE_MANAGER: { label: "Purchase Manager", icon: UserCog, color: "info" },
-  ACCOUNTS_MANAGER: { label: "Finance Head", icon: UserCog, color: "info" },
+  ACCOUNTS_MANAGER: { label: "Accounts Manager", icon: UserCog, color: "info" },
   INWARDS_EXECUTIVE: { label: "Inwards Executive", icon: PackagePlus, color: "success" },
   OUTWARDS_EXECUTIVE: { label: "Outwards Executive", icon: PackageMinus, color: "default" },
   STORE_MANAGER: { label: "Store Manager", icon: Shield, color: "warning" },

@@ -8,16 +8,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const ROLES = [
-  { value: "CEO", label: "CEO — Full access, SOP compliance oversight" },
-  { value: "ADMIN", label: "Admin — Full access" },
-  { value: "SUPERVISOR", label: "Ops Manager — View all, manage stock" },
+  { value: "CEO", label: "CEO — Full access" },
+  { value: "ADMIN", label: "Admin — Full access, settings, team" },
+  { value: "SUPERVISOR", label: "Supervisor — View all, manage stock, approve" },
   { value: "PURCHASE_MANAGER", label: "Purchase Manager — Reorder, POs, vendors" },
-  { value: "ACCOUNTS_MANAGER", label: "Finance Head — Expenses, bills, payments, audit" },
-  { value: "INWARDS_EXECUTIVE", label: "Inwards Executive — Verify inwards, stock count" },
-  { value: "OUTWARDS_EXECUTIVE", label: "Outwards Executive — Verify outwards, stock count" },
-  { value: "STORE_MANAGER", label: "Store Manager — Deliveries, stock, SOPs, vendors" },
-  { value: "SALES_MANAGER", label: "Sales Manager — Deliveries, stock, SOPs" },
-  { value: "SERVICE_MANAGER", label: "Service Manager — Stock, SOPs, issues" },
+  { value: "ACCOUNTS_MANAGER", label: "Accounts Manager — Bills, payments, expenses" },
+  { value: "INWARDS_EXECUTIVE", label: "Inwards Executive — Receiving, stock count, transfers" },
+  { value: "OUTWARDS_EXECUTIVE", label: "Outwards Executive — Deliveries, dispatch" },
+  { value: "STORE_MANAGER", label: "Store Manager — Deliveries, stock, vendors, accounts" },
+  { value: "SALES_MANAGER", label: "Sales Manager — Deliveries, stock, customers" },
+  { value: "SERVICE_MANAGER", label: "Service Manager — Stock, issues, reports" },
   { value: "CUSTOM", label: "Custom Role — Pick permissions" },
 ];
 

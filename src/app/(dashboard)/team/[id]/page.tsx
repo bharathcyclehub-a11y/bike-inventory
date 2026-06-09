@@ -46,10 +46,10 @@ const APP_FEATURES = [
 
 const ROLES = [
   { value: "CEO", label: "CEO" },
-  { value: "ADMIN", label: "Owner / Director" },
-  { value: "SUPERVISOR", label: "Ops Manager" },
+  { value: "ADMIN", label: "Admin" },
+  { value: "SUPERVISOR", label: "Supervisor" },
   { value: "PURCHASE_MANAGER", label: "Purchase Manager" },
-  { value: "ACCOUNTS_MANAGER", label: "Finance Head" },
+  { value: "ACCOUNTS_MANAGER", label: "Accounts Manager" },
   { value: "INWARDS_EXECUTIVE", label: "Inwards Executive" },
   { value: "OUTWARDS_EXECUTIVE", label: "Outwards Executive" },
   { value: "STORE_MANAGER", label: "Store Manager" },
@@ -59,16 +59,16 @@ const ROLES = [
 ];
 
 const ROLE_PERMISSIONS: Record<string, string[]> = {
-  CEO: ["Full access to all features", "SOP compliance dashboard", "Team performance", "P&L review", "Approve bills", "All reports"],
+  CEO: ["Full access to all features", "Team performance", "P&L review", "Approve bills", "All reports"],
   ADMIN: ["Full access to all features", "Manage team & roles", "Zoho sync", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Bin management", "Settings"],
-  SUPERVISOR: ["View all data", "Manage stock", "Team view", "Reports", "Vendors & POs", "Bills & Payments", "Expenses", "AI Insights", "Approve transfers"],
-  PURCHASE_MANAGER: ["Reorder dashboard", "Purchase Orders", "Vendors", "Stock view", "AI Insights", "Barcode Scanner", "WhatsApp PO share"],
-  ACCOUNTS_MANAGER: ["Expenses", "Accounts", "Bills & Payments", "Record Payments", "Receivables", "Stock Audit"],
-  INWARDS_EXECUTIVE: ["Verify Zoho inwards (putaway)", "Stock Count", "Stock view (no cost price)", "Barcode Scanner"],
-  OUTWARDS_EXECUTIVE: ["Verify Zoho outwards (dispatch)", "Stock Count", "Stock view (no cost price)", "Barcode Scanner"],
-  STORE_MANAGER: ["Deliveries", "Stock view", "SOPs", "Vendors", "Accounts", "Team view", "Reports"],
-  SALES_MANAGER: ["Deliveries", "Stock view", "SOPs", "Vendors", "Reports"],
-  SERVICE_MANAGER: ["Stock view", "SOPs", "Vendor Issues", "Deliveries"],
+  SUPERVISOR: ["View all data", "Manage stock", "Team view", "Reports", "Bills & Payments", "Expenses", "Approve stock counts & transfers"],
+  PURCHASE_MANAGER: ["Reorder dashboard", "Purchase Orders", "Vendors", "Stock view", "Barcode Scanner", "Brand Stock Upload"],
+  ACCOUNTS_MANAGER: ["Expenses", "Accounts", "Bills & Payments", "Record Payments", "Receivables", "Stock Audit (view)"],
+  INWARDS_EXECUTIVE: ["Inbound receiving & putaway", "Stock Count (brand count)", "Stock view", "Deliveries", "Transfers", "Barcode Scanner"],
+  OUTWARDS_EXECUTIVE: ["Deliveries & dispatch", "Stock view", "Inbound view", "Barcode Scanner"],
+  STORE_MANAGER: ["Deliveries", "Stock view", "Vendors", "Accounts", "Team view", "Reports"],
+  SALES_MANAGER: ["Deliveries", "Stock view", "Customers", "Reports"],
+  SERVICE_MANAGER: ["Stock view", "Vendor Issues", "Stock Audit", "Reports"],
 };
 
 export default function EditTeamMemberPage({ params }: { params: Promise<{ id: string }> }) {
