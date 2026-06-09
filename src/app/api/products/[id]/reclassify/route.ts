@@ -22,12 +22,16 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Must match who can run a brand stock count (create on stock_audit):
+    // CEO, ADMIN, SUPERVISOR, STORE_MANAGER, INWARDS_EXECUTIVE.
+    // PURCHASE_MANAGER included since they own the product catalog.
     await requireAuth([
+      "CEO",
       "ADMIN",
-      "PURCHASE_MANAGER",
+      "SUPERVISOR",
       "STORE_MANAGER",
       "INWARDS_EXECUTIVE",
-      "OUTWARDS_EXECUTIVE",
+      "PURCHASE_MANAGER",
     ]);
     const { id } = await params;
     const body = await req.json();
@@ -36,6 +40,20 @@ export async function PUT(
     const update: Record<string, string> = {};
     if (data.brandId) update.brandId = data.brandId;
     if (data.categoryId) update.categoryId = data.categoryId;
+
+    // Validate the target brand/category actually exist before updating,
+    // so we return a clean message instead of leaking a raw Prisma FK error.
+    if (data.brandId) {
+      const brand = await prisma.brand.findUnique({ where: { id: data.brandId }, select: { id: true } });
+      if (!brand) return errorResponse("Selected brand no longer exists", 400);
+    }
+    if (data.categoryId) {
+      const category = await prisma.category.findUnique({ where: { id: data.categoryId }, select: { id: true } });
+      if (!category) return errorResponse("Selected category no longer exists", 400);
+    }
+
+    const existing = await prisma.product.findUnique({ where: { id }, select: { id: true } });
+    if (!existing) return errorResponse("Product not found", 404);
 
     const product = await prisma.product.update({
       where: { id },

@@ -167,6 +167,9 @@ export default function BrandCountPage() {
       setProducts((prev) => [...prev, newProduct]);
       setCounts((prev) => ({ ...prev, [result.id]: { qty: null, reorder: result.reorderLevel || null } }));
 
+      // Expand the category this product lands in, so it isn't hidden in a collapsed group
+      setExpandedCategories((prev) => new Set(prev).add(result.category?.name || "Uncategorized"));
+
       // Auto-change brand to the selected brand if it's different
       if (selectedBrand && result.brand?.name !== selectedBrand.name) {
         handleReclassify(result.id, "brand", selectedBrand.id, selectedBrand.name);
