@@ -194,13 +194,13 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
         </CardContent></Card>
         <Card><CardContent className="p-2 text-center">
           <p className="text-lg font-bold text-yellow-600">{data.itemsWithVariance}</p>
-          <p className="text-[10px] text-slate-500">Variance</p>
+          <p className="text-[10px] text-slate-500">Items differ</p>
         </CardContent></Card>
         <Card><CardContent className="p-2 text-center">
           <p className={`text-lg font-bold ${data.totalVariance === 0 ? "text-green-600" : "text-red-600"}`}>
             {data.totalVariance > 0 ? "+" : ""}{data.totalVariance}
           </p>
-          <p className="text-[10px] text-slate-500">Net</p>
+          <p className="text-[10px] text-slate-500">Net units</p>
         </CardContent></Card>
       </div>
 

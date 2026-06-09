@@ -422,9 +422,22 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
               style={{ width: `${progress}%` }}
             />
           </div>
-          <div className="flex gap-4 text-xs">
-            <span className="text-slate-500">Variance: <span className="font-medium text-slate-700">{summary.itemsWithVariance}</span></span>
-            <span className="text-slate-500">Net: <span className={`font-medium ${summary.totalVariance !== 0 ? "text-red-600" : "text-green-600"}`}>{summary.totalVariance > 0 ? "+" : ""}{summary.totalVariance}</span></span>
+          <div className="text-xs">
+            {summary.itemsWithVariance === 0 ? (
+              <span className="text-green-600 font-medium">All counts match the system</span>
+            ) : (
+              <span className="text-slate-600">
+                <span className="font-semibold text-slate-800">{summary.itemsWithVariance}</span>
+                {summary.itemsWithVariance === 1 ? " item differs" : " items differ"} from system
+                <span className="text-slate-400"> · </span>
+                <span className="font-medium text-slate-700">
+                  net {summary.totalVariance > 0 ? "+" : ""}{summary.totalVariance} {Math.abs(summary.totalVariance) === 1 ? "unit" : "units"}
+                </span>
+                {summary.totalVariance !== 0 && (
+                  <span className="text-slate-400"> ({summary.totalVariance > 0 ? "surplus" : "short"})</span>
+                )}
+              </span>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -727,12 +740,15 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
                       </div>
                     </div>
                   ) : item.countedQty !== null ? (
-                    <div className="flex items-center gap-4 mt-2 text-xs">
-                      <span className="text-blue-600">Counted: <span className="font-medium">{item.countedQty}</span></span>
-                      {item.variance !== null && item.variance !== 0 && (
-                        <span className="text-red-600">Variance: <span className="font-medium">{item.variance > 0 ? "+" : ""}{item.variance}</span></span>
-                      )}
-                      {item.variance === 0 && <span className="text-green-600">Match</span>}
+                    <div className="flex items-center gap-2 mt-2 text-xs">
+                      <span className="text-slate-700">Counted <span className="font-semibold">{item.countedQty}</span></span>
+                      {item.variance === 0 ? (
+                        <span className="text-green-600">· matches</span>
+                      ) : item.variance !== null ? (
+                        <span className={`font-medium ${item.variance > 0 ? "text-green-600" : "text-red-600"}`}>
+                          · {item.variance > 0 ? "+" : ""}{item.variance} vs system
+                        </span>
+                      ) : null}
                     </div>
                   ) : null}
                 </CardContent>
