@@ -192,6 +192,7 @@ model User {
   postedUpdates      StoreUpdate[]   @relation("UpdatePostedBy")
   opsActivityLogs    OpsActivityLog[] @relation("OpsActivityLoggedBy")
   brandStockUploads  BrandStockUpload[] @relation("BrandStockUploadedBy")
+  reportedProblems   AppProblem[]       @relation("ProblemReportedBy")
 }
 
 model Category {
@@ -1350,6 +1351,19 @@ model DailySnapshot {
   id          String   @id @default("latest")
   markdown    String   @db.Text
   generatedAt DateTime @default(now())
+}
+
+model AppProblem {
+  id          String   @id @default(cuid())
+  text        String   @db.Text
+  category    String   @default("general")
+  status      String   @default("open")
+  userId      String
+  user        User     @relation("ProblemReportedBy", fields: [userId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([status])
+  @@index([createdAt])
 }
 
 // ─── Brand Stock Upload + Smart Reorder ───────────

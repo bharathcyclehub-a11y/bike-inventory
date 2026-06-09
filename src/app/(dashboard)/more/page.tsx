@@ -72,12 +72,6 @@ const ROLE_LABELS: Record<Role, string> = {
 
 const MENU_GROUPS: MenuGroup[] = [
   {
-    title: "Operations",
-    items: [
-      { label: "Ops Stats", icon: Activity, href: "/ops-stats", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER"] },
-    ],
-  },
-  {
     title: "Accounts",
     items: [
       { label: "Accounts Dashboard", icon: IndianRupee, href: "/accounts", roles: ["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER", "STORE_MANAGER", "CUSTOM"], featureKey: "bills" },
@@ -125,6 +119,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { label: "Alert Config", icon: Bell, href: "/more/alerts", roles: ["ADMIN"] },
       { label: "Zoho Books Sync", icon: Cloud, href: "/more/zoho", roles: ["ADMIN"], featureKey: "zoho" },
       { label: "App Logic", icon: Activity, href: "/more/app-logic", roles: ["ADMIN"] },
+      { label: "App Problems", icon: AlertCircle, href: "/more/problems", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER", "CUSTOM"] },
     ],
   },
 ];
