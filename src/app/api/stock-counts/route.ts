@@ -65,9 +65,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = stockCountSchema.parse(body);
 
-    // Must assign to someone (ADMIN cannot self-assign)
+    // Must assign to someone
     if (!data.assignedToId) return errorResponse("You must assign the stock count to a team member", 400);
-    if (data.assignedToId === user.id) return errorResponse("You cannot assign a stock count to yourself", 400);
+    const isSelfCount = body.selfCount === true;
+    if (data.assignedToId === user.id && !isSelfCount) return errorResponse("You cannot assign a stock count to yourself", 400);
 
     let productIds = data.productIds;
     const binId = body.binId as string | undefined;

@@ -69,10 +69,14 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (existing.assignedToId !== user.id) return errorResponse("You can only update stock counts assigned to you", 403);
     }
 
-    // Only ADMIN/SUPERVISOR/ACCOUNTS_MANAGER can approve or reject
+    // Only ADMIN/CEO/SUPERVISOR/ACCOUNTS_MANAGER can approve or reject
     if (data.status === "APPROVED" || data.status === "REJECTED") {
-      if (!["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(user.role)) {
+      if (!["ADMIN", "CEO", "SUPERVISOR", "ACCOUNTS_MANAGER"].includes(user.role)) {
         return errorResponse("Only Admin, Supervisor, or Accounts Manager can approve/reject stock counts", 403);
+      }
+      // Prevent self-approval
+      if (data.status === "APPROVED" && existing.assignedToId === user.id) {
+        return errorResponse("You cannot approve your own stock count — another team member must review it", 403);
       }
     }
 
@@ -163,9 +167,9 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         const BASELINE_END = new Date("2026-07-31T23:59:59+05:30");
         const isBaselinePeriod = new Date() <= BASELINE_END;
 
-        // Only process items actually found (countedQty > 0) — skip zeros
+        // Process all items that were counted (including 0 — means item not found at location)
         const countedItems = await tx.stockCountItem.findMany({
-          where: { stockCountId: id, countedQty: { gt: 0 } },
+          where: { stockCountId: id, countedQty: { not: null } },
           include: { product: { select: { brandId: true, brand: { select: { name: true } } } } },
         });
 

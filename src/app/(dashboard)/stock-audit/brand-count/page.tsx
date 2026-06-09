@@ -90,7 +90,10 @@ export default function BrandCountPage() {
     setError("");
 
     try {
-      // Create stock count with pre-counted items
+      const userId = (session?.user as { userId?: string })?.userId;
+      if (!userId) { setError("Not logged in"); return; }
+
+      // Create stock count (self-count allowed for brand counting)
       const title = `${selectedBrand.name} @ ${selectedBin.name} — Brand Count`;
       const res = await fetch("/api/stock-counts", {
         method: "POST",
@@ -100,7 +103,8 @@ export default function BrandCountPage() {
           binId: selectedBin.id,
           location: selectedBin.location,
           productIds: products.map((p) => p.id),
-          assignedToId: (session?.user as { userId?: string })?.userId,
+          assignedToId: userId,
+          selfCount: true,
           dueDate: new Date().toISOString(),
         }),
       });
@@ -112,23 +116,36 @@ export default function BrandCountPage() {
 
       const countId = createJson.data.id;
 
-      // Batch update counted quantities + reorder levels
-      const items = await fetch(`/api/stock-counts/${countId}`).then((r) => r.json());
-      if (!items.success) { setError("Failed to load count items"); return; }
+      // Transition PENDING → IN_PROGRESS
+      const startRes = await fetch(`/api/stock-counts/${countId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "IN_PROGRESS" }),
+      });
+      if (!startRes.ok) { setError("Failed to start count"); return; }
 
-      const stockCountItems = items.data.items as Array<{ id: string; productId: string }>;
+      // Fetch items to get their IDs for batch update
+      const itemsRes = await fetch(`/api/stock-counts/${countId}`).then((r) => r.json());
+      if (!itemsRes.success) { setError("Failed to load count items"); return; }
 
-      for (const sci of stockCountItems) {
-        const c = counts[sci.productId];
-        if (!c || c.qty === null) continue;
+      const stockCountItems = itemsRes.data.items as Array<{ id: string; productId: string }>;
 
-        await fetch(`/api/stock-counts/${countId}`, {
+      // Batch update ALL counted items in one call
+      const itemUpdates = stockCountItems
+        .filter((sci) => counts[sci.productId]?.qty !== null && counts[sci.productId]?.qty !== undefined)
+        .map((sci) => ({
+          id: sci.id,
+          countedQty: counts[sci.productId].qty!,
+          notes: counts[sci.productId].reorder !== null ? `Reorder: ${counts[sci.productId].reorder}` : undefined,
+        }));
+
+      if (itemUpdates.length > 0) {
+        const updateRes = await fetch(`/api/stock-counts/${countId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            items: [{ id: sci.id, countedQty: c.qty, notes: c.reorder !== null ? `Reorder: ${c.reorder}` : undefined }],
-          }),
+          body: JSON.stringify({ items: itemUpdates }),
         });
+        if (!updateRes.ok) { setError("Failed to save counted items"); return; }
       }
 
       // Update reorder levels on products
@@ -144,12 +161,17 @@ export default function BrandCountPage() {
         });
       }
 
-      // Mark as COMPLETED
-      await fetch(`/api/stock-counts/${countId}`, {
+      // Transition IN_PROGRESS → COMPLETED
+      const completeRes = await fetch(`/api/stock-counts/${countId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: "COMPLETED" }),
       });
+      if (!completeRes.ok) {
+        const err = await completeRes.json().catch(() => ({}));
+        setError((err as { error?: string }).error || "Failed to mark as completed");
+        return;
+      }
 
       setResultId(countId);
       setStep("submitted");

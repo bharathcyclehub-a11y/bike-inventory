@@ -5,9 +5,31 @@ import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    await requireAuth(["ADMIN", "CEO", "PURCHASE_MANAGER"]);
+    const { id } = await params;
+    const body = await req.json();
+
+    const bin = await prisma.bin.findUnique({ where: { id } });
+    if (!bin) return errorResponse("Bin not found", 404);
+
+    const updateData: Record<string, unknown> = {};
+    if (body.name !== undefined) updateData.name = body.name;
+    if (body.location !== undefined) updateData.location = body.location;
+    if (body.zone !== undefined) updateData.zone = body.zone;
+
+    const updated = await prisma.bin.update({ where: { id }, data: updateData });
+    return successResponse(updated);
+  } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    return errorResponse(error instanceof Error ? error.message : "Failed to update bin", 400);
+  }
+}
+
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
+    await requireAuth(["ADMIN", "CEO", "PURCHASE_MANAGER"]);
     const { id } = await params;
 
     const bin = await prisma.bin.findUnique({
@@ -24,7 +46,8 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       );
     }
 
-    await prisma.bin.delete({ where: { id } });
+    // Soft-delete to preserve historical references
+    await prisma.bin.update({ where: { id }, data: { isActive: false } });
     return successResponse({ deleted: true });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);

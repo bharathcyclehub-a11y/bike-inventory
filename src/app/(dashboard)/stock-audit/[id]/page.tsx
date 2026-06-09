@@ -61,8 +61,8 @@ const STATUS_STYLE: Record<string, string> = {
   REJECTED: "danger",
 };
 
-// Baseline mode: until May 31 2026, counted stock IS actual stock
-const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
+// Baseline mode: until July 31 2026, counted stock IS actual stock
+const BASELINE_END = new Date("2026-07-31T23:59:59+05:30");
 
 export default function StockAuditDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);

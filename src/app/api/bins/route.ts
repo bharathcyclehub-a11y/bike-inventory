@@ -1,4 +1,4 @@
-export const revalidate = 300; // cache 5 min
+export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
@@ -23,9 +23,15 @@ export async function GET() {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
+    await requireAuth(["ADMIN", "PURCHASE_MANAGER", "CEO"]);
     const body = await req.json();
     const data = binSchema.parse(body);
+
+    // Check for duplicate code
+    const existing = await prisma.bin.findUnique({ where: { code: data.code } });
+    if (existing) {
+      return errorResponse(`Bin code "${data.code}" already exists. Try a different name.`, 409);
+    }
 
     const bin = await prisma.bin.create({ data });
     return successResponse(bin, 201);
