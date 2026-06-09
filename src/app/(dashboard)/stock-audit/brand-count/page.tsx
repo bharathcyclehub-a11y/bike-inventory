@@ -668,7 +668,7 @@ export default function BrandCountPage() {
 
       {/* ── Sticky Submit Bar ── */}
       {step === "count" && countedCount > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-3 z-50 max-w-screen-sm mx-auto">
+        <div className="fixed above-nav left-0 right-0 bg-white border-t border-slate-200 p-3 z-50 max-w-screen-sm mx-auto">
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-600"><strong>{countedCount}</strong> of {totalProducts} counted</p>
