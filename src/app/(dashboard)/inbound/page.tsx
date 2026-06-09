@@ -3,12 +3,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { Search, Truck, Loader2, Calendar, Cloud, Download, SlidersHorizontal, X } from "lucide-react";
+import { Search, Truck, Loader2, Calendar, Cloud, Download } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDebounce } from "@/lib/utils";
-import { DateFilter, type DateRangeKey } from "@/components/date-filter";
+import { type DateRangeKey } from "@/components/date-filter";
+import { FilterSheet } from "@/components/filter-sheet";
 import { usePermissions } from "@/lib/use-permissions";
 import { ErrorBanner } from "@/components/ui/error-banner";
 
@@ -100,9 +101,6 @@ const STATUS_OPTIONS: { key: StatusFilter; label: string }[] = [
   { key: "LEGACY", label: "Pre-Merge" },
 ];
 
-const DATE_LABELS: Record<DateRangeKey, string> = {
-  all: "All dates", today: "Today", "3days": "3 Days", week: "This Week", month: "This Month", custom: "Custom",
-};
 
 export default function InboundPage() {
   const { data: session } = useSession();
@@ -122,15 +120,6 @@ export default function InboundPage() {
   const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
-  const [showFilters, setShowFilters] = useState(false);
-
-  const activeFilterCount = (filter !== "ALL" ? 1 : 0) + (dateFilter !== "all" ? 1 : 0);
-  const resetFilters = () => {
-    setFilter("ALL");
-    setDateFilter("all");
-    setDateFrom(undefined);
-    setDateTo(undefined);
-  };
 
   // Zoho fetch flow
   const [fetchStep, setFetchStep] = useState<"idle" | "pickDate" | "fetching" | "selecting" | "importing">("idle");
@@ -526,94 +515,19 @@ export default function InboundPage() {
         </div>
       )}
 
-      {/* Filter button + active summary */}
-      <div className="flex items-center gap-2 mb-3 overflow-x-auto scrollbar-hide">
-        <button
-          onClick={() => setShowFilters(true)}
-          className="shrink-0 flex items-center gap-1.5 px-3 min-h-[40px] rounded-lg border border-slate-300 bg-white text-sm font-medium text-slate-700 hover:border-slate-400 cursor-pointer transition-colors"
-        >
-          <SlidersHorizontal className="h-4 w-4" />
-          Filter
-          {activeFilterCount > 0 && (
-            <span className="inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded-full bg-blue-600 text-white text-[10px] font-semibold">
-              {activeFilterCount}
-            </span>
-          )}
-        </button>
-
-        {/* Read-only chips showing what's active */}
-        {filter !== "ALL" && (
-          <span className="shrink-0 text-[11px] font-medium px-2.5 py-1 rounded-full bg-slate-900 text-white">
-            {STATUS_OPTIONS.find((o) => o.key === filter)?.label}
-          </span>
-        )}
-        {dateFilter !== "all" && (
-          <span className="shrink-0 text-[11px] font-medium px-2.5 py-1 rounded-full bg-blue-600 text-white">
-            {DATE_LABELS[dateFilter]}
-          </span>
-        )}
-        {activeFilterCount > 0 && (
-          <button onClick={resetFilters} className="shrink-0 text-xs text-slate-500 underline cursor-pointer">
-            Clear
-          </button>
-        )}
-      </div>
-
-      {/* Filter bottom sheet */}
-      {showFilters && (
-        <div className="fixed inset-0 z-[60] flex flex-col justify-end" role="dialog" aria-modal="true">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setShowFilters(false)} />
-          <div className="relative bg-white rounded-t-2xl p-4 pb-safe max-h-[80vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-bold text-slate-900">Filters</h2>
-              <button
-                onClick={() => setShowFilters(false)}
-                className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"
-                aria-label="Close filters"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Date Range</p>
-            <DateFilter
-              value={dateFilter}
-              onChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
-              className="mb-5"
-            />
-
-            <p className="text-xs font-semibold text-slate-500 uppercase mb-2">Status</p>
-            <div className="flex flex-wrap gap-2 mb-5">
-              {STATUS_OPTIONS.map((f) => (
-                <button
-                  key={f.key}
-                  onClick={() => setFilter(f.key)}
-                  className={`min-h-[40px] px-3.5 rounded-full text-sm font-medium cursor-pointer transition-colors ${
-                    filter === f.key ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex gap-2">
-              <button
-                onClick={resetFilters}
-                className="flex-1 min-h-[44px] rounded-lg border border-slate-300 text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
-              >
-                Reset
-              </button>
-              <button
-                onClick={() => setShowFilters(false)}
-                className="flex-1 min-h-[44px] rounded-lg bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 cursor-pointer"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Filters */}
+      <FilterSheet
+        className="mb-3"
+        dateValue={dateFilter}
+        onDateChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
+        groups={[{
+          label: "Status",
+          value: filter,
+          defaultValue: "ALL",
+          options: STATUS_OPTIONS,
+          onChange: (key) => setFilter(key as StatusFilter),
+        }]}
+      />
 
       {/* List */}
       {loading ? (
