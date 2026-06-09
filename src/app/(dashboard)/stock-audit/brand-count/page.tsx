@@ -3,20 +3,29 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Package, MapPin, Check, Loader2, ChevronDown, ChevronRight, Send } from "lucide-react";
+import {
+  ArrowLeft, MapPin, Check, Loader2, ChevronDown, ChevronRight, Send, X, Pencil,
+} from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 
 interface Brand { id: string; name: string; _count: { products: number } }
 interface BinOption { id: string; code: string; name: string; location: string }
+interface CategoryOption { id: string; name: string }
 interface ProductItem {
   id: string; sku: string; name: string; type: string; size: string | null;
   currentStock: number; reorderLevel: number; reorderQty: number;
   category: { name: string } | null; brand: { name: string } | null;
 }
+interface SearchResult {
+  id: string; sku: string; name: string; type: string;
+  currentStock: number; reorderLevel: number;
+  category: { name: string } | null; brand: { name: string } | null;
+}
 
-type Step = "brand" | "bin" | "count" | "review" | "submitted";
+type Step = "brand" | "bin" | "count" | "submitted";
+type InlineEdit = { productId: string; field: "brand" | "category" } | null;
 
 export default function BrandCountPage() {
   const { data: session } = useSession();
@@ -25,6 +34,7 @@ export default function BrandCountPage() {
   const [step, setStep] = useState<Step>("brand");
   const [brands, setBrands] = useState<Brand[]>([]);
   const [bins, setBins] = useState<BinOption[]>([]);
+  const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [selectedBrand, setSelectedBrand] = useState<Brand | null>(null);
   const [selectedBin, setSelectedBin] = useState<BinOption | null>(null);
   const [products, setProducts] = useState<ProductItem[]>([]);
@@ -36,15 +46,47 @@ export default function BrandCountPage() {
   const [resultId, setResultId] = useState("");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
 
+  // Inline brand/category edit
+  const [inlineEdit, setInlineEdit] = useState<InlineEdit>(null);
+  const [reclassifying, setReclassifying] = useState<Set<string>>(new Set());
+
+  // "Not in list" search
+  const [notInListSearch, setNotInListSearch] = useState("");
+  const [notInListResults, setNotInListResults] = useState<SearchResult[]>([]);
+  const [notInListSearching, setNotInListSearching] = useState(false);
+
   useEffect(() => {
     Promise.all([
       fetch("/api/brands").then((r) => r.json()),
       fetch("/api/bins").then((r) => r.json()),
-    ]).then(([brandsRes, binsRes]) => {
+      fetch("/api/categories").then((r) => r.json()),
+    ]).then(([brandsRes, binsRes, catsRes]) => {
       if (brandsRes.success) setBrands(brandsRes.data.filter((b: Brand) => b._count.products > 0));
       if (binsRes.success) setBins(binsRes.data);
+      if (catsRes.success) {
+        const flat: CategoryOption[] = [];
+        (catsRes.data as Array<{ id: string; name: string; children?: { id: string; name: string }[] }>).forEach((c) => {
+          flat.push({ id: c.id, name: c.name });
+          c.children?.forEach((ch) => flat.push({ id: ch.id, name: ch.name }));
+        });
+        setCategories(flat.sort((a, b) => a.name.localeCompare(b.name)));
+      }
     }).catch(() => {});
   }, []);
+
+  // Debounced "not in list" search
+  useEffect(() => {
+    if (notInListSearch.length < 2) { setNotInListResults([]); return; }
+    const timer = setTimeout(() => {
+      setNotInListSearching(true);
+      fetch(`/api/products/search?q=${encodeURIComponent(notInListSearch)}`)
+        .then((r) => r.json())
+        .then((res) => { if (res.success) setNotInListResults(res.data); })
+        .catch(() => {})
+        .finally(() => setNotInListSearching(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [notInListSearch]);
 
   const loadProducts = useCallback(async (brandId: string) => {
     setLoading(true);
@@ -57,7 +99,7 @@ export default function BrandCountPage() {
         const initial: Record<string, { qty: number | null; reorder: number | null }> = {};
         items.forEach((p) => { initial[p.id] = { qty: null, reorder: p.reorderLevel || null }; });
         setCounts(initial);
-        setExpandedCategories(new Set(items.map((p) => p.category?.name || "Uncategorized")));
+        setExpandedCategories(new Set()); // all collapsed by default
       }
     } catch { setError("Failed to load products"); }
     finally { setLoading(false); }
@@ -78,6 +120,62 @@ export default function BrandCountPage() {
     setCounts((prev) => ({ ...prev, [productId]: { ...prev[productId], [field]: value } }));
   };
 
+  const handleReclassify = async (
+    productId: string,
+    field: "brand" | "category",
+    newId: string,
+    newLabel: string
+  ) => {
+    setReclassifying((prev) => new Set(prev).add(productId));
+    setInlineEdit(null);
+    try {
+      const body = field === "brand" ? { brandId: newId } : { categoryId: newId };
+      const res = await fetch(`/api/products/${productId}/reclassify`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setProducts((prev) =>
+          prev.map((p) => {
+            if (p.id !== productId) return p;
+            return {
+              ...p,
+              brand: field === "brand" ? { name: newLabel } : p.brand,
+              category: field === "category" ? { name: newLabel } : p.category,
+            };
+          })
+        );
+      } else {
+        setError("Failed to update — check your connection and try again");
+      }
+    } catch {
+      setError("Failed to update — check your connection and try again");
+    } finally {
+      setReclassifying((prev) => { const n = new Set(prev); n.delete(productId); return n; });
+    }
+  };
+
+  const handleAddToCount = (result: SearchResult) => {
+    const alreadyInList = !!products.find((p) => p.id === result.id);
+    if (!alreadyInList) {
+      const newProduct: ProductItem = {
+        id: result.id, sku: result.sku, name: result.name, type: result.type,
+        size: null, currentStock: result.currentStock, reorderLevel: result.reorderLevel,
+        reorderQty: 0, category: result.category, brand: result.brand,
+      };
+      setProducts((prev) => [...prev, newProduct]);
+      setCounts((prev) => ({ ...prev, [result.id]: { qty: null, reorder: result.reorderLevel || null } }));
+
+      // Auto-change brand to the selected brand if it's different
+      if (selectedBrand && result.brand?.name !== selectedBrand.name) {
+        handleReclassify(result.id, "brand", selectedBrand.id, selectedBrand.name);
+      }
+    }
+    setNotInListSearch("");
+    setNotInListResults([]);
+  };
+
   const countedCount = Object.values(counts).filter((c) => c.qty !== null).length;
   const totalProducts = products.length;
 
@@ -93,7 +191,6 @@ export default function BrandCountPage() {
       const userId = (session?.user as { userId?: string })?.userId;
       if (!userId) { setError("Not logged in"); return; }
 
-      // Create stock count (self-count allowed for brand counting)
       const title = `${selectedBrand.name} @ ${selectedBin.name} — Brand Count`;
       const res = await fetch("/api/stock-counts", {
         method: "POST",
@@ -109,14 +206,10 @@ export default function BrandCountPage() {
         }),
       });
       const createJson = await res.json();
-      if (!res.ok || !createJson.success) {
-        setError(createJson.error || "Failed to create count");
-        return;
-      }
+      if (!res.ok || !createJson.success) { setError(createJson.error || "Failed to create count"); return; }
 
       const countId = createJson.data.id;
 
-      // Transition PENDING → IN_PROGRESS
       const startRes = await fetch(`/api/stock-counts/${countId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -124,19 +217,19 @@ export default function BrandCountPage() {
       });
       if (!startRes.ok) { setError("Failed to start count"); return; }
 
-      // Fetch items to get their IDs for batch update
       const itemsRes = await fetch(`/api/stock-counts/${countId}`).then((r) => r.json());
       if (!itemsRes.success) { setError("Failed to load count items"); return; }
 
       const stockCountItems = itemsRes.data.items as Array<{ id: string; productId: string }>;
 
-      // Batch update ALL counted items in one call
       const itemUpdates = stockCountItems
         .filter((sci) => counts[sci.productId]?.qty !== null && counts[sci.productId]?.qty !== undefined)
         .map((sci) => ({
           id: sci.id,
           countedQty: counts[sci.productId].qty!,
-          notes: counts[sci.productId].reorder !== null ? `Reorder: ${counts[sci.productId].reorder}` : undefined,
+          notes: counts[sci.productId].reorder !== null
+            ? `Reorder: ${counts[sci.productId].reorder}`
+            : undefined,
         }));
 
       if (itemUpdates.length > 0) {
@@ -148,7 +241,6 @@ export default function BrandCountPage() {
         if (!updateRes.ok) { setError("Failed to save counted items"); return; }
       }
 
-      // Update reorder levels on products
       const reorderUpdates = Object.entries(counts)
         .filter(([, c]) => c.reorder !== null && c.qty !== null)
         .map(([productId, c]) => ({ id: productId, reorderLevel: c.reorder! }));
@@ -161,7 +253,6 @@ export default function BrandCountPage() {
         });
       }
 
-      // Transition IN_PROGRESS → COMPLETED
       const completeRes = await fetch(`/api/stock-counts/${countId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -182,7 +273,6 @@ export default function BrandCountPage() {
     }
   };
 
-  // Group products by category
   const filtered = products.filter((p) => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -204,7 +294,9 @@ export default function BrandCountPage() {
     });
   };
 
-  // Warehouse bins only
+  // Auto-expand all categories when user is searching
+  const isCategoryExpanded = (cat: string) => search.length > 0 || expandedCategories.has(cat);
+
   const warehouseBins = bins.filter((b) => b.location.toLowerCase().includes("warehouse"));
   const otherBins = bins.filter((b) => !b.location.toLowerCase().includes("warehouse"));
 
@@ -218,7 +310,6 @@ export default function BrandCountPage() {
             {step === "brand" && "Step 1: Select brand"}
             {step === "bin" && `Step 2: ${selectedBrand?.name} — Select bin`}
             {step === "count" && `Step 3: Count ${selectedBrand?.name} items in ${selectedBin?.name}`}
-            {step === "review" && "Step 4: Review & submit"}
             {step === "submitted" && "Done! Waiting for approval"}
           </p>
         </div>
@@ -226,7 +317,8 @@ export default function BrandCountPage() {
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
-          {error}<button onClick={() => setError("")} className="ml-2 underline">dismiss</button>
+          {error}
+          <button onClick={() => setError("")} className="ml-2 underline">dismiss</button>
         </div>
       )}
 
@@ -317,65 +409,224 @@ export default function BrandCountPage() {
               <Input placeholder="Search by name or SKU..." value={search}
                 onChange={(e) => setSearch(e.target.value)} className="mb-3" />
 
-              {/* Items grouped by category */}
-              {Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)).map(([cat, items]) => (
-                <div key={cat} className="mb-3">
-                  <button onClick={() => toggleCategory(cat)}
-                    className="flex items-center gap-1.5 w-full text-left py-1.5">
-                    {expandedCategories.has(cat) ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
-                    <span className="text-xs font-semibold text-slate-700 uppercase">{cat}</span>
-                    <span className="text-[10px] text-slate-400">{items.length}</span>
-                  </button>
+              {/* Items grouped by category — collapsed by default */}
+              {Object.entries(groups).sort(([a], [b]) => a.localeCompare(b)).map(([cat, items]) => {
+                const expanded = isCategoryExpanded(cat);
+                const catCounted = items.filter((p) => counts[p.id]?.qty !== null).length;
+                return (
+                  <div key={cat} className="mb-2">
+                    <button onClick={() => toggleCategory(cat)}
+                      className="flex items-center gap-1.5 w-full text-left py-2 px-1">
+                      {expanded
+                        ? <ChevronDown className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                        : <ChevronRight className="h-3.5 w-3.5 text-slate-400 shrink-0" />}
+                      <span className="text-xs font-semibold text-slate-700 uppercase flex-1">{cat}</span>
+                      <span className="text-[10px] text-slate-400 mr-1">{catCounted}/{items.length}</span>
+                      {catCounted === items.length && items.length > 0 && (
+                        <Check className="h-3 w-3 text-green-500 shrink-0" />
+                      )}
+                    </button>
 
-                  {expandedCategories.has(cat) && (
-                    <div className="space-y-1.5 mt-1">
-                      {items.map((p) => {
-                        const c = counts[p.id] || { qty: null, reorder: null };
-                        const isCounted = c.qty !== null;
-                        return (
-                          <Card key={p.id} className={isCounted ? "border-green-200 bg-green-50/30" : ""}>
-                            <CardContent className="p-2.5">
-                              <div className="flex items-start justify-between mb-1.5">
-                                <div className="flex-1 min-w-0 mr-2">
-                                  <p className="text-xs font-medium text-slate-900 leading-tight">{p.name}</p>
-                                  <div className="flex items-center gap-2 mt-0.5">
-                                    <span className="text-[10px] text-slate-400 font-mono">{p.sku}</span>
-                                    {p.size && <Badge className="text-[9px] px-1 py-0 bg-slate-100 text-slate-600">{p.size}</Badge>}
-                                    <Badge className="text-[9px] px-1 py-0 bg-blue-50 text-blue-600">{p.type.replace("_", " ")}</Badge>
+                    {expanded && (
+                      <div className="space-y-1.5 mt-1">
+                        {items.map((p) => {
+                          const c = counts[p.id] || { qty: null, reorder: null };
+                          const isCounted = c.qty !== null;
+                          const isReclassifying = reclassifying.has(p.id);
+                          const editingThisProduct = inlineEdit?.productId === p.id;
+
+                          return (
+                            <Card key={p.id} className={isCounted ? "border-green-200 bg-green-50/30" : ""}>
+                              <CardContent className="p-2.5">
+                                <div className="flex items-start justify-between mb-1">
+                                  <div className="flex-1 min-w-0 mr-2">
+                                    <p className="text-xs font-medium text-slate-900 leading-tight">{p.name}</p>
+                                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                      <span className="text-[10px] text-slate-400 font-mono">{p.sku}</span>
+                                      {p.size && (
+                                        <Badge className="text-[9px] px-1 py-0 bg-slate-100 text-slate-600">{p.size}</Badge>
+                                      )}
+                                      <Badge className="text-[9px] px-1 py-0 bg-blue-50 text-blue-600">
+                                        {p.type.replace("_", " ")}
+                                      </Badge>
+                                    </div>
+
+                                    {/* Brand & Category change chips */}
+                                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                                      {isReclassifying ? (
+                                        <span className="text-[10px] text-slate-400 flex items-center gap-1 py-1.5">
+                                          <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+                                        </span>
+                                      ) : (
+                                        <>
+                                          <button
+                                            onClick={() => setInlineEdit(
+                                              editingThisProduct && inlineEdit?.field === "category"
+                                                ? null
+                                                : { productId: p.id, field: "category" }
+                                            )}
+                                            className="flex items-center gap-1 min-h-[28px] text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-md leading-tight cursor-pointer hover:bg-amber-100 active:bg-amber-200 transition-colors"
+                                          >
+                                            <span>{p.category?.name || "No Category"}</span>
+                                            <Pencil className="h-2.5 w-2.5 shrink-0" />
+                                          </button>
+                                          <button
+                                            onClick={() => setInlineEdit(
+                                              editingThisProduct && inlineEdit?.field === "brand"
+                                                ? null
+                                                : { productId: p.id, field: "brand" }
+                                            )}
+                                            className="flex items-center gap-1 min-h-[28px] text-[10px] text-violet-700 bg-violet-50 border border-violet-200 px-2 py-1 rounded-md leading-tight cursor-pointer hover:bg-violet-100 active:bg-violet-200 transition-colors"
+                                          >
+                                            <span>{p.brand?.name || "No Brand"}</span>
+                                            <Pencil className="h-2.5 w-2.5 shrink-0" />
+                                          </button>
+                                        </>
+                                      )}
+                                    </div>
+
+                                    {/* Inline selector */}
+                                    {editingThisProduct && !isReclassifying && (
+                                      <div className="mt-1.5 p-2 bg-slate-50 border border-slate-200 rounded-lg">
+                                        <p className="text-[9px] text-slate-500 mb-1">
+                                          Change {inlineEdit?.field === "brand" ? "brand" : "category"} to:
+                                        </p>
+                                        <select
+                                          className="w-full text-sm border border-slate-300 rounded-lg py-2 px-2 bg-white"
+                                          defaultValue=""
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (!val) return;
+                                            const opts = inlineEdit?.field === "brand" ? brands : categories;
+                                            const found = opts.find((o) => o.id === val);
+                                            if (found && inlineEdit) {
+                                              handleReclassify(p.id, inlineEdit.field, found.id, found.name);
+                                            }
+                                          }}
+                                        >
+                                          <option value="">
+                                            Select {inlineEdit?.field === "brand" ? "brand" : "category"}...
+                                          </option>
+                                          {(inlineEdit?.field === "brand" ? brands : categories).map((o) => (
+                                            <option key={o.id} value={o.id}>{o.name}</option>
+                                          ))}
+                                        </select>
+                                        <button
+                                          onClick={() => setInlineEdit(null)}
+                                          className="text-[11px] text-slate-500 mt-1 w-full text-center min-h-[36px] cursor-pointer hover:text-slate-700"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {isCounted && <Check className="h-4 w-4 text-green-600 shrink-0 mt-0.5" />}
+                                </div>
+
+                                <div className="flex items-center gap-2 mt-2">
+                                  <div className="flex-1">
+                                    <label className="text-[9px] text-slate-500 block mb-0.5">Count</label>
+                                    <input type="number" min="0" inputMode="numeric"
+                                      value={c.qty === null ? "" : c.qty}
+                                      onChange={(e) => updateCount(p.id, "qty", e.target.value === "" ? null : parseInt(e.target.value) || 0)}
+                                      placeholder="Qty"
+                                      className="w-full text-center text-sm font-medium border border-slate-300 rounded-lg py-2 focus:ring-2 focus:ring-green-500 focus:border-green-500" />
+                                  </div>
+                                  <div className="flex-1">
+                                    <label className="text-[9px] text-slate-500 block mb-0.5">Reorder Level</label>
+                                    <input type="number" min="0" inputMode="numeric"
+                                      value={c.reorder === null ? "" : c.reorder}
+                                      onChange={(e) => updateCount(p.id, "reorder", e.target.value === "" ? null : parseInt(e.target.value) || 0)}
+                                      placeholder="Min"
+                                      className="w-full text-center text-sm border border-slate-200 rounded-lg py-2 focus:ring-2 focus:ring-blue-500" />
                                   </div>
                                 </div>
-                                {isCounted && <Check className="h-4 w-4 text-green-600 shrink-0" />}
-                              </div>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
 
-                              <div className="flex items-center gap-2 mt-2">
-                                <div className="flex-1">
-                                  <label className="text-[9px] text-slate-500 block mb-0.5">Count</label>
-                                  <input type="number" min="0" inputMode="numeric"
-                                    value={c.qty === null ? "" : c.qty}
-                                    onChange={(e) => updateCount(p.id, "qty", e.target.value === "" ? null : parseInt(e.target.value) || 0)}
-                                    placeholder="Qty"
-                                    className="w-full text-center text-sm font-medium border border-slate-300 rounded-lg py-2 focus:ring-2 focus:ring-green-500 focus:border-green-500" />
-                                </div>
-                                <div className="flex-1">
-                                  <label className="text-[9px] text-slate-500 block mb-0.5">Reorder Level</label>
-                                  <input type="number" min="0" inputMode="numeric"
-                                    value={c.reorder === null ? "" : c.reorder}
-                                    onChange={(e) => updateCount(p.id, "reorder", e.target.value === "" ? null : parseInt(e.target.value) || 0)}
-                                    placeholder="Min"
-                                    className="w-full text-center text-sm border border-slate-200 rounded-lg py-2 focus:ring-2 focus:ring-blue-500" />
-                                </div>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        );
-                      })}
-                    </div>
+              {/* ── Not in list section ── */}
+              <div className="mt-5 border-t border-slate-200 pt-4">
+                <p className="text-xs font-semibold text-slate-700 mb-0.5">
+                  Found something not in this list?
+                </p>
+                <p className="text-[10px] text-slate-500 mb-2">
+                  Search any product, add it here, and its brand will be updated to {selectedBrand?.name} automatically.
+                </p>
+                <div className="relative">
+                  <Input
+                    placeholder="Search by name or SKU..."
+                    value={notInListSearch}
+                    onChange={(e) => setNotInListSearch(e.target.value)}
+                    className="pr-8"
+                  />
+                  {notInListSearching && (
+                    <Loader2 className="absolute right-2.5 top-2.5 h-4 w-4 animate-spin text-slate-400 pointer-events-none" />
+                  )}
+                  {notInListSearch && !notInListSearching && (
+                    <button
+                      onClick={() => { setNotInListSearch(""); setNotInListResults([]); }}
+                      className="absolute right-2.5 top-2.5 p-0.5"
+                    >
+                      <X className="h-4 w-4 text-slate-400" />
+                    </button>
                   )}
                 </div>
-              ))}
+
+                {notInListResults.length > 0 && (
+                  <div className="mt-2 space-y-1.5 max-h-52 overflow-y-auto">
+                    {notInListResults.map((result) => {
+                      const alreadyAdded = !!products.find((p) => p.id === result.id);
+                      const brandMismatch = result.brand?.name !== selectedBrand?.name;
+                      return (
+                        <button
+                          key={result.id}
+                          disabled={alreadyAdded}
+                          onClick={() => handleAddToCount(result)}
+                          className={`w-full text-left p-2.5 border rounded-lg transition-colors ${
+                            alreadyAdded
+                              ? "border-green-200 bg-green-50/30 cursor-default"
+                              : "border-slate-200 bg-white hover:border-blue-400 active:bg-blue-50"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium text-slate-900 truncate">{result.name}</p>
+                              <p className="text-[10px] text-slate-400">
+                                {result.sku} · {result.brand?.name || "No brand"} · {result.category?.name || "No category"}
+                              </p>
+                            </div>
+                            {alreadyAdded ? (
+                              <span className="text-[10px] text-green-600 font-medium shrink-0 flex items-center gap-0.5">
+                                <Check className="h-3 w-3" /> Added
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-blue-600 font-medium shrink-0">
+                                + Add{brandMismatch ? " & rebrand" : ""}
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {notInListSearch.length >= 2 && !notInListSearching && notInListResults.length === 0 && (
+                  <p className="text-[10px] text-slate-400 mt-2 text-center">
+                    No products found for &quot;{notInListSearch}&quot;
+                  </p>
+                )}
+              </div>
 
               <button onClick={() => { setStep("bin"); setSelectedBin(null); }}
-                className="text-xs text-blue-600 mt-2 underline">← Change bin</button>
+                className="text-xs text-blue-600 mt-4 underline">← Change bin</button>
             </>
           )}
         </div>
@@ -391,7 +642,7 @@ export default function BrandCountPage() {
               {countedCount} items counted for {selectedBrand?.name} in {selectedBin?.name}
             </p>
             <p className="text-xs text-slate-500 mt-2">
-              Waiting for Srinu's approval. Once approved, these become the actual stock levels.
+              Waiting for approval. Once approved, these become the actual stock levels.
             </p>
           </div>
           <div className="flex gap-2 justify-center mt-4">
@@ -399,7 +650,12 @@ export default function BrandCountPage() {
               className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium">
               View Count
             </Link>
-            <button onClick={() => { setStep("brand"); setSelectedBrand(null); setSelectedBin(null); setProducts([]); setCounts({}); setSearch(""); setResultId(""); }}
+            <button
+              onClick={() => {
+                setStep("brand"); setSelectedBrand(null); setSelectedBin(null);
+                setProducts([]); setCounts({}); setSearch(""); setResultId("");
+                setNotInListSearch(""); setNotInListResults([]);
+              }}
               className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium">
               Count Another Brand
             </button>
@@ -413,7 +669,9 @@ export default function BrandCountPage() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-xs text-slate-600"><strong>{countedCount}</strong> of {totalProducts} counted</p>
-              <p className="text-[10px] text-slate-400">by {userName} · {selectedBrand?.name} · {selectedBin?.code}</p>
+              <p className="text-[10px] text-slate-400">
+                by {userName} · {selectedBrand?.name} · {selectedBin?.code}
+              </p>
             </div>
             <button onClick={handleSubmit} disabled={submitting}
               className="flex items-center gap-1.5 bg-green-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium disabled:opacity-50">
