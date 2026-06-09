@@ -127,7 +127,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         updateData.completedAt = new Date();
 
         // After baseline: require all items to have countedQty
-        const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
+        const BASELINE_END = new Date("2026-07-31T23:59:59+05:30");
         if (new Date() > BASELINE_END) {
           const uncountedItems = await tx.stockCountItem.count({
             where: { stockCountId: id, countedQty: null },
@@ -160,7 +160,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
       // When APPROVED: apply counted quantities to product stock + brands
       if (data.status === "APPROVED") {
-        const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
+        const BASELINE_END = new Date("2026-07-31T23:59:59+05:30");
         const isBaselinePeriod = new Date() <= BASELINE_END;
 
         // Only process items actually found (countedQty > 0) — skip zeros

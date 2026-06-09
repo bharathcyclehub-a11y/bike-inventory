@@ -80,12 +80,20 @@ export default function StockAuditPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-lg font-bold text-slate-900">Stock Audit</h1>
-        {canCreate && (
-          <Link href="/stock-audit/new"
-            className="flex items-center gap-1.5 bg-slate-900 text-white px-4 py-3 rounded-lg text-sm font-medium h-12">
-            <Plus className="h-4 w-4" /> New Audit
-          </Link>
-        )}
+        <div className="flex gap-2">
+          {canCreate && (
+            <Link href="/stock-audit/brand-count"
+              className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-2.5 rounded-lg text-xs font-medium">
+              Brand Count
+            </Link>
+          )}
+          {canCreate && (
+            <Link href="/stock-audit/new"
+              className="flex items-center gap-1.5 bg-slate-900 text-white px-3 py-2.5 rounded-lg text-xs font-medium">
+              <Plus className="h-3.5 w-3.5" /> New Audit
+            </Link>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-2 overflow-x-auto scrollbar-hide mb-3 pb-1">

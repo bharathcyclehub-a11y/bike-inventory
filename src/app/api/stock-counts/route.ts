@@ -90,7 +90,7 @@ export async function POST(req: NextRequest) {
 
       // Baseline mode: include ALL active products for bin/location counts
       // so clerks can count what's physically there (items may not be assigned to a bin yet)
-      const BASELINE_END = new Date("2026-05-31T23:59:59+05:30");
+      const BASELINE_END = new Date("2026-07-31T23:59:59+05:30");
       const isBaseline = new Date() <= BASELINE_END;
 
       const allProducts = await prisma.product.findMany({
