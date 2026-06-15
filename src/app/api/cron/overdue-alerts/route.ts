@@ -3,15 +3,11 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
+import { buildAccountabilityScorecard, formatScorecardMessage } from "@/lib/accountability";
 
-interface OverdueItem {
-  type: string;
-  label: string;
-  owner: string;
-  count: number;
-}
-
-// Vercel Cron: every 6 hours — "0 */6 * * *"
+// Vercel Cron: daily 8 AM — "0 8 * * *" (see vercel.json).
+// Pushes the Daily Accountability scorecard every morning (the REVIEW step of
+// the system loop) so the founder + Checker get the number without pulling it.
 export async function GET(req: NextRequest) {
   try {
     // Verify cron secret (same pattern as zoho-pull)
@@ -26,86 +22,10 @@ export async function GET(req: NextRequest) {
     }
 
     const now = new Date();
-    const h72 = new Date(now.getTime() - 72 * 60 * 60 * 1000);
 
-    // Check all overdue items in parallel
-    const [unverifiedInwards, pendingDeliveries, stalePOs] = await Promise.all([
-      // Unverified inwards > 72h
-      prisma.$queryRaw<[{ count: number }]>`
-        SELECT COUNT(*)::int AS count
-        FROM "InventoryTransaction"
-        WHERE type = 'INWARD'
-          AND notes LIKE '%[UNVERIFIED]%'
-          AND "createdAt" < ${h72}
-      `,
-
-      // Pending deliveries > 72h
-      prisma.$queryRaw<[{ count: number }]>`
-        SELECT COUNT(*)::int AS count
-        FROM "Delivery"
-        WHERE status IN ('PENDING', 'VERIFIED', 'SCHEDULED')
-          AND "invoiceDate" < ${h72}
-      `,
-
-      // POs without tracking > 72h
-      prisma.$queryRaw<[{ count: number }]>`
-        SELECT COUNT(*)::int AS count
-        FROM "PurchaseOrder"
-        WHERE status IN ('SENT_TO_VENDOR', 'PARTIALLY_RECEIVED')
-          AND "orderDate" < ${h72}
-      `,
-    ]);
-
-    const inwardsCount = unverifiedInwards[0]?.count || 0;
-    const deliveriesCount = pendingDeliveries[0]?.count || 0;
-    const posCount = stalePOs[0]?.count || 0;
-
-    const overdueItems: OverdueItem[] = [];
-
-    if (inwardsCount > 0) {
-      overdueItems.push({
-        type: "inward",
-        label: `${inwardsCount} inwards unverified (72h+)`,
-        owner: "Nithin",
-        count: inwardsCount,
-      });
-    }
-
-    if (deliveriesCount > 0) {
-      overdueItems.push({
-        type: "delivery",
-        label: `${deliveriesCount} delivery pending (72h+)`,
-        owner: "Ranjitha",
-        count: deliveriesCount,
-      });
-    }
-
-    if (posCount > 0) {
-      overdueItems.push({
-        type: "purchase_order",
-        label: `${posCount} PO without tracking (72h+)`,
-        owner: "Abhi Gowda",
-        count: posCount,
-      });
-    }
-
-    // No overdue items — nothing to alert
-    if (overdueItems.length === 0) {
-      return successResponse({
-        alertSent: false,
-        message: "No overdue items found",
-        checkedAt: now.toISOString(),
-      });
-    }
-
-    // Build WhatsApp message
-    const lines = ["*BCH Overdue Alert*", ""];
-    for (const item of overdueItems) {
-      const emoji = item.type === "purchase_order" ? "\uD83D\uDFE1" : "\uD83D\uDD34";
-      lines.push(`${emoji} ${item.label} — ${item.owner}`);
-    }
-    lines.push("", "Open app: https://bike-inventory.vercel.app");
-    const message = lines.join("\n");
+    // Build the daily accountability scorecard + WhatsApp message
+    const scorecard = await buildAccountabilityScorecard();
+    const message = formatScorecardMessage(scorecard);
 
     // Fetch alert phone numbers from AlertConfig
     const alertConfig = await prisma.alertConfig.findUnique({
@@ -156,13 +76,13 @@ export async function GET(req: NextRequest) {
         }
       }
     } else if (phones.length > 0) {
-      // No WhatsApp token — generate deep links instead
-      console.log("[overdue-alerts] WhatsApp token not configured. Alert data returned in response.");
+      // No WhatsApp token — data still returned in response for manual review
+      console.log("[daily-accountability] WhatsApp token not configured. Scorecard returned in response.");
     }
 
     return successResponse({
       alertSent: whatsappSent,
-      overdueItems,
+      scorecard,
       message,
       phones,
       whatsappConfigured: !!(whatsappToken && whatsappPhoneId),
@@ -171,7 +91,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     return errorResponse(
-      error instanceof Error ? error.message : "Overdue alerts check failed",
+      error instanceof Error ? error.message : "Daily accountability push failed",
       500
     );
   }

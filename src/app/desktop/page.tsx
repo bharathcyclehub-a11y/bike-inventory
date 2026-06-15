@@ -41,6 +41,7 @@ export default function DesktopDashboard() {
   const [people, setPeople] = useState<HealthPerson[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [todaySummary, setTodaySummary] = useState<Record<string, number>>({});
+  const [compliance, setCompliance] = useState<number | null>(null);
 
   useEffect(() => {
     const today = new Date().toISOString().split("T")[0];
@@ -75,6 +76,7 @@ export default function DesktopDashboard() {
           setPeople(healthRes.data?.people || []);
           setAlerts(healthRes.data?.criticalAlerts || []);
           setTodaySummary(healthRes.data?.today || {});
+          setCompliance(typeof healthRes.data?.compliancePct === "number" ? healthRes.data.compliancePct : null);
         }
       })
       .finally(() => setLoading(false));
@@ -160,9 +162,27 @@ export default function DesktopDashboard() {
       {people.length > 0 && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
           <div className="px-5 py-4 border-b border-slate-100">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-slate-500" />
-              <h2 className="text-sm font-semibold text-slate-900">Team Status</h2>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4 text-slate-500" />
+                <h2 className="text-sm font-semibold text-slate-900">Team Status</h2>
+              </div>
+              {compliance !== null && (
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400">Compliance</span>
+                  <span
+                    className={`text-sm font-bold px-2 py-0.5 rounded-full ${
+                      compliance >= 90
+                        ? "bg-green-50 text-green-700"
+                        : compliance >= 70
+                        ? "bg-amber-50 text-amber-700"
+                        : "bg-red-50 text-red-700"
+                    }`}
+                  >
+                    {compliance}%
+                  </span>
+                </div>
+              )}
             </div>
           </div>
           <table className="w-full text-sm">

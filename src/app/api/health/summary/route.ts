@@ -208,7 +208,14 @@ export async function GET() {
       });
     }
 
-    return successResponse({ people, today, criticalAlerts });
+    // Team-wide Compliance % — the single accountability number.
+    // Late = items past SLA (Nithin/Ranjitha 24h, Abhi 48h). Excludes Sravan
+    // (expenses today is activity, not backlog).
+    const totalOpen = nithin.pending + ranjitha.pending + abhi.pending;
+    const totalLate = nithin.overdue24h + ranjitha.overdue24h + abhi.overdue48h;
+    const compliancePct = totalOpen > 0 ? Math.round(((totalOpen - totalLate) / totalOpen) * 100) : 100;
+
+    return successResponse({ people, today, criticalAlerts, compliancePct, totalOpen, totalLate });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(
