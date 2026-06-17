@@ -60,6 +60,7 @@ export default function NewVendorIssuePage() {
   const [description, setDescription] = useState("");
   const [billId, setBillId] = useState("");
   const [suggestedResolution, setSuggestedResolution] = useState("");
+  const [docLink, setDocLink] = useState("");
   const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [vendorSearch, setVendorSearch] = useState("");
@@ -174,6 +175,7 @@ export default function NewVendorIssuePage() {
           billId: billId || undefined,
           photoUrls: photoUrls.length > 0 ? photoUrls : undefined,
           suggestedResolution: suggestedResolution.trim() || undefined,
+          docLink: docLink.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -437,6 +439,20 @@ export default function NewVendorIssuePage() {
             onChange={(e) => setSuggestedResolution(e.target.value)}
             rows={2}
             className="flex w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
+          />
+        </div>
+
+        {/* Document link (optional) */}
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            Document link (optional)
+          </label>
+          <input
+            type="url"
+            placeholder="Paste a Drive/Sheet/photo link for the brand to verify…"
+            value={docLink}
+            onChange={(e) => setDocLink(e.target.value)}
+            className="flex h-10 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900"
           />
         </div>
 

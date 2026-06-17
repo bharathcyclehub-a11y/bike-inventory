@@ -158,6 +158,7 @@ model User {
   recordedExpenses Expense[]        @relation("ExpenseRecordedBy")
   recordedCustomerPayments CustomerPayment[] @relation("CustomerPaymentRecordedBy")
   createdIssues    VendorIssue[]    @relation("IssueCreatedBy")
+  issueNotes       VendorIssueNote[] @relation("IssueNoteAuthor")
   approvedStockCounts StockCount[] @relation("StockCountApprovedBy")
   verifiedDeliveries  Delivery[]   @relation("DeliveryVerifiedBy")
   uploadedStatements  BankStatement[] @relation("StatementUploader")
@@ -836,11 +837,13 @@ model VendorIssue {
   billId        String?
   bill          VendorBill?    @relation(fields: [billId], references: [id])
   photoUrls           String[]
+  docLink             String?           // optional supporting document/spreadsheet link for the brand to verify
   suggestedResolution String?
   resolution    String?
   resolvedAt    DateTime?
   createdById   String
   createdBy     User           @relation("IssueCreatedBy", fields: [createdById], references: [id])
+  notes         VendorIssueNote[]
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
 
@@ -849,6 +852,20 @@ model VendorIssue {
   @@index([priority])
   @@index([createdAt])
   @@index([issueSource])
+}
+
+// Append-only follow-up log on an issue — Hamsa/Suma add a timestamped note each time they chase
+// the brand, so the full follow-up history (and stage progress) is tracked, not just one resolution.
+model VendorIssueNote {
+  id        String      @id @default(cuid())
+  issueId   String
+  issue     VendorIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  text      String
+  authorId  String
+  author    User        @relation("IssueNoteAuthor", fields: [authorId], references: [id])
+  createdAt DateTime    @default(now())
+
+  @@index([issueId])
 }
 
 enum IssueSource {

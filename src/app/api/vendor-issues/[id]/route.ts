@@ -17,9 +17,13 @@ export async function GET(
     const issue = await prisma.vendorIssue.findUnique({
       where: { id },
       include: {
-        vendor: { select: { id: true, name: true, code: true } },
+        vendor: { select: { id: true, name: true, code: true, whatsappNumber: true, phone: true } },
         bill: { select: { id: true, billNo: true, amount: true } },
         createdBy: { select: { id: true, name: true } },
+        notes: {
+          include: { author: { select: { id: true, name: true } } },
+          orderBy: { createdAt: "desc" },
+        },
       },
     });
 
@@ -40,7 +44,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireFeature("vendor_issues", "edit", ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
+    const user = await requireFeature("vendor_issues", "edit", ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
     const { id } = await params;
     const body = await req.json();
     const data = vendorIssueUpdateSchema.parse(body);
@@ -67,14 +71,33 @@ export async function PUT(
         ...(data.status && { status: data.status }),
         ...(data.priority && { priority: data.priority }),
         ...(data.resolution !== undefined && { resolution: data.resolution }),
+        ...(data.docLink !== undefined && { docLink: data.docLink || null }),
         ...(resolvedAt !== undefined && { resolvedAt }),
       },
       include: {
-        vendor: { select: { id: true, name: true, code: true } },
+        vendor: { select: { id: true, name: true, code: true, whatsappNumber: true, phone: true } },
         bill: { select: { id: true, billNo: true, amount: true } },
         createdBy: { select: { id: true, name: true } },
+        notes: {
+          include: { author: { select: { id: true, name: true } } },
+          orderBy: { createdAt: "desc" },
+        },
       },
     });
+
+    // Auto-log a note on a status change so the follow-up timeline records every stage move.
+    if (data.status && data.status !== current.status) {
+      const label = data.status.replace(/_/g, " ").toLowerCase();
+      const noteText =
+        data.status === "RESOLVED" && data.resolution
+          ? `Marked resolved — ${data.resolution}`
+          : `Status changed to ${label}`;
+      const note = await prisma.vendorIssueNote.create({
+        data: { issueId: id, text: noteText, authorId: user.id },
+        include: { author: { select: { id: true, name: true } } },
+      });
+      issue.notes = [note, ...issue.notes];
+    }
 
     return successResponse(issue);
   } catch (error) {

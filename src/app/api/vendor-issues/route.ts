@@ -138,6 +138,7 @@ export async function POST(req: NextRequest) {
         priority: data.priority || "MEDIUM",
         billId: data.billId || null,
         photoUrls: data.photoUrls || [],
+        docLink: data.docLink || null,
         suggestedResolution: data.suggestedResolution || null,
         createdById: user.id,
       },

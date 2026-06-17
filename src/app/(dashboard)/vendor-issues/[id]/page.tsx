@@ -7,6 +7,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
+interface IssueNote {
+  id: string;
+  text: string;
+  createdAt: string;
+  author: { id: string; name: string };
+}
+
 interface IssueDetail {
   id: string;
   issueNo: string;
@@ -16,15 +23,17 @@ interface IssueDetail {
   status: string;
   priority: string;
   photoUrls?: string[];
+  docLink?: string | null;
   suggestedResolution?: string;
   resolution?: string;
   resolvedAt?: string;
   createdAt: string;
-  vendor: { id: string; name: string; code: string } | null;
+  vendor: { id: string; name: string; code: string; whatsappNumber?: string | null; phone?: string | null } | null;
   clientName?: string;
   clientPhone?: string;
   bill?: { id: string; billNo: string; amount: number } | null;
   createdBy: { id: string; name: string };
+  notes?: IssueNote[];
 }
 
 const ISSUE_TYPE_COLORS: Record<string, string> = {
@@ -62,6 +71,28 @@ export default function VendorIssueDetailPage({
   const [updating, setUpdating] = useState(false);
   const [showResolution, setShowResolution] = useState(false);
   const [resolutionText, setResolutionText] = useState("");
+  const [noteText, setNoteText] = useState("");
+  const [addingNote, setAddingNote] = useState(false);
+
+  async function addNote() {
+    if (!issue || !noteText.trim()) return;
+    setAddingNote(true);
+    try {
+      const res = await fetch(`/api/vendor-issues/${id}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: noteText.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIssue((prev) => (prev ? { ...prev, notes: [data.data, ...(prev.notes || [])] } : prev));
+        setNoteText("");
+      }
+    } catch {
+      /* ignore */
+    }
+    setAddingNote(false);
+  }
 
   useEffect(() => {
     fetch(`/api/vendor-issues/${id}`)
@@ -95,6 +126,17 @@ export default function VendorIssueDetailPage({
     setUpdating(false);
   }
 
+  // Resolve the contact number to open the chat with: the brand's (vendor) WhatsApp/phone for a
+  // brand issue, or the client's phone for a client issue. Indian numbers → wa.me/91<last 10>.
+  function contactDigits(): string {
+    const raw =
+      issue?.issueSource === "CLIENT"
+        ? issue?.clientPhone || ""
+        : issue?.vendor?.whatsappNumber || issue?.vendor?.phone || "";
+    const digits = raw.replace(/\D/g, "");
+    return digits ? digits.slice(-10) : "";
+  }
+
   async function handleWhatsAppShare() {
     if (!issue) return;
     const source = issue.issueSource === "CLIENT"
@@ -109,10 +151,23 @@ export default function VendorIssueDetailPage({
     text += `*Description:*\n${issue.description}\n`;
     if (issue.suggestedResolution) text += `\n*Suggested Resolution:*\n${issue.suggestedResolution}\n`;
     if (issue.resolution) text += `\n*Resolution:*\n${issue.resolution}\n`;
+    if (issue.docLink) text += `\n*Document:* ${issue.docLink}\n`;
     if (issue.bill) text += `\nBill: ${issue.bill.billNo}\n`;
     text += `\nCreated: ${new Date(issue.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}`;
 
-    // Try native share with images
+    const digits = contactDigits();
+
+    // If we know the contact's number, open THEIR chat directly with the message prefilled.
+    // (A numbered wa.me deep link can't also carry image files, so photo links are appended.)
+    if (digits) {
+      if (issue.photoUrls && issue.photoUrls.length > 0) {
+        text += `\n\n*Photos:*\n${issue.photoUrls.join("\n")}`;
+      }
+      window.open(`https://wa.me/91${digits}?text=${encodeURIComponent(text)}`, "_blank");
+      return;
+    }
+
+    // No number on file → try native share with images, else generic WhatsApp picker.
     if (issue.photoUrls && issue.photoUrls.length > 0 && navigator.share) {
       try {
         const files: File[] = [];
@@ -129,7 +184,6 @@ export default function VendorIssueDetailPage({
       } catch { /* fall through */ }
     }
 
-    // Fallback: WhatsApp text with image links
     if (issue.photoUrls && issue.photoUrls.length > 0) {
       text += `\n\n*Photos:*\n${issue.photoUrls.join("\n")}`;
     }
@@ -217,6 +271,19 @@ export default function VendorIssueDetailPage({
               >
                 {issue.bill.billNo}
               </Link>
+            </div>
+          )}
+          {issue.docLink && (
+            <div>
+              <span className="text-xs text-slate-500">Document:</span>
+              <a
+                href={issue.docLink}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-blue-600 hover:underline ml-1 break-all"
+              >
+                {issue.docLink}
+              </a>
             </div>
           )}
           <div>
@@ -391,15 +458,69 @@ export default function VendorIssueDetailPage({
           )}
         </div>
       )}
+      {/* Follow-up notes timeline */}
+      <Card className="mb-4">
+        <CardContent className="p-3">
+          <p className="text-xs font-semibold text-slate-700 mb-2">Follow-up Notes</p>
+          <textarea
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            rows={2}
+            placeholder="Add a follow-up note (e.g. Called Lux, will replace by Fri)…"
+            className="flex w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900 mb-2"
+          />
+          <Button
+            size="sm"
+            onClick={addNote}
+            disabled={addingNote || !noteText.trim()}
+            className="w-full mb-3"
+          >
+            {addingNote ? "Adding…" : "Add Note"}
+          </Button>
+          {issue.notes && issue.notes.length > 0 ? (
+            <div className="space-y-2">
+              {issue.notes.map((n) => (
+                <div key={n.id} className="border-l-2 border-slate-200 pl-3 py-0.5">
+                  <p className="text-sm text-slate-800 whitespace-pre-wrap">{n.text}</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    {n.author?.name || "—"} ·{" "}
+                    {new Date(n.createdAt).toLocaleString("en-IN", {
+                      day: "2-digit",
+                      month: "short",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-400">No notes yet. Add the first follow-up note above.</p>
+          )}
+        </CardContent>
+      </Card>
+
       {/* WhatsApp Share */}
       <Button
         size="sm"
         onClick={handleWhatsAppShare}
-        className="w-full bg-green-600 hover:bg-green-700 mb-4"
+        className="w-full bg-green-600 hover:bg-green-700 mb-1"
       >
         <Share2 className="w-4 h-4 mr-1.5" />
-        Share on WhatsApp
+        {contactDigits()
+          ? issue.issueSource === "CLIENT"
+            ? "Share on WhatsApp → Client"
+            : `Share on WhatsApp → ${issue.vendor?.name || "Brand"}`
+          : "Share on WhatsApp"}
       </Button>
+      {!contactDigits() && issue.issueSource !== "CLIENT" && (
+        <p className="text-[11px] text-amber-600 mb-4">
+          No WhatsApp number saved for {issue.vendor?.name || "this brand"} — add one on the
+          {" "}
+          <Link href={`/vendors/${issue.vendor?.id}`} className="underline">brand page</Link>
+          {" "}to message them directly.
+        </p>
+      )}
     </div>
   );
 }
