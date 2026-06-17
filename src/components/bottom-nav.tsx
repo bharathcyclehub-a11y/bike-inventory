@@ -13,25 +13,37 @@ interface BottomNavProps {
 
 export function BottomNav({ role }: BottomNavProps) {
   const pathname = usePathname();
-  const { canView } = usePermissions(role);
-  // CUSTOM roles get their tabs from the full feature catalog (filtered by grants below) instead
-  // of a hardcoded per-role list — so any granted feature shows up.
-  const allTabs = role === "CUSTOM" ? [HOME_TAB, ...FEATURE_NAV_ITEMS, MORE_TAB] : getPrimaryTabs(role);
+  const { canView, navTabs } = usePermissions(role);
 
-  // Filter tabs by permission (always show home + more)
-  const filtered = allTabs.filter((tab) => {
-    if (tab.key === "home" || tab.key === "more") return true;
-    const feature = NAV_FEATURE_MAP[tab.href];
-    if (!feature) return true; // No permission mapping = always show
-    return canView(feature);
-  });
+  // 1) Admin override: if the admin assigned this employee a custom bottom nav, honour it —
+  // Home + their chosen tabs (still permission-checked for safety) + More. Applies to ANY role.
+  const overrideItems = (navTabs || [])
+    .map((href) => FEATURE_NAV_ITEMS.find((f) => f.href === href))
+    .filter((f): f is (typeof FEATURE_NAV_ITEMS)[number] => Boolean(f))
+    .filter((f) => {
+      const feature = NAV_FEATURE_MAP[f.href];
+      return !feature || canView(feature);
+    })
+    .slice(0, 4);
 
-  // Keep the mobile bar uncluttered: Home + up to 3 granted features + More. The rest stay
-  // reachable from the permission-filtered "More" page.
-  const tabs =
-    role === "CUSTOM"
-      ? [HOME_TAB, ...filtered.filter((t) => t.key !== "home" && t.key !== "more").slice(0, 3), MORE_TAB]
-      : filtered;
+  let tabs;
+  if (overrideItems.length > 0) {
+    tabs = [HOME_TAB, ...overrideItems, MORE_TAB];
+  } else {
+    // 2) No override → default behaviour. CUSTOM roles derive from the feature catalog (filtered
+    // by grants); built-in roles use their curated list. Always show Home + More.
+    const allTabs = role === "CUSTOM" ? [HOME_TAB, ...FEATURE_NAV_ITEMS, MORE_TAB] : getPrimaryTabs(role);
+    const filtered = allTabs.filter((tab) => {
+      if (tab.key === "home" || tab.key === "more") return true;
+      const feature = NAV_FEATURE_MAP[tab.href];
+      if (!feature) return true;
+      return canView(feature);
+    });
+    tabs =
+      role === "CUSTOM"
+        ? [HOME_TAB, ...filtered.filter((t) => t.key !== "home" && t.key !== "more").slice(0, 3), MORE_TAB]
+        : filtered;
+  }
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";

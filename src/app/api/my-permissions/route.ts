@@ -20,16 +20,18 @@ export async function GET() {
 
     const permissions = await getEffectivePermissions({ id: userId, role });
 
-    // Include the custom role's display name when relevant.
+    // The admin-chosen bottom-nav (any role) + the custom role's display name when relevant.
     let customRoleName: string | null = null;
-    if (role === "CUSTOM" && userId) {
+    let navTabs: string[] = [];
+    if (userId) {
       try {
-        const u = await prisma.user.findUnique({ where: { id: userId }, select: { customRoleName: true } });
-        customRoleName = u?.customRoleName ?? null;
-      } catch { customRoleName = null; }
+        const u = await prisma.user.findUnique({ where: { id: userId }, select: { customRoleName: true, navTabs: true } });
+        if (role === "CUSTOM") customRoleName = u?.customRoleName ?? null;
+        navTabs = u?.navTabs ?? [];
+      } catch { /* keep defaults */ }
     }
 
-    return successResponse({ role, customRoleName, permissions });
+    return successResponse({ role, customRoleName, permissions, navTabs });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed", 500);

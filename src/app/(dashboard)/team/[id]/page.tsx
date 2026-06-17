@@ -4,10 +4,11 @@ import { use, useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Save, ShieldAlert, Trash2, Eye, Plus, Pencil, ShieldCheck, CloudDownload } from "lucide-react";
+import { ArrowLeft, Save, ShieldAlert, Trash2, Eye, Plus, Pencil, ShieldCheck, CloudDownload, ArrowUp, ArrowDown, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { FEATURE_NAV_ITEMS, NAV_FEATURE_MAP } from "@/lib/nav-config";
 
 interface UserDetail {
   id: string;
@@ -16,6 +17,8 @@ interface UserDetail {
   role: string;
   customRoleName: string | null;
   permissions: Record<string, Perm> | null;
+  navTabs?: string[];
+  effectivePermissions?: Record<string, Perm>;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -23,6 +26,7 @@ interface UserDetail {
 }
 
 type Perm = { view: boolean; create: boolean; edit: boolean; delete: boolean; approve: boolean; fetch: boolean };
+const MAX_NAV_TABS = 4;
 const emptyPerm = (): Perm => ({ view: false, create: false, edit: false, delete: false, approve: false, fetch: false });
 
 const APP_FEATURES = [
@@ -89,6 +93,8 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
   const [permissions, setPermissions] = useState<Record<string, Perm>>(
     Object.fromEntries(APP_FEATURES.map((f) => [f.key, emptyPerm()]))
   );
+  const [navTabs, setNavTabs] = useState<string[]>([]);
+  const [effectivePerms, setEffectivePerms] = useState<Record<string, Perm>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -108,6 +114,8 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
           setIsActive(u.isActive);
           setCustomRoleName(u.customRoleName || "");
           if (u.permissions) setPermissions(u.permissions);
+          setNavTabs(Array.isArray(u.navTabs) ? u.navTabs : []);
+          setEffectivePerms(u.effectivePermissions || {});
         }
       })
       .catch(() => {})
@@ -120,7 +128,7 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
     setError("");
     setSuccess("");
     try {
-      const body: Record<string, unknown> = { name, email, role, accessCode, isActive };
+      const body: Record<string, unknown> = { name, email, role, accessCode, isActive, navTabs };
       if (role === "CUSTOM") {
         body.customRoleName = customRoleName;
         body.permissions = permissions;
@@ -144,6 +152,34 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
     } finally {
       setSaving(false);
     }
+  }
+
+  // Which features this employee may VIEW (and thus can appear in their bottom nav). For a CUSTOM
+  // role we read the permissions being edited live; for built-in roles we use the server-computed
+  // effective permissions. Admin/CEO see everything.
+  function canViewFeature(featureKey?: string): boolean {
+    if (!featureKey) return true;
+    if (role === "ADMIN" || role === "CEO") return true;
+    if (role === "CUSTOM") return !!permissions[featureKey]?.view;
+    return !!effectivePerms[featureKey]?.view;
+  }
+  const navCandidates = FEATURE_NAV_ITEMS.filter((f) => canViewFeature(NAV_FEATURE_MAP[f.href]));
+  const navItemByHref = (href: string) => FEATURE_NAV_ITEMS.find((f) => f.href === href);
+  const availableNav = navCandidates.filter((f) => !navTabs.includes(f.href));
+
+  function addNavTab(href: string) {
+    if (navTabs.includes(href) || navTabs.length >= MAX_NAV_TABS) return;
+    setNavTabs([...navTabs, href]);
+  }
+  function removeNavTab(href: string) {
+    setNavTabs(navTabs.filter((h) => h !== href));
+  }
+  function moveNavTab(index: number, dir: -1 | 1) {
+    const j = index + dir;
+    if (j < 0 || j >= navTabs.length) return;
+    const next = [...navTabs];
+    [next[index], next[j]] = [next[j], next[index]];
+    setNavTabs(next);
   }
 
   if (loading) {
@@ -296,6 +332,67 @@ export default function EditTeamMemberPage({ params }: { params: Promise<{ id: s
               </ul>
             </div>
           )}
+
+          {/* Bottom Navigation control — admin picks which tabs show in this person's bottom bar */}
+          <div className="border-t border-slate-100 pt-4">
+            <p className="text-sm font-semibold text-slate-800 mb-1">Bottom Navigation</p>
+            <p className="text-[11px] text-slate-500 mb-3">
+              Choose up to {MAX_NAV_TABS} tabs (Home and More are always shown). Only features this
+              person can access are listed. Leave empty to use the role default.
+            </p>
+
+            {/* Live preview */}
+            <div className="flex items-center gap-1 flex-wrap mb-3 bg-slate-50 rounded-lg p-2">
+              <Badge variant="default" className="text-[10px]">Home</Badge>
+              {navTabs.map((href) => {
+                const it = navItemByHref(href);
+                return <Badge key={href} variant="info" className="text-[10px]">{it?.label || href}</Badge>;
+              })}
+              <Badge variant="default" className="text-[10px]">More</Badge>
+            </div>
+
+            {/* Selected, ordered */}
+            {navTabs.length > 0 && (
+              <div className="space-y-1 mb-3">
+                {navTabs.map((href, i) => {
+                  const it = navItemByHref(href);
+                  const permitted = canViewFeature(NAV_FEATURE_MAP[href]);
+                  return (
+                    <div key={href} className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-2">
+                      <span className="text-[10px] text-slate-400 w-4">{i + 1}</span>
+                      <span className="flex-1 text-sm text-slate-800">
+                        {it?.label || href}
+                        {!permitted && <span className="text-[10px] text-red-500 ml-1">(no access — won&apos;t show)</span>}
+                      </span>
+                      <button type="button" onClick={() => moveNavTab(i, -1)} disabled={i === 0}
+                        className="p-1 rounded text-slate-400 hover:text-slate-700 disabled:opacity-30"><ArrowUp className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => moveNavTab(i, 1)} disabled={i === navTabs.length - 1}
+                        className="p-1 rounded text-slate-400 hover:text-slate-700 disabled:opacity-30"><ArrowDown className="h-3.5 w-3.5" /></button>
+                      <button type="button" onClick={() => removeNavTab(href)}
+                        className="p-1 rounded text-red-400 hover:text-red-600"><X className="h-3.5 w-3.5" /></button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Available to add */}
+            <div className="flex flex-wrap gap-1.5">
+              {availableNav.length === 0 ? (
+                <p className="text-[11px] text-slate-400">
+                  {navTabs.length >= MAX_NAV_TABS ? `Maximum ${MAX_NAV_TABS} tabs selected.` : "No more accessible features to add."}
+                </p>
+              ) : (
+                availableNav.map((f) => (
+                  <button key={f.href} type="button" onClick={() => addNavTab(f.href)}
+                    disabled={navTabs.length >= MAX_NAV_TABS}
+                    className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+                    + {f.label}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
 
           <Button onClick={handleSave} size="lg" disabled={saving} className="w-full bg-blue-600 hover:bg-blue-700">
             <Save className="h-4 w-4 mr-2" />{saving ? "Saving..." : "Save Changes"}

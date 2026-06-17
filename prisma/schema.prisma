@@ -159,6 +159,7 @@ model User {
   recordedCustomerPayments CustomerPayment[] @relation("CustomerPaymentRecordedBy")
   createdIssues    VendorIssue[]    @relation("IssueCreatedBy")
   issueNotes       VendorIssueNote[] @relation("IssueNoteAuthor")
+  navTabs          String[]         @default([]) // admin-chosen bottom-nav hrefs (empty = role default)
   approvedStockCounts StockCount[] @relation("StockCountApprovedBy")
   verifiedDeliveries  Delivery[]   @relation("DeliveryVerifiedBy")
   uploadedStatements  BankStatement[] @relation("StatementUploader")

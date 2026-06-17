@@ -5,6 +5,15 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { getEffectivePermissions } from "@/lib/permissions-server";
+
+// Bottom-nav hrefs an admin may assign (mirrors FEATURE_NAV_ITEMS in nav-config; kept inline so
+// this server route doesn't pull the client nav module / icons into its bundle).
+const VALID_NAV_HREFS = [
+  "/inbound", "/deliveries", "/stock", "/transfers", "/vendors",
+  "/purchase-orders", "/vendor-issues", "/expenses", "/accounts", "/reports", "/team", "/barcode",
+];
+const MAX_NAV_TABS = 4;
 
 export async function GET(
   _req: NextRequest,
@@ -23,6 +32,7 @@ export async function GET(
         role: true,
         customRoleName: true,
         permissions: true,
+        navTabs: true,
         accessCode: true,
         isActive: true,
         createdAt: true,
@@ -32,7 +42,11 @@ export async function GET(
     });
 
     if (!user) return errorResponse("User not found", 404);
-    return successResponse(user);
+
+    // Include the user's effective view-permissions so the admin UI can offer only the bottom-nav
+    // tabs this person is actually allowed to open.
+    const effectivePermissions = await getEffectivePermissions({ id: user.id, role: user.role });
+    return successResponse({ ...user, effectivePermissions });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch user", 500);
@@ -59,6 +73,13 @@ export async function PUT(
     if (body.role && VALID_ROLES.includes(body.role)) updateData.role = body.role;
     if (body.customRoleName !== undefined) updateData.customRoleName = body.customRoleName || null;
     if (body.permissions !== undefined) updateData.permissions = body.permissions || null;
+    if (body.navTabs !== undefined) {
+      // Sanitize: only valid nav hrefs, de-duplicated, preserving order, capped to MAX_NAV_TABS.
+      const cleaned = Array.isArray(body.navTabs)
+        ? [...new Set(body.navTabs.filter((h: unknown): h is string => typeof h === "string" && VALID_NAV_HREFS.includes(h)))].slice(0, MAX_NAV_TABS)
+        : [];
+      updateData.navTabs = cleaned;
+    }
     if (body.accessCode && typeof body.accessCode === "string") {
       updateData.accessCode = body.accessCode.toUpperCase().trim();
       // Access code IS the login credential — always sync password hash

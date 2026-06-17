@@ -13,7 +13,7 @@ type Permissions = Record<string, FeaturePermission>;
 
 // Cache with TTL (5 minutes)
 const CACHE_TTL = 5 * 60 * 1000;
-let cachedPermissions: { role: string; perms: Permissions; fetchedAt: number } | null = null;
+let cachedPermissions: { role: string; perms: Permissions; navTabs: string[]; fetchedAt: number } | null = null;
 
 function isCacheValid(role: string): boolean {
   if (!cachedPermissions) return false;
@@ -30,6 +30,9 @@ export function usePermissions(role: string) {
   const [permissions, setPermissions] = useState<Permissions | null>(
     isCacheValid(role) ? cachedPermissions!.perms : null
   );
+  const [navTabs, setNavTabs] = useState<string[]>(
+    isCacheValid(role) ? cachedPermissions!.navTabs : []
+  );
   const [loading, setLoading] = useState(!isCacheValid(role));
 
   const refetch = useCallback(() => {
@@ -40,8 +43,10 @@ export function usePermissions(role: string) {
       .then((res) => {
         if (res.success && res.data?.permissions) {
           const perms = res.data.permissions as Permissions;
-          cachedPermissions = { role, perms, fetchedAt: Date.now() };
+          const tabs = (res.data.navTabs as string[]) || [];
+          cachedPermissions = { role, perms, navTabs: tabs, fetchedAt: Date.now() };
           setPermissions(perms);
+          setNavTabs(tabs);
         }
       })
       .catch(() => {})
@@ -55,6 +60,7 @@ export function usePermissions(role: string) {
     }
     if (isCacheValid(role)) {
       setPermissions(cachedPermissions!.perms);
+      setNavTabs(cachedPermissions!.navTabs);
       setLoading(false);
       return;
     }
@@ -91,5 +97,5 @@ export function usePermissions(role: string) {
     return permissions?.[feature]?.fetch ?? false;
   };
 
-  return { permissions, loading, canView, canCreate, canEdit, canDelete, canApprove, canFetch, refetch };
+  return { permissions, navTabs, loading, canView, canCreate, canEdit, canDelete, canApprove, canFetch, refetch };
 }
