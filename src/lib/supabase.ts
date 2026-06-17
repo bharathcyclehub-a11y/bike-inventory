@@ -23,3 +23,17 @@ export async function uploadImage(file: File, path: string): Promise<string> {
     .getPublicUrl(data.path);
   return urlData.publicUrl;
 }
+
+// Generic media upload (images or videos). Uploads straight from the browser to Supabase Storage,
+// so large video files bypass the serverless request-body limit. Returns the public URL.
+export async function uploadMedia(file: Blob, path: string, contentType?: string): Promise<string> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.storage
+    .from('product images')
+    .upload(path, file, { cacheControl: '3600', contentType: contentType || (file as File).type || undefined });
+  if (error) throw new Error(`Upload failed: ${error.message}`);
+  const { data: urlData } = supabase.storage
+    .from('product images')
+    .getPublicUrl(data.path);
+  return urlData.publicUrl;
+}

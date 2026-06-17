@@ -5,6 +5,12 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Camera, X, Image as ImageIcon, Search, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
+import { uploadMedia } from "@/lib/supabase";
+
+const MAX_VIDEO_BYTES = 60 * 1024 * 1024; // ~60MB
+function isVideoUrl(url: string): boolean {
+  return /\.(mp4|mov|webm|m4v|3gp|quicktime)(\?|$)/i.test(url);
+}
 
 interface VendorOption {
   id: string;
@@ -162,22 +168,36 @@ export default function NewVendorIssuePage() {
     setError("");
     try {
       for (const file of Array.from(files)) {
-        const blob = await compressImage(file);
-        const formData = new FormData();
-        // Give the blob a .jpg name so the server picks the right extension.
-        formData.append("file", blob, `photo-${Date.now()}.jpg`);
-        const res = await fetch("/api/upload", { method: "POST", body: formData });
-        let data: { success?: boolean; error?: string; data?: { url?: string } } | null = null;
-        try { data = await res.json(); } catch { /* non-JSON (e.g. body too large) */ }
-        if (res.ok && data?.success && data.data?.url) {
-          setPhotoUrls((prev) => [...prev, data!.data!.url!]);
-        } else {
-          // Surface the reason instead of failing silently.
-          setError(data?.error || (res.status === 413 ? "Photo too large — try again" : `Upload failed (${res.status})`));
+        const isImage = file.type.startsWith("image/");
+        const isVideo = file.type.startsWith("video/");
+        try {
+          let blob: Blob = file;
+          let ext = (file.name.split(".").pop() || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+          let contentType = file.type;
+
+          if (isImage) {
+            blob = await compressImage(file); // shrink camera photos before upload
+            ext = "jpg";
+            contentType = "image/jpeg";
+          } else if (isVideo) {
+            if (file.size > MAX_VIDEO_BYTES) {
+              setError("Video is too large (max ~60MB). Please trim it and try again.");
+              continue;
+            }
+            if (!ext) ext = "mp4";
+          } else {
+            setError("Only images and videos can be attached.");
+            continue;
+          }
+
+          // Upload straight to storage (works for large videos — no serverless body limit).
+          const path = `vendor-issues/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const url = await uploadMedia(blob, path, contentType);
+          setPhotoUrls((prev) => [...prev, url]);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Upload failed. Check your connection and try again.");
         }
       }
-    } catch {
-      setError("Failed to upload photo. Check your connection and try again.");
     } finally {
       setUploadingPhoto(false);
       input.value = ""; // allow re-selecting the same file
@@ -431,15 +451,19 @@ export default function NewVendorIssuePage() {
           />
         </div>
 
-        {/* Photos */}
+        {/* Photos / Videos */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">
-            Photos (optional)
+            Photos / Videos (optional)
           </label>
           <div className="flex flex-wrap gap-2 mb-2">
             {photoUrls.map((url, i) => (
               <div key={i} className="relative w-20 h-20">
-                <img src={url} alt="" className="w-20 h-20 object-cover rounded-lg border" />
+                {isVideoUrl(url) ? (
+                  <video src={url} className="w-20 h-20 object-cover rounded-lg border bg-black" muted playsInline />
+                ) : (
+                  <img src={url} alt="" className="w-20 h-20 object-cover rounded-lg border" />
+                )}
                 <button
                   type="button"
                   onClick={() => setPhotoUrls((prev) => prev.filter((_, idx) => idx !== i))}
@@ -450,7 +474,7 @@ export default function NewVendorIssuePage() {
               </div>
             ))}
           </div>
-          {/* Camera input forces the camera; gallery input (no capture) opens the photo library. */}
+          {/* Camera input forces the camera; gallery input (no capture) opens the photo/video library. */}
           <input
             ref={cameraInputRef}
             type="file"
@@ -462,7 +486,7 @@ export default function NewVendorIssuePage() {
           <input
             ref={galleryInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,video/*"
             multiple
             onChange={handlePhotoUpload}
             className="hidden"
@@ -485,7 +509,7 @@ export default function NewVendorIssuePage() {
               disabled={uploadingPhoto}
             >
               <ImageIcon className="w-4 h-4 mr-1" />
-              Upload from Gallery
+              Upload Photo / Video
             </Button>
           </div>
         </div>

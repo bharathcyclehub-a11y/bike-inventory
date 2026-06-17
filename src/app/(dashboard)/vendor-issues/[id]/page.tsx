@@ -67,6 +67,10 @@ const STATUS_VARIANT: Record<string, "default" | "info" | "warning" | "success">
   CLOSED: "default",
 };
 
+function isVideoUrl(url: string): boolean {
+  return /\.(mp4|mov|webm|m4v|3gp|quicktime)(\?|$)/i.test(url);
+}
+
 export default function VendorIssueDetailPage({
   params,
 }: {
@@ -183,11 +187,16 @@ export default function VendorIssueDetailPage({
       return;
     }
 
-    // No number on file → try native share with images, else generic WhatsApp picker.
-    if (issue.photoUrls && issue.photoUrls.length > 0 && navigator.share) {
+    // Videos always go as links (too large to attach reliably).
+    const videoUrls = (issue.photoUrls || []).filter(isVideoUrl);
+    const imageUrls = (issue.photoUrls || []).filter((u) => !isVideoUrl(u));
+    if (videoUrls.length > 0) text += `\n\n*Videos:*\n${videoUrls.join("\n")}`;
+
+    // No number on file → try native share with image files, else generic WhatsApp picker.
+    if (imageUrls.length > 0 && navigator.share) {
       try {
         const files: File[] = [];
-        for (const url of issue.photoUrls) {
+        for (const url of imageUrls) {
           const res = await fetch(url);
           const blob = await res.blob();
           const ext = url.split(".").pop()?.split("?")[0] || "jpg";
@@ -200,8 +209,8 @@ export default function VendorIssueDetailPage({
       } catch { /* fall through */ }
     }
 
-    if (issue.photoUrls && issue.photoUrls.length > 0) {
-      text += `\n\n*Photos:*\n${issue.photoUrls.join("\n")}`;
+    if (imageUrls.length > 0) {
+      text += `\n\n*Photos:*\n${imageUrls.join("\n")}`;
     }
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   }
@@ -321,21 +330,31 @@ export default function VendorIssueDetailPage({
         </CardContent>
       </Card>
 
-      {/* Photos */}
+      {/* Photos & Videos */}
       {issue.photoUrls && issue.photoUrls.length > 0 && (
         <Card className="mb-4">
           <CardContent className="p-3">
-            <p className="text-xs text-slate-500 mb-2">Photos</p>
+            <p className="text-xs text-slate-500 mb-2">Photos &amp; Videos</p>
             <div className="flex gap-2 overflow-x-auto">
-              {issue.photoUrls.map((url, i) => (
-                <a key={i} href={url} target="_blank" rel="noopener noreferrer">
-                  <img
+              {issue.photoUrls.map((url, i) =>
+                isVideoUrl(url) ? (
+                  <video
+                    key={i}
                     src={url}
-                    alt={`Issue photo ${i + 1}`}
-                    className="w-24 h-24 object-cover rounded-lg border border-slate-200"
+                    controls
+                    playsInline
+                    className="h-24 w-24 object-cover rounded-lg border border-slate-200 bg-black shrink-0"
                   />
-                </a>
-              ))}
+                ) : (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer" className="shrink-0">
+                    <img
+                      src={url}
+                      alt={`Issue photo ${i + 1}`}
+                      className="w-24 h-24 object-cover rounded-lg border border-slate-200"
+                    />
+                  </a>
+                )
+              )}
             </div>
           </CardContent>
         </Card>
