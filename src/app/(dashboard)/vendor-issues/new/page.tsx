@@ -46,6 +46,44 @@ const PRIORITY_COLORS: Record<string, string> = {
   URGENT: "bg-red-100 text-red-700 border-red-200",
 };
 
+// Downscale + re-encode an image to JPEG so phone-camera photos (often 5–12 MB) land well under
+// the upload limit. Falls back to the original file if the browser can't decode it (e.g. HEIC).
+async function compressImage(file: File): Promise<Blob> {
+  if (!file.type.startsWith("image/")) return file;
+  if (file.size < 900 * 1024) return file; // already small enough
+  try {
+    const dataUrl: string = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result as string);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+    const img: HTMLImageElement = await new Promise((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = reject;
+      im.src = dataUrl;
+    });
+    const MAX = 1600;
+    let { width, height } = img;
+    if (width > MAX || height > MAX) {
+      const s = MAX / Math.max(width, height);
+      width = Math.round(width * s);
+      height = Math.round(height * s);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(img, 0, 0, width, height);
+    const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.8));
+    return blob && blob.size > 0 ? blob : file;
+  } catch {
+    return file; // couldn't decode (e.g. HEIC) — upload the original and let the server validate
+  }
+}
+
 export default function NewVendorIssuePage() {
   const router = useRouter();
 
@@ -66,7 +104,8 @@ export default function NewVendorIssuePage() {
   const [vendorSearch, setVendorSearch] = useState("");
   const [showVendorDropdown, setShowVendorDropdown] = useState(false);
   const vendorRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -116,24 +155,32 @@ export default function NewVendorIssuePage() {
   );
 
   async function handlePhotoUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const files = e.target.files;
+    const input = e.target;
+    const files = input.files;
     if (!files || files.length === 0) return;
     setUploadingPhoto(true);
+    setError("");
     try {
       for (const file of Array.from(files)) {
+        const blob = await compressImage(file);
         const formData = new FormData();
-        formData.append("file", file);
+        // Give the blob a .jpg name so the server picks the right extension.
+        formData.append("file", blob, `photo-${Date.now()}.jpg`);
         const res = await fetch("/api/upload", { method: "POST", body: formData });
-        const data = await res.json();
-        if (data.success && data.data?.url) {
-          setPhotoUrls((prev) => [...prev, data.data.url]);
+        let data: { success?: boolean; error?: string; data?: { url?: string } } | null = null;
+        try { data = await res.json(); } catch { /* non-JSON (e.g. body too large) */ }
+        if (res.ok && data?.success && data.data?.url) {
+          setPhotoUrls((prev) => [...prev, data!.data!.url!]);
+        } else {
+          // Surface the reason instead of failing silently.
+          setError(data?.error || (res.status === 413 ? "Photo too large — try again" : `Upload failed (${res.status})`));
         }
       }
     } catch {
-      setError("Failed to upload photo");
+      setError("Failed to upload photo. Check your connection and try again.");
     } finally {
       setUploadingPhoto(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      input.value = ""; // allow re-selecting the same file
     }
   }
 
@@ -403,29 +450,44 @@ export default function NewVendorIssuePage() {
               </div>
             ))}
           </div>
+          {/* Camera input forces the camera; gallery input (no capture) opens the photo library. */}
           <input
-            ref={fileInputRef}
+            ref={cameraInputRef}
             type="file"
             accept="image/*"
-            multiple
             capture="environment"
             onChange={handlePhotoUpload}
             className="hidden"
           />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadingPhoto}
-          >
-            {uploadingPhoto ? "Uploading..." : (
-              <>
-                <Camera className="w-4 h-4 mr-1" />
-                Add Photo
-              </>
-            )}
-          </Button>
+          <input
+            ref={galleryInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handlePhotoUpload}
+            className="hidden"
+          />
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => cameraInputRef.current?.click()}
+              disabled={uploadingPhoto}
+            >
+              {uploadingPhoto ? "Uploading..." : (<><Camera className="w-4 h-4 mr-1" />Take Photo</>)}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => galleryInputRef.current?.click()}
+              disabled={uploadingPhoto}
+            >
+              <ImageIcon className="w-4 h-4 mr-1" />
+              Upload from Gallery
+            </Button>
+          </div>
         </div>
 
         {/* Suggested Resolution */}
