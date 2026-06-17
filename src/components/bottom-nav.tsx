@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { getPrimaryTabs, NAV_FEATURE_MAP } from "@/lib/nav-config";
+import { getPrimaryTabs, NAV_FEATURE_MAP, FEATURE_NAV_ITEMS, HOME_TAB, MORE_TAB } from "@/lib/nav-config";
 import { usePermissions } from "@/lib/use-permissions";
 import type { Role } from "@/types";
 
@@ -14,15 +14,24 @@ interface BottomNavProps {
 export function BottomNav({ role }: BottomNavProps) {
   const pathname = usePathname();
   const { canView } = usePermissions(role);
-  const allTabs = getPrimaryTabs(role);
+  // CUSTOM roles get their tabs from the full feature catalog (filtered by grants below) instead
+  // of a hardcoded per-role list — so any granted feature shows up.
+  const allTabs = role === "CUSTOM" ? [HOME_TAB, ...FEATURE_NAV_ITEMS, MORE_TAB] : getPrimaryTabs(role);
 
   // Filter tabs by permission (always show home + more)
-  const tabs = allTabs.filter((tab) => {
+  const filtered = allTabs.filter((tab) => {
     if (tab.key === "home" || tab.key === "more") return true;
     const feature = NAV_FEATURE_MAP[tab.href];
     if (!feature) return true; // No permission mapping = always show
     return canView(feature);
   });
+
+  // Keep the mobile bar uncluttered: Home + up to 3 granted features + More. The rest stay
+  // reachable from the permission-filtered "More" page.
+  const tabs =
+    role === "CUSTOM"
+      ? [HOME_TAB, ...filtered.filter((t) => t.key !== "home" && t.key !== "more").slice(0, 3), MORE_TAB]
+      : filtered;
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";

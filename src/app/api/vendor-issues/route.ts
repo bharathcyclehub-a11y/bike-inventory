@@ -9,11 +9,11 @@ import {
   parseSearchParams,
 } from "@/lib/api-utils";
 import { vendorIssueSchema } from "@/lib/validations";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SERVICE_MANAGER"]);
+    await requireFeature("vendor_issues", "view", ["ADMIN", "CEO", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SERVICE_MANAGER"]);
     const { page, limit, skip, search, searchParams } = parseSearchParams(
       req.url
     );
@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SERVICE_MANAGER", "INWARDS_EXECUTIVE"]);
+    const user = await requireFeature("vendor_issues", "create", ["ADMIN", "CEO", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SERVICE_MANAGER", "INWARDS_EXECUTIVE"]);
     const body = await req.json();
     const data = vendorIssueSchema.parse(body);
 

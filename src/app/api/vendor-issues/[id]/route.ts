@@ -4,14 +4,14 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { vendorIssueUpdateSchema } from "@/lib/validations";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireAuth, requireFeature, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
+    await requireFeature("vendor_issues", "view", ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
     const { id } = await params;
 
     const issue = await prisma.vendorIssue.findUnique({
@@ -40,7 +40,7 @@ export async function PUT(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
+    await requireFeature("vendor_issues", "edit", ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
     const { id } = await params;
     const body = await req.json();
     const data = vendorIssueUpdateSchema.parse(body);

@@ -41,8 +41,23 @@ export const authOptions: NextAuthOptions = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
+        // Login: seed the token from the authenticated user.
         token.role = (user as unknown as { role: string }).role;
         token.userId = user.id;
+      } else if (token.userId) {
+        // Subsequent requests: refresh the role LIVE from the DB so that an admin changing a
+        // member's role / custom-role grants takes effect without forcing a logout. Permissions
+        // themselves are read live server-side (see permissions-server.ts), so only the role
+        // needs to ride on the token. Fail-open to the existing token on a transient DB error.
+        try {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: token.userId as string },
+            select: { role: true },
+          });
+          if (dbUser) token.role = dbUser.role;
+        } catch {
+          /* keep the existing token.role */
+        }
       }
       return token;
     },

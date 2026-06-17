@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { Bike, LogOut } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
-import { getPrimaryTabs, getDesktopExtraTabs, desktopHref, NAV_FEATURE_MAP } from "@/lib/nav-config";
+import { getPrimaryTabs, getDesktopExtraTabs, desktopHref, NAV_FEATURE_MAP, FEATURE_NAV_ITEMS, HOME_TAB } from "@/lib/nav-config";
 import { usePermissions } from "@/lib/use-permissions";
 import type { Role } from "@/types";
 
@@ -20,7 +20,9 @@ export function Sidebar({ role }: SidebarProps) {
   const userName = session?.user?.name || "User";
   const initials = userName.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
 
-  const primaryTabs = getPrimaryTabs(role);
+  // CUSTOM roles: derive the sidebar from the full feature catalog (filtered by grants), instead
+  // of a hardcoded per-role list. Extras (Activity Log) come from the default case.
+  const primaryTabs = role === "CUSTOM" ? [HOME_TAB, ...FEATURE_NAV_ITEMS] : getPrimaryTabs(role);
   const extraTabs = getDesktopExtraTabs(role);
 
   // Filter by permission

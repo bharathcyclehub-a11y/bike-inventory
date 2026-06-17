@@ -189,6 +189,29 @@ export function getDesktopExtraTabs(role: Role): NavItem[] {
   }
 }
 
+// Always-present anchor tabs.
+export const HOME_TAB: NavItem = { href: "/", label: "Home", icon: LayoutDashboard, key: "home" };
+export const MORE_TAB: NavItem = { href: "/more", label: "More", icon: MoreHorizontal, key: "more" };
+
+// Candidate tabs for CUSTOM roles — one per navigable feature. The nav components filter these
+// by the user's granted permissions (canView via NAV_FEATURE_MAP), so a CUSTOM role shows exactly
+// the features it was granted. This is what makes "grant vendor_issues -> Ops Issues tab appears"
+// actually work, instead of being limited by a hardcoded per-role list.
+export const FEATURE_NAV_ITEMS: NavItem[] = [
+  { href: "/inbound", label: "Inwards", icon: ArrowDownCircle, key: "inbound" },
+  { href: "/deliveries", label: "Outward", icon: Truck, key: "deliveries" },
+  { href: "/stock", label: "Stock", icon: Package, key: "stock" },
+  { href: "/transfers", label: "Transfers", icon: ArrowRightLeft, key: "transfers" },
+  { href: "/vendors", label: "Vendors", icon: Building2, key: "vendors" },
+  { href: "/purchase-orders", label: "POs", icon: Receipt, key: "purchase-orders" },
+  { href: "/vendor-issues", label: "Ops Issues", icon: AlertCircle, key: "vendor-issues" },
+  { href: "/expenses", label: "Expenses", icon: Receipt, key: "expenses" },
+  { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
+  { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
+  { href: "/team", label: "Team", icon: Users, key: "team" },
+  { href: "/barcode", label: "Barcode", icon: QrCode, key: "barcode" },
+];
+
 // Resolve href for desktop context (prefix with /desktop)
 export function desktopHref(href: string): string {
   if (href === "/") return "/desktop";
