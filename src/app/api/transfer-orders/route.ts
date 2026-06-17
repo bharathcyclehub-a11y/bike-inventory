@@ -5,12 +5,16 @@ import { prisma } from "@/lib/db";
 import { successResponse, errorResponse, paginatedResponse, parseSearchParams } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 import { z } from "zod";
+import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
+import { adjustWarehouseQty, getWarehouseQtyMap, splitStock } from "@/lib/stock-location";
 
 const itemSchema = z.object({
   productId: z.string().min(1),
   quantity: z.number().int().min(1),
-  fromBinId: z.string().min(1),
-  toBinId: z.string().min(1),
+  fromBinId: z.string().optional(),
+  toBinId: z.string().optional(),
+  fromLocation: z.enum(["STORE", "WAREHOUSE"]).optional(),
+  toLocation: z.enum(["STORE", "WAREHOUSE"]).optional(),
 });
 
 const createSchema = z.object({
@@ -80,32 +84,46 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const data = createSchema.parse(body);
 
-    // Validate all items
-    for (const item of data.items) {
-      if (item.fromBinId === item.toBinId) {
-        return errorResponse("Source and destination bins must be different", 400);
-      }
-    }
-
-    // Verify all products and bins exist
     const productIds = [...new Set(data.items.map((i) => i.productId))];
-    const binIds = [...new Set(data.items.flatMap((i) => [i.fromBinId, i.toBinId]))];
-
-    const [products, bins] = await Promise.all([
-      prisma.product.findMany({ where: { id: { in: productIds } }, select: { id: true, currentStock: true, name: true } }),
-      prisma.bin.findMany({ where: { id: { in: binIds } }, select: { id: true, code: true } }),
-    ]);
-
+    const products = await prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, currentStock: true, name: true },
+    });
     const productMap = new Map(products.map((p) => [p.id, p]));
-    const binSet = new Set(bins.map((b) => b.id));
 
-    for (const item of data.items) {
-      const product = productMap.get(item.productId);
-      if (!product) return errorResponse(`Product not found: ${item.productId}`, 404);
-      if (!binSet.has(item.fromBinId)) return errorResponse(`Source bin not found`, 404);
-      if (!binSet.has(item.toBinId)) return errorResponse(`Destination bin not found`, 404);
-      if (product.currentStock < item.quantity) {
-        return errorResponse(`Insufficient stock for ${product.name}. Available: ${product.currentStock}`, 400);
+    // bins is only populated/used in bin mode
+    let bins: { id: string; code: string }[] = [];
+
+    if (BIN_TRACKING_ENABLED) {
+      for (const item of data.items) {
+        if (!item.fromBinId || !item.toBinId) return errorResponse("Source and destination bins are required", 400);
+        if (item.fromBinId === item.toBinId) return errorResponse("Source and destination bins must be different", 400);
+      }
+      const binIds = [...new Set(data.items.flatMap((i) => [i.fromBinId!, i.toBinId!]))];
+      bins = await prisma.bin.findMany({ where: { id: { in: binIds } }, select: { id: true, code: true } });
+      const binSet = new Set(bins.map((b) => b.id));
+      for (const item of data.items) {
+        const product = productMap.get(item.productId);
+        if (!product) return errorResponse(`Product not found: ${item.productId}`, 404);
+        if (!binSet.has(item.fromBinId!)) return errorResponse(`Source bin not found`, 404);
+        if (!binSet.has(item.toBinId!)) return errorResponse(`Destination bin not found`, 404);
+        if (product.currentStock < item.quantity) {
+          return errorResponse(`Insufficient stock for ${product.name}. Available: ${product.currentStock}`, 400);
+        }
+      }
+    } else {
+      // Location mode: move quantity between Store and Warehouse.
+      const warehouseMap = await getWarehouseQtyMap(productIds);
+      for (const item of data.items) {
+        const product = productMap.get(item.productId);
+        if (!product) return errorResponse(`Product not found: ${item.productId}`, 404);
+        if (!item.fromLocation || !item.toLocation) return errorResponse("Source and destination locations are required", 400);
+        if (item.fromLocation === item.toLocation) return errorResponse("Source and destination locations must be different", 400);
+        const { store, warehouse } = splitStock(product.currentStock, warehouseMap.get(product.id) ?? 0);
+        const available = item.fromLocation === "WAREHOUSE" ? warehouse : store;
+        if (available < item.quantity) {
+          return errorResponse(`Insufficient stock for ${product.name} at ${item.fromLocation === "WAREHOUSE" ? "Warehouse" : "Store"}. Available: ${available}`, 400);
+        }
       }
     }
 
@@ -137,8 +155,10 @@ export async function POST(req: NextRequest) {
             create: data.items.map((item) => ({
               productId: item.productId,
               quantity: item.quantity,
-              fromBinId: item.fromBinId,
-              toBinId: item.toBinId,
+              fromBinId: BIN_TRACKING_ENABLED ? item.fromBinId : null,
+              toBinId: BIN_TRACKING_ENABLED ? item.toBinId : null,
+              fromLocation: BIN_TRACKING_ENABLED ? null : item.fromLocation,
+              toLocation: BIN_TRACKING_ENABLED ? null : item.toLocation,
             })),
           },
         },
@@ -157,34 +177,48 @@ export async function POST(req: NextRequest) {
       // If auto-approved, execute the transfers
       if (isAutoApprove) {
         for (const item of data.items) {
-          // Move product to destination bin
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { binId: item.toBinId },
-          });
-
-          // Move serial items
-          await tx.serialItem.updateMany({
-            where: { productId: item.productId, binId: item.fromBinId, status: "IN_STOCK" },
-            data: { binId: item.toBinId },
-          });
-
-          // Create inventory transaction record
           const product = productMap.get(item.productId)!;
-          const fromBin = bins.find((b) => b.id === item.fromBinId);
-          const toBin = bins.find((b) => b.id === item.toBinId);
-          await tx.inventoryTransaction.create({
-            data: {
-              type: "TRANSFER",
-              productId: item.productId,
-              quantity: item.quantity,
-              previousStock: product.currentStock,
-              newStock: product.currentStock,
-              referenceNo: orderNo,
-              notes: `[APPROVED] From: ${fromBin?.code} → To: ${toBin?.code} | Transfer Order: ${orderNo}`,
-              userId: user.id,
-            },
-          });
+          if (BIN_TRACKING_ENABLED) {
+            // Move product to destination bin
+            await tx.product.update({
+              where: { id: item.productId },
+              data: { binId: item.toBinId },
+            });
+            // Move serial items
+            await tx.serialItem.updateMany({
+              where: { productId: item.productId, binId: item.fromBinId!, status: "IN_STOCK" },
+              data: { binId: item.toBinId },
+            });
+            const fromBin = bins.find((b) => b.id === item.fromBinId);
+            const toBin = bins.find((b) => b.id === item.toBinId);
+            await tx.inventoryTransaction.create({
+              data: {
+                type: "TRANSFER",
+                productId: item.productId,
+                quantity: item.quantity,
+                previousStock: product.currentStock,
+                newStock: product.currentStock,
+                referenceNo: orderNo,
+                notes: `[APPROVED] From: ${fromBin?.code} → To: ${toBin?.code} | Transfer Order: ${orderNo}`,
+                userId: user.id,
+              },
+            });
+          } else {
+            // Location mode: shift warehouse quantity. currentStock is unchanged.
+            await adjustWarehouseQty(tx, item.productId, item.toLocation === "WAREHOUSE" ? item.quantity : -item.quantity);
+            await tx.inventoryTransaction.create({
+              data: {
+                type: "TRANSFER",
+                productId: item.productId,
+                quantity: item.quantity,
+                previousStock: product.currentStock,
+                newStock: product.currentStock,
+                referenceNo: orderNo,
+                notes: `[APPROVED] From: ${item.fromLocation === "WAREHOUSE" ? "Warehouse" : "Store"} → To: ${item.toLocation === "WAREHOUSE" ? "Warehouse" : "Store"} | Transfer Order: ${orderNo}`,
+                userId: user.id,
+              },
+            });
+          }
         }
       }
 

@@ -4,6 +4,8 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
+import { adjustWarehouseQty, getWarehouseQtyMap, splitStock } from "@/lib/stock-location";
 
 // POST: Approve or reject a transfer order
 export async function POST(
@@ -37,13 +39,27 @@ export async function POST(
     if (order.status !== "PENDING") return errorResponse("Order is not pending", 400);
 
     if (action === "approve") {
-      // Verify stock is still available
+      // Verify stock is still available at the source
+      const warehouseMap = BIN_TRACKING_ENABLED
+        ? new Map<string, number>()
+        : await getWarehouseQtyMap(order.items.map((i) => i.productId));
       for (const item of order.items) {
-        if (item.product.currentStock < item.quantity) {
-          return errorResponse(
-            `Insufficient stock for ${item.product.name}. Available: ${item.product.currentStock}, Requested: ${item.quantity}`,
-            400
-          );
+        if (BIN_TRACKING_ENABLED) {
+          if (item.product.currentStock < item.quantity) {
+            return errorResponse(
+              `Insufficient stock for ${item.product.name}. Available: ${item.product.currentStock}, Requested: ${item.quantity}`,
+              400
+            );
+          }
+        } else {
+          const { store, warehouse } = splitStock(item.product.currentStock, warehouseMap.get(item.productId) ?? 0);
+          const available = item.fromLocation === "WAREHOUSE" ? warehouse : store;
+          if (available < item.quantity) {
+            return errorResponse(
+              `Insufficient stock for ${item.product.name} at ${item.fromLocation === "WAREHOUSE" ? "Warehouse" : "Store"}. Available: ${available}, Requested: ${item.quantity}`,
+              400
+            );
+          }
         }
       }
 
@@ -56,31 +72,43 @@ export async function POST(
 
         // Execute each item transfer
         for (const item of order.items) {
-          // Update product bin
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { binId: item.toBinId },
-          });
-
-          // Move serial items
-          await tx.serialItem.updateMany({
-            where: { productId: item.productId, binId: item.fromBinId, status: "IN_STOCK" },
-            data: { binId: item.toBinId },
-          });
-
-          // Create inventory transaction
-          await tx.inventoryTransaction.create({
-            data: {
-              type: "TRANSFER",
-              productId: item.productId,
-              quantity: item.quantity,
-              previousStock: item.product.currentStock,
-              newStock: item.product.currentStock,
-              referenceNo: order.orderNo,
-              notes: `[APPROVED] From: ${item.fromBin.code} → To: ${item.toBin.code} | Transfer Order: ${order.orderNo}`,
-              userId: user.id,
-            },
-          });
+          if (BIN_TRACKING_ENABLED) {
+            await tx.product.update({
+              where: { id: item.productId },
+              data: { binId: item.toBinId },
+            });
+            await tx.serialItem.updateMany({
+              where: { productId: item.productId, binId: item.fromBinId!, status: "IN_STOCK" },
+              data: { binId: item.toBinId },
+            });
+            await tx.inventoryTransaction.create({
+              data: {
+                type: "TRANSFER",
+                productId: item.productId,
+                quantity: item.quantity,
+                previousStock: item.product.currentStock,
+                newStock: item.product.currentStock,
+                referenceNo: order.orderNo,
+                notes: `[APPROVED] From: ${item.fromBin?.code} → To: ${item.toBin?.code} | Transfer Order: ${order.orderNo}`,
+                userId: user.id,
+              },
+            });
+          } else {
+            // Location mode: shift warehouse quantity. currentStock unchanged.
+            await adjustWarehouseQty(tx, item.productId, item.toLocation === "WAREHOUSE" ? item.quantity : -item.quantity);
+            await tx.inventoryTransaction.create({
+              data: {
+                type: "TRANSFER",
+                productId: item.productId,
+                quantity: item.quantity,
+                previousStock: item.product.currentStock,
+                newStock: item.product.currentStock,
+                referenceNo: order.orderNo,
+                notes: `[APPROVED] From: ${item.fromLocation === "WAREHOUSE" ? "Warehouse" : "Store"} → To: ${item.toLocation === "WAREHOUSE" ? "Warehouse" : "Store"} | Transfer Order: ${order.orderNo}`,
+                userId: user.id,
+              },
+            });
+          }
         }
       });
 

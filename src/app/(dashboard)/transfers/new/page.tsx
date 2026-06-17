@@ -8,6 +8,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, type StockLocation } from "@/lib/inventory-config";
 
 interface Product {
   id: string;
@@ -29,6 +30,8 @@ interface TransferItem {
   quantity: number;
   fromBinId: string;
   toBinId: string;
+  fromLocation: StockLocation;
+  toLocation: StockLocation;
 }
 
 const STORAGE_KEY = "transfer-order-draft";
@@ -89,6 +92,7 @@ export default function NewTransferOrderPage() {
   }, [items, notes]);
 
   useEffect(() => {
+    if (!BIN_TRACKING_ENABLED) return;
     fetch("/api/bins")
       .then((r) => r.json())
       .then((res) => { if (res.success) setBins(res.data); })
@@ -122,6 +126,9 @@ export default function NewTransferOrderPage() {
         quantity: 1,
         fromBinId: product.bin?.id || "",
         toBinId: "",
+        // Default direction: replenish the shop floor from the warehouse
+        fromLocation: "WAREHOUSE",
+        toLocation: "STORE",
       },
     ]);
     setSearch("");
@@ -129,7 +136,15 @@ export default function NewTransferOrderPage() {
   }
 
   function updateItem(index: number, field: keyof TransferItem, value: string | number) {
-    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, [field]: value } : item)));
+    setItems((prev) => prev.map((item, i) => {
+      if (i !== index) return item;
+      const next = { ...item, [field]: value };
+      // In location mode, keep To as the opposite of From (only two locations)
+      if (!BIN_TRACKING_ENABLED && field === "fromLocation") {
+        next.toLocation = value === "WAREHOUSE" ? "STORE" : "WAREHOUSE";
+      }
+      return next;
+    }));
   }
 
   function removeItem(index: number) {
@@ -141,8 +156,14 @@ export default function NewTransferOrderPage() {
     return bin ? `${bin.code} (${bin.name})` : "";
   }
 
-  const isValid = items.length > 0 && items.every(
-    (i) => i.fromBinId && i.toBinId && i.fromBinId !== i.toBinId && i.quantity > 0 && i.quantity <= i.product.currentStock
+  function locationLabel(loc: StockLocation) {
+    return loc === "WAREHOUSE" ? "Warehouse" : "Store";
+  }
+
+  const isValid = items.length > 0 && items.every((i) =>
+    BIN_TRACKING_ENABLED
+      ? i.fromBinId && i.toBinId && i.fromBinId !== i.toBinId && i.quantity > 0 && i.quantity <= i.product.currentStock
+      : i.fromLocation && i.toLocation && i.fromLocation !== i.toLocation && i.quantity > 0 && i.quantity <= i.product.currentStock
   );
 
   async function handleSubmit(e: React.FormEvent) {
@@ -156,12 +177,11 @@ export default function NewTransferOrderPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: items.map((i) => ({
-            productId: i.product.id,
-            quantity: i.quantity,
-            fromBinId: i.fromBinId,
-            toBinId: i.toBinId,
-          })),
+          items: items.map((i) => (
+            BIN_TRACKING_ENABLED
+              ? { productId: i.product.id, quantity: i.quantity, fromBinId: i.fromBinId, toBinId: i.toBinId }
+              : { productId: i.product.id, quantity: i.quantity, fromLocation: i.fromLocation, toLocation: i.toLocation }
+          )),
           notes: notes || undefined,
         }),
       });
@@ -217,7 +237,7 @@ export default function NewTransferOrderPage() {
                     <p className="text-sm font-medium text-slate-900">{p.name}</p>
                     <p className="text-xs text-slate-500">
                       {p.sku} | Stock: {p.currentStock}
-                      {p.bin ? ` | Bin: ${p.bin.code}` : " | No bin"}
+                      {BIN_TRACKING_ENABLED && (p.bin ? ` | Bin: ${p.bin.code}` : " | No bin")}
                     </p>
                   </div>
                   <Plus className="h-4 w-4 text-purple-500 shrink-0" />
@@ -277,41 +297,75 @@ export default function NewTransferOrderPage() {
                   )}
                 </div>
 
-                {/* From → To Bins */}
-                <div className="flex items-center gap-2">
-                  <div className="flex-1">
-                    <label className="text-xs text-slate-500 mb-0.5 block">From</label>
-                    <select value={item.fromBinId} onChange={(e) => updateItem(index, "fromBinId", e.target.value)}
-                      className="w-full h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600">
-                      <option value="">Select...</option>
-                      {bins.map((b) => (
-                        <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
-                      ))}
-                    </select>
+                {/* From → To */}
+                {BIN_TRACKING_ENABLED ? (
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <label className="text-xs text-slate-500 mb-0.5 block">From</label>
+                      <select value={item.fromBinId} onChange={(e) => updateItem(index, "fromBinId", e.target.value)}
+                        className="w-full h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600">
+                        <option value="">Select...</option>
+                        {bins.map((b) => (
+                          <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-purple-500 shrink-0 mt-4" />
+                    <div className="flex-1">
+                      <label className="text-xs text-slate-500 mb-0.5 block">To</label>
+                      <select value={item.toBinId} onChange={(e) => updateItem(index, "toBinId", e.target.value)}
+                        className="w-full h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600">
+                        <option value="">Select...</option>
+                        {bins.filter((b) => b.id !== item.fromBinId).map((b) => (
+                          <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
-                  <ArrowRight className="h-4 w-4 text-purple-500 shrink-0 mt-4" />
-                  <div className="flex-1">
-                    <label className="text-xs text-slate-500 mb-0.5 block">To</label>
-                    <select value={item.toBinId} onChange={(e) => updateItem(index, "toBinId", e.target.value)}
-                      className="w-full h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600">
-                      <option value="">Select...</option>
-                      {bins.filter((b) => b.id !== item.fromBinId).map((b) => (
-                        <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Route Preview */}
-                {item.fromBinId && item.toBinId && item.fromBinId !== item.toBinId && (
-                  <div className="bg-purple-50 rounded-lg p-1.5 mt-2 text-center">
-                    <p className="text-[10px] text-purple-700 font-medium">
-                      {getBinLabel(item.fromBinId)} → {getBinLabel(item.toBinId)}
-                    </p>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <label className="text-xs text-slate-500 mb-0.5 block">From</label>
+                      <select value={item.fromLocation} onChange={(e) => updateItem(index, "fromLocation", e.target.value)}
+                        className="w-full h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600">
+                        {STOCK_LOCATIONS.map((loc) => (
+                          <option key={loc.value} value={loc.value}>{loc.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <ArrowRight className="h-4 w-4 text-purple-500 shrink-0 mt-4" />
+                    <div className="flex-1">
+                      <label className="text-xs text-slate-500 mb-0.5 block">To</label>
+                      <select value={item.toLocation} onChange={(e) => updateItem(index, "toLocation", e.target.value)}
+                        className="w-full h-8 rounded-lg border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600">
+                        {STOCK_LOCATIONS.filter((loc) => loc.value !== item.fromLocation).map((loc) => (
+                          <option key={loc.value} value={loc.value}>{loc.label}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                 )}
-                {item.fromBinId && item.toBinId && item.fromBinId === item.toBinId && (
-                  <p className="text-[10px] text-red-500 mt-1">Source and destination must be different</p>
+
+                {/* Route Preview */}
+                {BIN_TRACKING_ENABLED ? (
+                  <>
+                    {item.fromBinId && item.toBinId && item.fromBinId !== item.toBinId && (
+                      <div className="bg-purple-50 rounded-lg p-1.5 mt-2 text-center">
+                        <p className="text-[10px] text-purple-700 font-medium">
+                          {getBinLabel(item.fromBinId)} → {getBinLabel(item.toBinId)}
+                        </p>
+                      </div>
+                    )}
+                    {item.fromBinId && item.toBinId && item.fromBinId === item.toBinId && (
+                      <p className="text-[10px] text-red-500 mt-1">Source and destination must be different</p>
+                    )}
+                  </>
+                ) : (
+                  <div className="bg-purple-50 rounded-lg p-1.5 mt-2 text-center">
+                    <p className="text-[10px] text-purple-700 font-medium">
+                      {locationLabel(item.fromLocation)} → {locationLabel(item.toLocation)}
+                    </p>
+                  </div>
                 )}
               </CardContent>
             </Card>

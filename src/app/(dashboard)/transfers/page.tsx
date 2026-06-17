@@ -18,8 +18,17 @@ interface TransferOrderItem {
   id: string;
   quantity: number;
   product: { name: string; sku: string; currentStock: number };
-  fromBin: { code: string; name: string; location: string };
-  toBin: { code: string; name: string; location: string };
+  fromBin: { code: string; name: string; location: string } | null;
+  toBin: { code: string; name: string; location: string } | null;
+  fromLocation: "STORE" | "WAREHOUSE" | null;
+  toLocation: "STORE" | "WAREHOUSE" | null;
+}
+
+// Display label for an endpoint: bin code in bin mode, location name in location mode.
+function endpointLabel(bin: { code: string } | null, loc: "STORE" | "WAREHOUSE" | null): string {
+  if (bin) return bin.code;
+  if (loc) return loc === "WAREHOUSE" ? "Warehouse" : "Store";
+  return "—";
 }
 
 interface TransferOrder {
@@ -108,7 +117,7 @@ export default function TransfersPage() {
                 { label: "Items", value: `${order._count.items} item${order._count.items !== 1 ? "s" : ""}` },
                 ...order.items.slice(0, 3).map((item) => ({
                   label: item.product.name,
-                  value: `${item.fromBin.code} → ${item.toBin.code} (Qty: ${item.quantity})`,
+                  value: `${endpointLabel(item.fromBin, item.fromLocation)} → ${endpointLabel(item.toBin, item.toLocation)} (Qty: ${item.quantity})`,
                 })),
               ],
               details: order.notes || undefined,
@@ -229,9 +238,9 @@ export default function TransfersPage() {
                         <div className="flex items-center gap-1 text-xs text-slate-500">
                           <span>Qty: {item.quantity}</span>
                           <span>|</span>
-                          <span>{item.fromBin.code}</span>
+                          <span>{endpointLabel(item.fromBin, item.fromLocation)}</span>
                           <ArrowRight className="h-2.5 w-2.5 text-purple-500" />
-                          <span>{item.toBin.code}</span>
+                          <span>{endpointLabel(item.toBin, item.toLocation)}</span>
                         </div>
                       </div>
                     </div>

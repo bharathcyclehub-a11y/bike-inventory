@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { usePermissions } from "@/lib/use-permissions";
+import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, type StockLocation } from "@/lib/inventory-config";
 
 interface LineItem {
   id: string;
@@ -109,6 +110,8 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
 
   // Per-item bin selections: lineItemId → array of binIds (one per unit)
   const [binSelections, setBinSelections] = useState<Record<string, string[]>>({});
+  // Location mode (bins dormant): where this shipment's stock is received
+  const [receiveLocation, setReceiveLocation] = useState<StockLocation>("STORE");
   const [shipmentType, setShipmentType] = useState<"BICYCLE" | "SPARE_PART" | "ACCESSORY" | "MIXED" | null>(null);
 
   useEffect(() => {
@@ -183,7 +186,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
 
   const handleMarkDelivered = async (status: string) => {
     const undeliveredItems = shipment?.lineItems.filter((li) => !li.isDelivered) || [];
-    if (status === "DELIVERED") {
+    if (BIN_TRACKING_ENABLED && status === "DELIVERED") {
       for (const li of undeliveredItems) {
         const selections = binSelections[li.id] || [];
         const allFilled = selections.length === li.quantity && selections.every((b) => b);
@@ -215,7 +218,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       const res = await fetch(`/api/inbound/${id}/status`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, binAssignments }),
+        body: JSON.stringify(BIN_TRACKING_ENABLED ? { status, binAssignments } : { status, location: receiveLocation }),
       }).then((r) => r.json());
       if (res.success) {
         setActionError("");
@@ -247,20 +250,22 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   };
 
   const handleMarkItemDelivered = async (li: LineItem) => {
-    const selections = binSelections[li.id] || [];
-    const allFilled = selections.length === li.quantity && selections.every((b) => b);
-    if (!allFilled) {
-      setConfirmation({
-        type: "error",
-        title: "Bin Assignment Required",
-        referenceId: shipment?.shipmentNo || "",
-        items: [
-          { label: "Product", value: li.productName },
-          { label: "Units", value: `${li.quantity}` },
-        ],
-        details: `Please select a bin for all ${li.quantity} unit(s) before marking delivered.`,
-      });
-      return;
+    if (BIN_TRACKING_ENABLED) {
+      const selections = binSelections[li.id] || [];
+      const allFilled = selections.length === li.quantity && selections.every((b) => b);
+      if (!allFilled) {
+        setConfirmation({
+          type: "error",
+          title: "Bin Assignment Required",
+          referenceId: shipment?.shipmentNo || "",
+          items: [
+            { label: "Product", value: li.productName },
+            { label: "Units", value: `${li.quantity}` },
+          ],
+          details: `Please select a bin for all ${li.quantity} unit(s) before marking delivered.`,
+        });
+        return;
+      }
     }
     setItemLoading(li.id);
     try {
@@ -268,7 +273,11 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       const res = await fetch(`/api/inbound/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lineItemId: li.id, deliveredQty: li.quantity, binAllocations }),
+        body: JSON.stringify(
+          BIN_TRACKING_ENABLED
+            ? { lineItemId: li.id, deliveredQty: li.quantity, binAllocations }
+            : { lineItemId: li.id, deliveredQty: li.quantity, location: receiveLocation }
+        ),
       }).then((r) => r.json());
       if (res.success) {
         setActionError("");
@@ -276,12 +285,14 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         await refreshShipment();
         setConfirmation({
           type: "success",
-          title: "Item Received & Binned",
+          title: BIN_TRACKING_ENABLED ? "Item Received & Binned" : "Item Received",
           referenceId: shipment?.shipmentNo || "",
           items: [
             { label: "Product", value: li.productName },
             { label: "Quantity", value: `${li.quantity} units` },
-            { label: "Bin", value: bins.find(b => b.id === (binSelections[li.id]?.[0]))?.code || "Assigned" },
+            BIN_TRACKING_ENABLED
+              ? { label: "Bin", value: bins.find(b => b.id === (binSelections[li.id]?.[0]))?.code || "Assigned" }
+              : { label: "Location", value: receiveLocation === "WAREHOUSE" ? "Warehouse" : "Store" },
           ],
           details: `Bill: ${shipment?.billNo}`,
         });
@@ -540,7 +551,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
             <span className="text-xs text-slate-500">Items</span>
             <span className="text-sm text-slate-700">{deliveredCount}/{shipment.totalItems} delivered</span>
           </div>
-          {needsBinCount > 0 && (
+          {BIN_TRACKING_ENABLED && needsBinCount > 0 && (
             <div className="flex justify-between items-center">
               <span className="text-xs text-slate-500">Needs Bin</span>
               <Badge variant="warning" className="text-xs">{needsBinCount} item{needsBinCount > 1 ? "s" : ""}</Badge>
@@ -632,6 +643,30 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         )
       )}
 
+      {/* Location selector (bins dormant) — where this shipment is received */}
+      {!BIN_TRACKING_ENABLED && canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && shipmentType !== null && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3">
+          <p className="text-xs font-medium text-blue-800 mb-1.5 flex items-center gap-1.5">
+            <MapPin className="h-3.5 w-3.5" /> Receive into
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {STOCK_LOCATIONS.map((loc) => (
+              <button
+                key={loc.value}
+                onClick={() => setReceiveLocation(loc.value)}
+                className={`py-2.5 rounded-lg text-sm font-semibold border transition-colors ${
+                  receiveLocation === loc.value
+                    ? "bg-blue-600 text-white border-blue-600"
+                    : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                {loc.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Mark Delivered */}
       {canDeliver && isApproved && shipment.status === "IN_TRANSIT" && shipmentType !== null && (
         <div className="flex gap-2 mb-3">
@@ -650,7 +685,9 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       {canDeliver && isApproved && shipment.status === "PARTIALLY_DELIVERED" && shipmentType !== null && (
         <div className="space-y-2 mb-3">
           <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-2 text-center">
-            Select bin for each unit, then mark as delivered. Or mark all at once.
+            {BIN_TRACKING_ENABLED
+              ? "Select bin for each unit, then mark as delivered. Or mark all at once."
+              : "Mark each item as delivered, or mark all at once."}
           </p>
           <div className="flex gap-2">
             <Button onClick={() => handleMarkDelivered("DELIVERED")} disabled={actionLoading}
@@ -668,7 +705,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* Post-delivery Putaway */}
-      {canDeliver && isApproved && needsBinCount > 0 && shipment.status === "DELIVERED" && (
+      {BIN_TRACKING_ENABLED && canDeliver && isApproved && needsBinCount > 0 && shipment.status === "DELIVERED" && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-3">
           <p className="text-xs text-amber-800 font-medium mb-1 flex items-center gap-1.5">
             <MapPin className="h-3.5 w-3.5" /> {needsBinCount} item{needsBinCount > 1 ? "s" : ""} need bin assignment
@@ -701,7 +738,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
       />
 
       {/* Select All — apply one bin to ALL undelivered items */}
-      {canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && bins.length > 0 && shipmentType !== null && (
+      {BIN_TRACKING_ENABLED && canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && bins.length > 0 && shipmentType !== null && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3">
           <p className="text-xs font-medium text-blue-800 mb-1.5">Apply same bin to all items</p>
           <select
@@ -750,14 +787,14 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
               </div>
 
               {/* Current bin assignment */}
-              {li.bin && (
+              {BIN_TRACKING_ENABLED && li.bin && (
                 <div className="flex items-center gap-1.5 mt-1.5 text-xs text-indigo-600">
                   <MapPin className="h-3 w-3" /> {li.bin.code} — {li.bin.name} ({li.bin.location})
                 </div>
               )}
 
-              {/* Bin selectors for undelivered items (during partial delivery) */}
-              {canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && bins.length > 0 && shipmentType !== null && (
+              {/* Bin mode: selectors for undelivered items (during partial delivery) */}
+              {BIN_TRACKING_ENABLED && canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && bins.length > 0 && shipmentType !== null && (
                 <div>
                   {renderBinSelectors(li)}
                   <button
@@ -770,13 +807,24 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                 </div>
               )}
 
-              {/* Bin selectors for IN_TRANSIT items (pre-select before Mark All Delivered) */}
-              {canDeliver && shipment.status === "IN_TRANSIT" && bins.length > 0 && shipmentType !== null && (
+              {/* Location mode: just a Mark Delivered button per item during partial delivery */}
+              {!BIN_TRACKING_ENABLED && canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && shipmentType !== null && (
+                <button
+                  onClick={() => handleMarkItemDelivered(li)}
+                  disabled={itemLoading === li.id}
+                  className="mt-2 w-full py-2.5 h-10 rounded-lg bg-green-50 text-green-700 text-xs font-medium border border-green-200 hover:bg-green-100 disabled:opacity-50"
+                >
+                  {itemLoading === li.id ? "Marking..." : `Mark Delivered (Qty: ${li.quantity})`}
+                </button>
+              )}
+
+              {/* Bin mode: selectors for IN_TRANSIT items (pre-select before Mark All Delivered) */}
+              {BIN_TRACKING_ENABLED && canDeliver && shipment.status === "IN_TRANSIT" && bins.length > 0 && shipmentType !== null && (
                 renderBinSelectors(li)
               )}
 
-              {/* Post-delivery bin assignment (delivered but no bin) */}
-              {canDeliver && li.isDelivered && !li.binId && bins.length > 0 && (
+              {/* Bin mode: post-delivery bin assignment (delivered but no bin) */}
+              {BIN_TRACKING_ENABLED && canDeliver && li.isDelivered && !li.binId && bins.length > 0 && (
                 renderBinSelectors(li, "amber")
               )}
 

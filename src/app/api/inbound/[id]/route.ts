@@ -4,6 +4,8 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { BIN_TRACKING_ENABLED, type StockLocation } from "@/lib/inventory-config";
+import { adjustWarehouseQty } from "@/lib/stock-location";
 
 // GET: Shipment detail
 export async function GET(
@@ -72,15 +74,19 @@ export async function PUT(
       const nowDelivered = body.deliveredQty > 0;
       const qty = body.deliveredQty;
 
-      // Support per-unit bin allocation: binAllocations=[{binId, qty}] or legacy single binId
+      // Bin mode (dormant): per-unit bin allocation. Location mode (active): receive
+      // the whole line into one location (default Store).
       const binAllocations: Array<{ binId: string; qty: number }> = body.binAllocations || (body.binId ? [{ binId: body.binId, qty }] : []);
-      if (binAllocations.length === 0) return errorResponse("Bin assignment is required when marking items delivered", 400);
-      const primaryBinId = binAllocations[0].binId;
+      if (BIN_TRACKING_ENABLED && binAllocations.length === 0) {
+        return errorResponse("Bin assignment is required when marking items delivered", 400);
+      }
+      const primaryBinId = binAllocations[0]?.binId ?? null;
+      const location: StockLocation = body.location === "WAREHOUSE" ? "WAREHOUSE" : "STORE";
 
       await prisma.$transaction(async (tx) => {
         await tx.inboundLineItem.update({
           where: { id: body.lineItemId },
-          data: { isDelivered: nowDelivered, deliveredQty: qty, binId: primaryBinId },
+          data: { isDelivered: nowDelivered, deliveredQty: qty, ...(primaryBinId ? { binId: primaryBinId } : {}) },
         });
 
         // Add stock only when newly marking as delivered (not already delivered)
@@ -96,28 +102,53 @@ export async function PUT(
             throw new Error(`Product not found for "${lineItem.productName}" — import it from Zoho Items first`);
           }
 
-          // Create one inventory transaction per bin allocation
           let runningStock = matchedProduct.currentStock;
-          for (const alloc of binAllocations) {
+          if (BIN_TRACKING_ENABLED && binAllocations.length) {
+            // Create one inventory transaction per bin allocation
+            for (const alloc of binAllocations) {
+              const previousStock = runningStock;
+              runningStock += alloc.qty;
+              await tx.inventoryTransaction.create({
+                data: {
+                  type: "INWARD",
+                  productId: matchedProduct.id,
+                  quantity: alloc.qty,
+                  previousStock,
+                  newStock: runningStock,
+                  referenceNo: lineItem.shipment.shipmentNo,
+                  notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${alloc.qty} → Bin: ${alloc.binId.slice(-6)}`,
+                  userId: user.id,
+                },
+              });
+            }
+            await tx.product.update({
+              where: { id: matchedProduct.id },
+              data: { currentStock: runningStock, binId: primaryBinId },
+            });
+          } else {
+            // Location mode: single transaction, bump warehouse level if received there
             const previousStock = runningStock;
-            runningStock += alloc.qty;
+            runningStock += qty;
             await tx.inventoryTransaction.create({
               data: {
                 type: "INWARD",
                 productId: matchedProduct.id,
-                quantity: alloc.qty,
+                quantity: qty,
                 previousStock,
                 newStock: runningStock,
                 referenceNo: lineItem.shipment.shipmentNo,
-                notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${alloc.qty} → Bin: ${alloc.binId.slice(-6)}`,
+                notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${qty} → ${location === "WAREHOUSE" ? "Warehouse" : "Store"}`,
                 userId: user.id,
               },
             });
+            await tx.product.update({
+              where: { id: matchedProduct.id },
+              data: { currentStock: runningStock },
+            });
+            if (location === "WAREHOUSE") {
+              await adjustWarehouseQty(tx, matchedProduct.id, qty);
+            }
           }
-          await tx.product.update({
-            where: { id: matchedProduct.id },
-            data: { currentStock: runningStock, binId: primaryBinId },
-          });
 
           // Auto-create delivery for pre-booked items so outwards clerk can see it
           if (lineItem.preBookedCustomerName) {

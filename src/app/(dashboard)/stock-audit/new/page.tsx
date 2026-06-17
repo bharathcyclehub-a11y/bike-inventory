@@ -7,6 +7,7 @@ import Link from "next/link";
 import { ArrowLeft, MapPin, Package } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
+import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
 
 interface Bin {
   id: string;
@@ -44,7 +45,7 @@ export default function NewStockAuditPage() {
   const [title, setTitle] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
-  const [scope, setScope] = useState<"bin" | "location" | "all">("bin");
+  const [scope, setScope] = useState<"bin" | "location" | "all">(BIN_TRACKING_ENABLED ? "bin" : "all");
   const [selectedBin, setSelectedBin] = useState("");
   const [selectedLocation, setSelectedLocation] = useState("");
   const [bins, setBins] = useState<Bin[]>([]);
@@ -63,7 +64,9 @@ export default function NewStockAuditPage() {
   } | null>(null);
 
   useEffect(() => {
-    fetch("/api/bins").then((r) => r.json()).then((res) => { if (res.success) setBins(res.data); }).catch(() => {});
+    if (BIN_TRACKING_ENABLED) {
+      fetch("/api/bins").then((r) => r.json()).then((res) => { if (res.success) setBins(res.data); }).catch(() => {});
+    }
     // Load team members for assignment
     fetch("/api/users").then((r) => r.json()).then((res) => { if (res.success) setUsers(res.data); }).catch(() => {});
   }, []);
@@ -166,24 +169,26 @@ export default function NewStockAuditPage() {
       </div>
 
       <div className="space-y-3">
-        {/* Scope */}
-        <div>
-          <label className="text-xs text-slate-500 mb-2 block">Count Scope</label>
-          <div className="flex gap-2">
-            <button onClick={() => { setScope("bin"); setSelectedLocation(""); }}
-              className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                scope === "bin" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-              }`}>By Bin</button>
-            <button onClick={() => { setScope("location"); setSelectedBin(""); }}
-              className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                scope === "location" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-              }`}>By Location</button>
-            <button onClick={() => { setScope("all"); setSelectedBin(""); setSelectedLocation(""); }}
-              className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                scope === "all" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-              }`}>All Products</button>
+        {/* Scope — bin/location scoping is bin-derived; hidden while bins are dormant */}
+        {BIN_TRACKING_ENABLED && (
+          <div>
+            <label className="text-xs text-slate-500 mb-2 block">Count Scope</label>
+            <div className="flex gap-2">
+              <button onClick={() => { setScope("bin"); setSelectedLocation(""); }}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  scope === "bin" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                }`}>By Bin</button>
+              <button onClick={() => { setScope("location"); setSelectedBin(""); }}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  scope === "location" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                }`}>By Location</button>
+              <button onClick={() => { setScope("all"); setSelectedBin(""); setSelectedLocation(""); }}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  scope === "all" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                }`}>All Products</button>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Product Type */}
         <div>

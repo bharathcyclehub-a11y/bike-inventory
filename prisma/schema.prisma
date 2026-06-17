@@ -136,6 +136,13 @@ enum ProductType {
   FINISHED_GOOD
 }
 
+// Active stock-tracking locations. Bins (see Bin model) are dormant; per-location
+// quantity lives in StockLevel keyed by this enum.
+enum StockLocation {
+  STORE
+  WAREHOUSE
+}
+
 model User {
   id            String    @id @default(cuid())
   name          String
@@ -278,6 +285,7 @@ model Product {
   transactions  InventoryTransaction[]
   stockCounts   StockCountItem[]
   serialItems   SerialItem[]
+  stockLevels   StockLevel[]
   purchaseOrderItems PurchaseOrderItem[]
   transferOrderItems TransferOrderItem[]
   inboundLineItems InboundLineItem[]
@@ -295,6 +303,22 @@ model Product {
   @@index([status, currentStock])
   @@index([sku])
   @@index([name])
+}
+
+// Per-location stock for a product. The active source of truth for "how much, where".
+// Product.currentStock / reservedStock are kept as the cached sum across these rows.
+model StockLevel {
+  id               String        @id @default(cuid())
+  productId        String
+  product          Product       @relation(fields: [productId], references: [id])
+  location         StockLocation
+  quantity         Int           @default(0)
+  reservedQuantity Int           @default(0)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@unique([productId, location])
+  @@index([location])
 }
 
 model SerialItem {
@@ -1092,10 +1116,13 @@ model TransferOrderItem {
   productId       String
   product         Product       @relation(fields: [productId], references: [id])
   quantity        Int
-  fromBinId       String
-  fromBin         Bin           @relation("TransferFromBin", fields: [fromBinId], references: [id])
-  toBinId         String
-  toBin           Bin           @relation("TransferToBin", fields: [toBinId], references: [id])
+  // Bin mode (dormant): source/destination bins. Location mode (active): fromLocation/toLocation.
+  fromBinId       String?
+  fromBin         Bin?          @relation("TransferFromBin", fields: [fromBinId], references: [id])
+  toBinId         String?
+  toBin           Bin?          @relation("TransferToBin", fields: [toBinId], references: [id])
+  fromLocation    StockLocation?
+  toLocation      StockLocation?
   createdAt       DateTime      @default(now())
 
   @@index([transferOrderId])

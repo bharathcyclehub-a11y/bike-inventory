@@ -13,6 +13,7 @@ import { ExportButtons } from "@/components/export-buttons";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { usePermissions } from "@/lib/use-permissions";
 import { ErrorBanner } from "@/components/ui/error-banner";
+import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
 
 const STOCK_COLUMNS: ExportColumn[] = [
   { header: "SKU", key: "sku" },
@@ -774,7 +775,7 @@ export default function StockPage() {
         </Link>
         <Link href="/stock/by-bin"
           className="flex-1 flex items-center justify-center gap-1.5 bg-purple-50 border border-purple-200 text-purple-700 py-2 rounded-lg text-xs font-medium">
-          <MapPin className="h-3 w-3" /> By Bin
+          <MapPin className="h-3 w-3" /> {BIN_TRACKING_ENABLED ? "By Bin" : "By Location"}
         </Link>
       </div>
 
@@ -871,19 +872,21 @@ export default function StockPage() {
                 </select>
               </div>
 
-              <div>
-                <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Bin / Location</label>
-                <select
-                  value={selectedBin}
-                  onChange={(e) => setSelectedBin(e.target.value)}
-                  className="mt-0.5 flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                >
-                  <option value="">All Bins ({bins.length})</option>
-                  {bins.map((b) => (
-                    <option key={b.id} value={b.id}>{b.name} ({b._count.products})</option>
-                  ))}
-                </select>
-              </div>
+              {BIN_TRACKING_ENABLED && (
+                <div>
+                  <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Bin / Location</label>
+                  <select
+                    value={selectedBin}
+                    onChange={(e) => setSelectedBin(e.target.value)}
+                    className="mt-0.5 flex h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                  >
+                    <option value="">All Bins ({bins.length})</option>
+                    {bins.map((b) => (
+                      <option key={b.id} value={b.id}>{b.name} ({b._count.products})</option>
+                    ))}
+                  </select>
+                </div>
+              )}
             </div>
 
             {showSizeFilter && (
