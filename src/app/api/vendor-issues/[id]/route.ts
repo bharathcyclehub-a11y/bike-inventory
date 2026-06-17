@@ -17,7 +17,17 @@ export async function GET(
     const issue = await prisma.vendorIssue.findUnique({
       where: { id },
       include: {
-        vendor: { select: { id: true, name: true, code: true, whatsappNumber: true, phone: true } },
+        vendor: {
+          select: {
+            id: true, name: true, code: true, whatsappNumber: true, phone: true,
+            contacts: {
+              where: { OR: [{ whatsapp: { not: null } }, { phone: { not: null } }] },
+              orderBy: { isPrimary: "desc" },
+              take: 1,
+              select: { name: true, phone: true, whatsapp: true },
+            },
+          },
+        },
         bill: { select: { id: true, billNo: true, amount: true } },
         createdBy: { select: { id: true, name: true } },
         notes: {
@@ -75,7 +85,17 @@ export async function PUT(
         ...(resolvedAt !== undefined && { resolvedAt }),
       },
       include: {
-        vendor: { select: { id: true, name: true, code: true, whatsappNumber: true, phone: true } },
+        vendor: {
+          select: {
+            id: true, name: true, code: true, whatsappNumber: true, phone: true,
+            contacts: {
+              where: { OR: [{ whatsapp: { not: null } }, { phone: { not: null } }] },
+              orderBy: { isPrimary: "desc" },
+              take: 1,
+              select: { name: true, phone: true, whatsapp: true },
+            },
+          },
+        },
         bill: { select: { id: true, billNo: true, amount: true } },
         createdBy: { select: { id: true, name: true } },
         notes: {

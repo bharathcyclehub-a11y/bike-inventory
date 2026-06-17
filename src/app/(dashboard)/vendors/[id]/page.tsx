@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { ArrowLeft, Phone, MessageSquare, FileText, CreditCard, Building2, AlertCircle, Check, Loader2, Power } from "lucide-react";
+import { ArrowLeft, Phone, MessageSquare, FileText, CreditCard, Building2, AlertCircle, Check, Loader2, Power, Trash2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,45 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
   const [cdPctValue, setCdPctValue] = useState("");
   const [savingCd, setSavingCd] = useState(false);
   const [actionError, setActionError] = useState("");
+
+  // Add-contact form (name + number) for the brand.
+  const [showAddContact, setShowAddContact] = useState(false);
+  const [contactName, setContactName] = useState("");
+  const [contactNumber, setContactNumber] = useState("");
+  const [contactPrimary, setContactPrimary] = useState(true);
+  const [savingContact, setSavingContact] = useState(false);
+
+  async function addContact() {
+    if (!contactName.trim() || !contactNumber.trim()) return;
+    setSavingContact(true);
+    setActionError("");
+    try {
+      const num = contactNumber.trim();
+      const res = await fetch(`/api/vendors/${id}/contacts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Save the one number to both fields so it works for WhatsApp (wa.me) and tel: calls.
+        body: JSON.stringify({ name: contactName.trim(), phone: num, whatsapp: num, isPrimary: contactPrimary }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setContactName(""); setContactNumber(""); setContactPrimary(false); setShowAddContact(false);
+        loadVendor();
+      } else {
+        setActionError(data.error || "Failed to add contact");
+      }
+    } catch { setActionError("Network error"); }
+    finally { setSavingContact(false); }
+  }
+
+  async function deleteContact(contactId: string) {
+    if (!confirm("Remove this contact?")) return;
+    try {
+      const res = await fetch(`/api/vendors/${id}/contacts/${contactId}`, { method: "DELETE" }).then((r) => r.json());
+      if (res.success) loadVendor();
+      else setActionError(res.error || "Failed to remove contact");
+    } catch { setActionError("Network error"); }
+  }
 
   const loadVendor = useCallback(() => {
     fetch(`/api/vendors/${id}`)
@@ -402,18 +441,72 @@ export default function VendorDetailPage({ params }: { params: Promise<{ id: str
               </div>
             )}
           </div>
-          {vendor.contacts && vendor.contacts.length > 0 && (
-            <div>
-              <p className="text-xs text-slate-500 mb-1">Contacts</p>
-              {vendor.contacts.map((c) => (
-                <div key={c.id} className="flex items-center gap-2 py-1">
-                  <span className="text-sm text-slate-700">{c.name}</span>
-                  {c.designation && <span className="text-xs text-slate-400">({c.designation})</span>}
-                  {c.isPrimary && <Badge variant="info">Primary</Badge>}
-                </div>
-              ))}
+          {/* Contacts — name + number for the brand. The primary contact is who the issue
+              "Share on WhatsApp" button messages. */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-xs text-slate-500">Contacts</p>
+              {canEditBalance && !showAddContact && (
+                <button onClick={() => setShowAddContact(true)} className="text-xs font-medium text-blue-600 hover:underline">
+                  + Add contact
+                </button>
+              )}
             </div>
-          )}
+
+            {vendor.contacts && vendor.contacts.length > 0 ? (
+              vendor.contacts.map((c) => {
+                const num = c.whatsapp || c.phone;
+                return (
+                  <div key={c.id} className="flex items-center gap-2 py-1">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm text-slate-700">{c.name}</span>
+                        {c.designation && <span className="text-xs text-slate-400">({c.designation})</span>}
+                        {c.isPrimary && <Badge variant="info">Primary</Badge>}
+                      </div>
+                      {num && <span className="text-xs text-slate-500">{num}</span>}
+                    </div>
+                    {num && (
+                      <a href={`https://wa.me/91${num.replace(/\D/g, "").slice(-10)}`} target="_blank" rel="noopener noreferrer"
+                        className="p-1.5 text-green-600 hover:bg-green-50 rounded-full" title="WhatsApp">
+                        <MessageSquare className="h-4 w-4" />
+                      </a>
+                    )}
+                    {canEditBalance && (
+                      <button onClick={() => deleteContact(c.id)} className="p-1.5 text-slate-300 hover:text-red-500 rounded-full" title="Remove">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })
+            ) : (
+              !showAddContact && <p className="text-xs text-slate-400">No contacts yet.</p>
+            )}
+
+            {showAddContact && (
+              <div className="mt-2 space-y-2 bg-slate-50 rounded-lg p-2.5">
+                <input value={contactName} onChange={(e) => setContactName(e.target.value)}
+                  placeholder="Contact person name"
+                  className="flex h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900" />
+                <input value={contactNumber} onChange={(e) => setContactNumber(e.target.value)}
+                  type="tel" inputMode="tel" placeholder="Mobile number (WhatsApp)"
+                  className="flex h-9 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900" />
+                <label className="flex items-center gap-2 text-xs text-slate-600">
+                  <input type="checkbox" checked={contactPrimary} onChange={(e) => setContactPrimary(e.target.checked)} />
+                  Make this the primary contact (messaged from issues)
+                </label>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={addContact} disabled={savingContact || !contactName.trim() || !contactNumber.trim()} className="flex-1">
+                    {savingContact ? "Saving…" : "Save Contact"}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => { setShowAddContact(false); setContactName(""); setContactNumber(""); }}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 

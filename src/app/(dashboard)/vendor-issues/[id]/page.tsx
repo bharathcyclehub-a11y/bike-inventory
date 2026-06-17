@@ -28,7 +28,14 @@ interface IssueDetail {
   resolution?: string;
   resolvedAt?: string;
   createdAt: string;
-  vendor: { id: string; name: string; code: string; whatsappNumber?: string | null; phone?: string | null } | null;
+  vendor: {
+    id: string;
+    name: string;
+    code: string;
+    whatsappNumber?: string | null;
+    phone?: string | null;
+    contacts?: { name: string; phone?: string | null; whatsapp?: string | null }[];
+  } | null;
   clientName?: string;
   clientPhone?: string;
   bill?: { id: string; billNo: string; amount: number } | null;
@@ -129,12 +136,19 @@ export default function VendorIssueDetailPage({
   // Resolve the contact number to open the chat with: the brand's (vendor) WhatsApp/phone for a
   // brand issue, or the client's phone for a client issue. Indian numbers → wa.me/91<last 10>.
   function contactDigits(): string {
+    const primary = issue?.vendor?.contacts?.[0];
     const raw =
       issue?.issueSource === "CLIENT"
         ? issue?.clientPhone || ""
-        : issue?.vendor?.whatsappNumber || issue?.vendor?.phone || "";
+        : primary?.whatsapp || primary?.phone || issue?.vendor?.whatsappNumber || issue?.vendor?.phone || "";
     const digits = raw.replace(/\D/g, "");
     return digits ? digits.slice(-10) : "";
+  }
+
+  // Name to show on the share button — the brand's primary contact person if we have one.
+  function contactLabel(): string {
+    if (issue?.issueSource === "CLIENT") return "Client";
+    return issue?.vendor?.contacts?.[0]?.name || issue?.vendor?.name || "Brand";
   }
 
   async function handleWhatsAppShare() {
@@ -143,7 +157,9 @@ export default function VendorIssueDetailPage({
       ? `Client: ${issue.clientName || "Unknown"}${issue.clientPhone ? ` (${issue.clientPhone})` : ""}`
       : `Brand: ${issue.vendor?.name || "Unknown"} (${issue.vendor?.code || ""})`;
 
-    let text = `*Ops Issue ${issue.issueNo}*\n`;
+    const greetName = issue.issueSource !== "CLIENT" ? issue.vendor?.contacts?.[0]?.name : undefined;
+    let text = greetName ? `Hi ${greetName},\n\n` : "";
+    text += `*Ops Issue ${issue.issueNo}*\n`;
     text += `Source: ${source}\n`;
     text += `Type: ${issue.issueType.replace(/_/g, " ")}\n`;
     text += `Priority: ${issue.priority}\n`;
@@ -507,11 +523,7 @@ export default function VendorIssueDetailPage({
         className="w-full bg-green-600 hover:bg-green-700 mb-1"
       >
         <Share2 className="w-4 h-4 mr-1.5" />
-        {contactDigits()
-          ? issue.issueSource === "CLIENT"
-            ? "Share on WhatsApp → Client"
-            : `Share on WhatsApp → ${issue.vendor?.name || "Brand"}`
-          : "Share on WhatsApp"}
+        {contactDigits() ? `Share on WhatsApp → ${contactLabel()}` : "Share on WhatsApp"}
       </Button>
       {!contactDigits() && issue.issueSource !== "CLIENT" && (
         <p className="text-[11px] text-amber-600 mb-4">
