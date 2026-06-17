@@ -7,9 +7,107 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { uploadMedia } from "@/lib/supabase";
 
-const MAX_VIDEO_BYTES = 60 * 1024 * 1024; // ~60MB
+const MAX_VIDEO_INPUT_BYTES = 500 * 1024 * 1024; // accept big originals; we compress before upload
 function isVideoUrl(url: string): boolean {
   return /\.(mp4|mov|webm|m4v|3gp|quicktime)(\?|$)/i.test(url);
+}
+
+// Compress a video in the browser: downscale to ~720p and re-encode at a low bitrate so a
+// 200–300MB phone clip becomes ~tens of MB. Audio is captured via Web Audio (routed only to the
+// recorder, not the speakers) so processing is silent. Real-time (reports progress 0..1).
+// Throws on unsupported browsers (e.g. some iOS Safari) so the caller can fall back to the original.
+async function compressVideo(
+  file: File,
+  onProgress?: (p: number) => void
+): Promise<{ blob: Blob; ext: string }> {
+  const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+  const AudioCtx = w.AudioContext || w.webkitAudioContext;
+  const canvasProto = HTMLCanvasElement.prototype as unknown as { captureStream?: unknown };
+  if (typeof MediaRecorder === "undefined" || typeof canvasProto.captureStream !== "function" || !AudioCtx) {
+    throw new Error("Video compression isn't supported on this browser");
+  }
+
+  const video = document.createElement("video");
+  video.src = URL.createObjectURL(file);
+  video.muted = false;
+  video.playsInline = true;
+  video.preload = "auto";
+
+  await new Promise<void>((resolve, reject) => {
+    video.onloadedmetadata = () => resolve();
+    video.onerror = () => reject(new Error("Could not read this video"));
+  });
+
+  const srcW = video.videoWidth || 1280;
+  const srcH = video.videoHeight || 720;
+  const MAX_EDGE = 1280; // ~720p on the long edge
+  let tw = srcW, th = srcH;
+  const longest = Math.max(srcW, srcH);
+  if (longest > MAX_EDGE) { const s = MAX_EDGE / longest; tw = Math.round(srcW * s); th = Math.round(srcH * s); }
+  tw -= tw % 2; th -= th % 2; // even dimensions
+  tw = Math.max(2, tw); th = Math.max(2, th);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = tw; canvas.height = th;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Canvas unavailable");
+
+  const cStream = (canvas as HTMLCanvasElement & { captureStream(fps?: number): MediaStream }).captureStream(30);
+
+  // Audio: tap the element's audio into the recorder WITHOUT connecting to the speakers.
+  const actx = new AudioCtx();
+  const srcNode = actx.createMediaElementSource(video);
+  const dest = actx.createMediaStreamDestination();
+  srcNode.connect(dest);
+  dest.stream.getAudioTracks().forEach((t) => cStream.addTrack(t));
+  try { await actx.resume(); } catch { /* ignore */ }
+
+  const candidates = [
+    "video/mp4;codecs=h264,aac",
+    "video/mp4",
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
+  const mimeType = candidates.find((c) => MediaRecorder.isTypeSupported(c)) || "";
+  const recorder = new MediaRecorder(cStream, {
+    ...(mimeType ? { mimeType } : {}),
+    videoBitsPerSecond: 1_000_000, // ~1 Mbps → roughly 7–8 MB per minute
+    audioBitsPerSecond: 96_000,
+  });
+  const outType = recorder.mimeType || mimeType || "video/webm";
+  const ext = outType.includes("mp4") ? "mp4" : "webm";
+
+  const chunks: BlobPart[] = [];
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  const finished = new Promise<Blob>((resolve) => {
+    recorder.onstop = () => resolve(new Blob(chunks, { type: outType }));
+  });
+
+  let raf = 0;
+  const draw = () => {
+    ctx.drawImage(video, 0, 0, tw, th);
+    if (video.duration && onProgress) onProgress(Math.min(0.99, video.currentTime / video.duration));
+    raf = requestAnimationFrame(draw);
+  };
+
+  recorder.start(1000);
+  await video.play();
+  draw();
+
+  await new Promise<void>((resolve) => { video.onended = () => resolve(); });
+  cancelAnimationFrame(raf);
+  if (recorder.state !== "inactive") recorder.stop();
+  const blob = await finished;
+  onProgress?.(1);
+  try { srcNode.disconnect(); await actx.close(); } catch { /* ignore */ }
+  URL.revokeObjectURL(video.src);
+
+  // Never upload something bigger than the original.
+  if (blob.size === 0 || blob.size >= file.size) {
+    return { blob: file, ext: (file.name.split(".").pop() || "mp4").toLowerCase() };
+  }
+  return { blob, ext };
 }
 
 interface VendorOption {
@@ -107,6 +205,7 @@ export default function NewVendorIssuePage() {
   const [docLink, setDocLink] = useState("");
   const [photoUrls, setPhotoUrls] = useState<string[]>([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [compressPct, setCompressPct] = useState<number | null>(null);
   const [vendorSearch, setVendorSearch] = useState("");
   const [showVendorDropdown, setShowVendorDropdown] = useState(false);
   const vendorRef = useRef<HTMLDivElement>(null);
@@ -180,11 +279,28 @@ export default function NewVendorIssuePage() {
             ext = "jpg";
             contentType = "image/jpeg";
           } else if (isVideo) {
-            if (file.size > MAX_VIDEO_BYTES) {
-              setError("Video is too large (max ~60MB). Please trim it and try again.");
+            if (file.size > MAX_VIDEO_INPUT_BYTES) {
+              setError("Video is too large (max 500MB). Please use a shorter clip.");
               continue;
             }
-            if (!ext) ext = "mp4";
+            // Compress in-browser (downscale + re-encode). Falls back to the original if the
+            // device can't compress; if the untouched original is too big to upload, ask to trim.
+            try {
+              setCompressPct(0);
+              const r = await compressVideo(file, (p) => setCompressPct(Math.round(p * 100)));
+              blob = r.blob;
+              ext = r.ext;
+              contentType = blob.type || `video/${ext}`;
+            } catch {
+              if (file.size > 50 * 1024 * 1024) {
+                setError("Couldn't compress this video on your device — please upload a shorter clip (under ~50MB).");
+                setCompressPct(null);
+                continue;
+              }
+              if (!ext) ext = "mp4";
+            } finally {
+              setCompressPct(null);
+            }
           } else {
             setError("Only images and videos can be attached.");
             continue;
@@ -512,6 +628,14 @@ export default function NewVendorIssuePage() {
               Upload Photo / Video
             </Button>
           </div>
+          {compressPct !== null && (
+            <div className="mt-2">
+              <p className="text-xs text-slate-500 mb-1">Compressing video… {compressPct}% — keep this screen open</p>
+              <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-600 transition-all" style={{ width: `${compressPct}%` }} />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Suggested Resolution */}
