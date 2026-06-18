@@ -137,10 +137,16 @@ enum ProductType {
 }
 
 // Active stock-tracking locations. Bins (see Bin model) are dormant; per-location
-// quantity lives in StockLevel keyed by this enum.
+// quantity lives in StockLevel keyed by this enum. Two sites (BCH, BCC), each with
+// a warehouse and a store. STORE/WAREHOUSE are legacy values kept only so old rows
+// migrate cleanly — they are no longer used by the app.
 enum StockLocation {
   STORE
   WAREHOUSE
+  BCH_WAREHOUSE
+  BCH_STORE
+  BCC_WAREHOUSE
+  BCC_STORE
 }
 
 model User {
@@ -305,8 +311,9 @@ model Product {
   @@index([name])
 }
 
-// Per-location stock for a product. The active source of truth for "how much, where".
-// Product.currentStock / reservedStock are kept as the cached sum across these rows.
+// Per-location stock for a product — one row per (product, location). The source of
+// truth for "how much, where". Product.currentStock is the cached SUM of these rows,
+// recomputed on every change (see src/lib/stock-location.ts).
 model StockLevel {
   id               String        @id @default(cuid())
   productId        String

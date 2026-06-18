@@ -7,7 +7,7 @@ import Link from "next/link";
 import { ArrowLeft, MapPin, Package } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
-import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
+import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, stockLocationLabel, type StockLocation } from "@/lib/inventory-config";
 
 interface Bin {
   id: string;
@@ -46,6 +46,8 @@ export default function NewStockAuditPage() {
   const [dueDate, setDueDate] = useState("");
   const [notes, setNotes] = useState("");
   const [scope, setScope] = useState<"bin" | "location" | "all">(BIN_TRACKING_ENABLED ? "bin" : "all");
+  // Location mode (bins dormant): which of the 4 locations this count is for (required).
+  const [stockLoc, setStockLoc] = useState<StockLocation | "">("");
   const [selectedBin, setSelectedBin] = useState("");
   const [selectedLocation, setSelectedLocation] = useState("");
   const [bins, setBins] = useState<Bin[]>([]);
@@ -113,6 +115,7 @@ export default function NewStockAuditPage() {
     if (!title || !dueDate) return;
     if (scope === "bin" && !selectedBin) return;
     if (scope === "location" && !selectedLocation) return;
+    if (!BIN_TRACKING_ENABLED && !stockLoc) { setError("Select a location"); return; }
     setSubmitting(true);
     setError("");
     try {
@@ -123,7 +126,9 @@ export default function NewStockAuditPage() {
         assignedToId: assignedTo || user?.userId,
       };
 
-      if (scope === "bin" && selectedBin) {
+      if (!BIN_TRACKING_ENABLED) {
+        body.location = stockLoc;
+      } else if (scope === "bin" && selectedBin) {
         body.binId = selectedBin;
       } else if (scope === "location" && selectedLocation) {
         body.location = selectedLocation;
@@ -148,7 +153,7 @@ export default function NewStockAuditPage() {
             { label: "Title", value: title },
             { label: "Assigned To", value: assignedUser?.name || "—" },
             { label: "Due Date", value: new Date(dueDate).toLocaleDateString("en-IN") },
-            { label: "Scope", value: scope === "bin" ? `Bin: ${bins.find((b) => b.id === selectedBin)?.code || selectedBin}` : scope === "location" ? `Location: ${selectedLocation}` : "All Products" },
+            { label: "Scope", value: !BIN_TRACKING_ENABLED ? stockLocationLabel(stockLoc || undefined) : scope === "bin" ? `Bin: ${bins.find((b) => b.id === selectedBin)?.code || selectedBin}` : scope === "location" ? `Location: ${selectedLocation}` : "All Products" },
           ],
           redirectTo: `/stock-audit/${data.data.id}`,
         });
@@ -186,6 +191,23 @@ export default function NewStockAuditPage() {
                 className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   scope === "all" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
                 }`}>All Products</button>
+            </div>
+          </div>
+        )}
+
+        {/* Location (bins dormant) — required: a count always targets one location */}
+        {!BIN_TRACKING_ENABLED && (
+          <div>
+            <label className="text-xs text-slate-500 mb-2 block">Location *</label>
+            <div className="grid grid-cols-2 gap-2">
+              {STOCK_LOCATIONS.map((loc) => (
+                <button key={loc.value} onClick={() => setStockLoc(loc.value)}
+                  className={`py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    stockLoc === loc.value ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                  }`}>
+                  {loc.label}
+                </button>
+              ))}
             </div>
           </div>
         )}
@@ -338,7 +360,7 @@ export default function NewStockAuditPage() {
         )}
 
         <button onClick={handleSubmit}
-          disabled={!title || !dueDate || !assignedTo || (scope === "bin" && !selectedBin) || (scope === "location" && !selectedLocation) || submitting}
+          disabled={!title || !dueDate || !assignedTo || (scope === "bin" && !selectedBin) || (scope === "location" && !selectedLocation) || (!BIN_TRACKING_ENABLED && !stockLoc) || submitting}
           className="w-full bg-slate-900 text-white py-3 rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed h-12">
           {submitting ? "Creating..." : "Create Stock Count"}
         </button>

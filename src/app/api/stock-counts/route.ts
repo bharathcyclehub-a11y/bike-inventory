@@ -5,6 +5,8 @@ import { prisma } from "@/lib/db";
 import { successResponse, errorResponse, paginatedResponse, parseSearchParams } from "@/lib/api-utils";
 import { stockCountSchema } from "@/lib/validations";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { BIN_TRACKING_ENABLED, isStockLocation, type StockLocation } from "@/lib/inventory-config";
+import { getLocationQtyMap } from "@/lib/stock-location";
 
 export async function GET(req: NextRequest) {
   try {
@@ -74,11 +76,13 @@ export async function POST(req: NextRequest) {
     const binId = body.binId as string | undefined;
     const locationScope = body.location as string | undefined;
     const productType = data.productType || undefined;
+    // Location mode (bins dormant): locationScope is one of the 4 StockLocations.
+    const isLocationScoped = !BIN_TRACKING_ENABLED && isStockLocation(locationScope);
 
     let binIds: string[] | undefined;
     if (!productIds || productIds.length === 0) {
-      // Location-level scope: find all bins in that location, then get products from those bins
-      if (locationScope) {
+      // Bin mode only: find all bins in that location, then products from those bins.
+      if (BIN_TRACKING_ENABLED && locationScope) {
         const locationBins = await prisma.bin.findMany({
           where: { location: locationScope, isActive: true },
           select: { id: true },
@@ -89,17 +93,17 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Baseline mode: include ALL active products for bin/location counts
-      // so clerks can count what's physically there (items may not be assigned to a bin yet)
+      // Baseline mode: include ALL active products so clerks can count what's
+      // physically there (items may not be assigned to a bin yet)
       const BASELINE_END = new Date("2026-07-31T23:59:59+05:30");
       const isBaseline = new Date() <= BASELINE_END;
 
       const allProducts = await prisma.product.findMany({
         where: {
           status: "ACTIVE",
-          ...(productType && { type: productType }),
-          ...(!isBaseline && binId && { binId }),
-          ...(!isBaseline && binIds && { binId: { in: binIds } }),
+          ...(productType ? { type: productType } : {}),
+          ...(BIN_TRACKING_ENABLED && !isBaseline && binId ? { binId } : {}),
+          ...(BIN_TRACKING_ENABLED && !isBaseline && binIds ? { binId: { in: binIds } } : {}),
         },
         select: { id: true },
       });
@@ -115,6 +119,10 @@ export async function POST(req: NextRequest) {
       where: { id: { in: productIds } },
       select: { id: true, currentStock: true, binId: true },
     });
+
+    // In location mode, systemQty is the quantity AT THE COUNTED LOCATION so the
+    // variance is per-location (not against the product's total).
+    const locQtyMap = isLocationScoped ? await getLocationQtyMap(productIds, locationScope as StockLocation) : null;
 
     // Generate countNo: SC-YYYYMM-NNNN
     const now = new Date();
@@ -143,6 +151,7 @@ export async function POST(req: NextRequest) {
             // Only show system stock if product belongs to THIS bin/location
             // Products from other bins show systemQty=0 so clerks aren't confused
             systemQty: (() => {
+              if (isLocationScoped) return locQtyMap!.get(p.id) ?? 0; // qty at the counted location
               if (!p.binId) return p.currentStock; // unassigned product — show its stock
               if (binId && p.binId !== binId) return 0; // belongs to a different bin
               if (binIds && !binIds.includes(p.binId)) return 0; // belongs to a bin outside this location

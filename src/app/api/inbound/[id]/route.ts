@@ -4,8 +4,8 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
-import { BIN_TRACKING_ENABLED, type StockLocation } from "@/lib/inventory-config";
-import { adjustWarehouseQty } from "@/lib/stock-location";
+import { BIN_TRACKING_ENABLED, DEFAULT_STOCK_LOCATION, isStockLocation, stockLocationLabel, type StockLocation } from "@/lib/inventory-config";
+import { adjustLocationQty } from "@/lib/stock-location";
 
 // GET: Shipment detail
 export async function GET(
@@ -81,7 +81,7 @@ export async function PUT(
         return errorResponse("Bin assignment is required when marking items delivered", 400);
       }
       const primaryBinId = binAllocations[0]?.binId ?? null;
-      const location: StockLocation = body.location === "WAREHOUSE" ? "WAREHOUSE" : "STORE";
+      const location: StockLocation = isStockLocation(body.location) ? body.location : DEFAULT_STOCK_LOCATION;
 
       await prisma.$transaction(async (tx) => {
         await tx.inboundLineItem.update({
@@ -126,7 +126,7 @@ export async function PUT(
               data: { currentStock: runningStock, binId: primaryBinId },
             });
           } else {
-            // Location mode: single transaction, bump warehouse level if received there
+            // Location mode: add qty to the chosen location; currentStock recomputes as the sum.
             const previousStock = runningStock;
             runningStock += qty;
             await tx.inventoryTransaction.create({
@@ -137,17 +137,11 @@ export async function PUT(
                 previousStock,
                 newStock: runningStock,
                 referenceNo: lineItem.shipment.shipmentNo,
-                notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${qty} → ${location === "WAREHOUSE" ? "Warehouse" : "Store"}`,
+                notes: `[INBOUND] Brand: ${lineItem.shipment.brand.name} | Bill: ${lineItem.shipment.billNo} | ${lineItem.productName} x${qty} → ${stockLocationLabel(location)}`,
                 userId: user.id,
               },
             });
-            await tx.product.update({
-              where: { id: matchedProduct.id },
-              data: { currentStock: runningStock },
-            });
-            if (location === "WAREHOUSE") {
-              await adjustWarehouseQty(tx, matchedProduct.id, qty);
-            }
+            await adjustLocationQty(tx, matchedProduct.id, location, qty);
           }
 
           // Auto-create delivery for pre-booked items so outwards clerk can see it

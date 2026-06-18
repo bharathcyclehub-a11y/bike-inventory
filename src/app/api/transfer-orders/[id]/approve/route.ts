@@ -4,8 +4,8 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
-import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
-import { adjustWarehouseQty, getWarehouseQtyMap, splitStock } from "@/lib/stock-location";
+import { BIN_TRACKING_ENABLED, stockLocationLabel, type StockLocation } from "@/lib/inventory-config";
+import { adjustLocationQty, getLocationBreakdown } from "@/lib/stock-location";
 
 // POST: Approve or reject a transfer order
 export async function POST(
@@ -40,9 +40,9 @@ export async function POST(
 
     if (action === "approve") {
       // Verify stock is still available at the source
-      const warehouseMap = BIN_TRACKING_ENABLED
-        ? new Map<string, number>()
-        : await getWarehouseQtyMap(order.items.map((i) => i.productId));
+      const breakdown = BIN_TRACKING_ENABLED
+        ? new Map<string, Record<string, number>>()
+        : await getLocationBreakdown(order.items.map((i) => i.productId));
       for (const item of order.items) {
         if (BIN_TRACKING_ENABLED) {
           if (item.product.currentStock < item.quantity) {
@@ -52,11 +52,10 @@ export async function POST(
             );
           }
         } else {
-          const { store, warehouse } = splitStock(item.product.currentStock, warehouseMap.get(item.productId) ?? 0);
-          const available = item.fromLocation === "WAREHOUSE" ? warehouse : store;
+          const available = item.fromLocation ? (breakdown.get(item.productId)?.[item.fromLocation] ?? 0) : 0;
           if (available < item.quantity) {
             return errorResponse(
-              `Insufficient stock for ${item.product.name} at ${item.fromLocation === "WAREHOUSE" ? "Warehouse" : "Store"}. Available: ${available}, Requested: ${item.quantity}`,
+              `Insufficient stock for ${item.product.name} at ${stockLocationLabel(item.fromLocation)}. Available: ${available}, Requested: ${item.quantity}`,
               400
             );
           }
@@ -94,8 +93,9 @@ export async function POST(
               },
             });
           } else {
-            // Location mode: shift warehouse quantity. currentStock unchanged.
-            await adjustWarehouseQty(tx, item.productId, item.toLocation === "WAREHOUSE" ? item.quantity : -item.quantity);
+            // Location mode: move qty out of source, into destination. Total unchanged.
+            await adjustLocationQty(tx, item.productId, item.fromLocation as StockLocation, -item.quantity);
+            await adjustLocationQty(tx, item.productId, item.toLocation as StockLocation, item.quantity);
             await tx.inventoryTransaction.create({
               data: {
                 type: "TRANSFER",
@@ -104,7 +104,7 @@ export async function POST(
                 previousStock: item.product.currentStock,
                 newStock: item.product.currentStock,
                 referenceNo: order.orderNo,
-                notes: `[APPROVED] From: ${item.fromLocation === "WAREHOUSE" ? "Warehouse" : "Store"} → To: ${item.toLocation === "WAREHOUSE" ? "Warehouse" : "Store"} | Transfer Order: ${order.orderNo}`,
+                notes: `[APPROVED] From: ${stockLocationLabel(item.fromLocation)} → To: ${stockLocationLabel(item.toLocation)} | Transfer Order: ${order.orderNo}`,
                 userId: user.id,
               },
             });

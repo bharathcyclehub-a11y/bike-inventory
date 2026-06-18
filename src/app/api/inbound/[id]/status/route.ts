@@ -4,8 +4,8 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
-import { BIN_TRACKING_ENABLED, type StockLocation } from "@/lib/inventory-config";
-import { adjustWarehouseQty } from "@/lib/stock-location";
+import { BIN_TRACKING_ENABLED, DEFAULT_STOCK_LOCATION, isStockLocation, stockLocationLabel, type StockLocation } from "@/lib/inventory-config";
+import { adjustLocationQty } from "@/lib/stock-location";
 
 // PUT: Update shipment status (IN_TRANSIT ↔ PARTIALLY_DELIVERED → DELIVERED)
 export async function PUT(
@@ -18,7 +18,7 @@ export async function PUT(
     const body = await req.json();
     const { status } = body;
     // Location mode (bins dormant): receive the whole shipment into one location.
-    const location: StockLocation = body.location === "WAREHOUSE" ? "WAREHOUSE" : "STORE";
+    const location: StockLocation = isStockLocation(body.location) ? body.location : DEFAULT_STOCK_LOCATION;
     // Support both legacy {lineItemId, binId} and new {lineItemId, binAllocations: [{binId, qty}]}
     const rawAssignments: Array<{ lineItemId: string; binId?: string; binAllocations?: Array<{ binId: string; qty: number }> }> = body.binAssignments || [];
     const binAssignments = rawAssignments.map((ba) => ({
@@ -146,7 +146,7 @@ export async function PUT(
             data: { currentStock: runningStock, ...(primaryBinId ? { binId: primaryBinId } : {}) },
           });
         } else {
-          // Location mode: single transaction into the chosen location
+          // Location mode: add qty to the chosen location; currentStock recomputes as the sum.
           const previousStock = runningStock;
           runningStock += qty;
           await tx.inventoryTransaction.create({
@@ -157,17 +157,11 @@ export async function PUT(
               previousStock,
               newStock: runningStock,
               referenceNo: existing.shipmentNo,
-              notes: `[INBOUND] Brand: ${existing.brand.name} | Bill: ${existing.billNo} | ${li.productName} x${qty} → ${location === "WAREHOUSE" ? "Warehouse" : "Store"}`,
+              notes: `[INBOUND] Brand: ${existing.brand.name} | Bill: ${existing.billNo} | ${li.productName} x${qty} → ${stockLocationLabel(location)}`,
               userId: user.id,
             },
           });
-          await tx.product.update({
-            where: { id: matchedProduct.id },
-            data: { currentStock: runningStock },
-          });
-          if (location === "WAREHOUSE") {
-            await adjustWarehouseQty(tx, matchedProduct.id, qty);
-          }
+          await adjustLocationQty(tx, matchedProduct.id, location, qty);
         }
       }
 

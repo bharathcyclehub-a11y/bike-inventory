@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { Plus, ArrowRightLeft, ArrowRight, CheckCircle2, XCircle, Clock, Loader2, Package } from "lucide-react";
+import { stockLocationLabel } from "@/lib/inventory-config";
 import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
 import { type DateRangeKey } from "@/components/date-filter";
 import { FilterSheet } from "@/components/filter-sheet";
@@ -20,14 +21,14 @@ interface TransferOrderItem {
   product: { name: string; sku: string; currentStock: number };
   fromBin: { code: string; name: string; location: string } | null;
   toBin: { code: string; name: string; location: string } | null;
-  fromLocation: "STORE" | "WAREHOUSE" | null;
-  toLocation: "STORE" | "WAREHOUSE" | null;
+  fromLocation: string | null;
+  toLocation: string | null;
 }
 
 // Display label for an endpoint: bin code in bin mode, location name in location mode.
-function endpointLabel(bin: { code: string } | null, loc: "STORE" | "WAREHOUSE" | null): string {
+function endpointLabel(bin: { code: string } | null, loc: string | null): string {
   if (bin) return bin.code;
-  if (loc) return loc === "WAREHOUSE" ? "Warehouse" : "Store";
+  if (loc) return stockLocationLabel(loc);
   return "—";
 }
 

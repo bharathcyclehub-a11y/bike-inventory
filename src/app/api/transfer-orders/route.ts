@@ -5,16 +5,16 @@ import { prisma } from "@/lib/db";
 import { successResponse, errorResponse, paginatedResponse, parseSearchParams } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
 import { z } from "zod";
-import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
-import { adjustWarehouseQty, getWarehouseQtyMap, splitStock } from "@/lib/stock-location";
+import { BIN_TRACKING_ENABLED, stockLocationLabel } from "@/lib/inventory-config";
+import { adjustLocationQty, getLocationBreakdown } from "@/lib/stock-location";
 
 const itemSchema = z.object({
   productId: z.string().min(1),
   quantity: z.number().int().min(1),
   fromBinId: z.string().optional(),
   toBinId: z.string().optional(),
-  fromLocation: z.enum(["STORE", "WAREHOUSE"]).optional(),
-  toLocation: z.enum(["STORE", "WAREHOUSE"]).optional(),
+  fromLocation: z.enum(["BCH_WAREHOUSE", "BCH_STORE", "BCC_WAREHOUSE", "BCC_STORE"]).optional(),
+  toLocation: z.enum(["BCH_WAREHOUSE", "BCH_STORE", "BCC_WAREHOUSE", "BCC_STORE"]).optional(),
 });
 
 const createSchema = z.object({
@@ -112,17 +112,16 @@ export async function POST(req: NextRequest) {
         }
       }
     } else {
-      // Location mode: move quantity between Store and Warehouse.
-      const warehouseMap = await getWarehouseQtyMap(productIds);
+      // Location mode: move quantity between any two of the tracked locations.
+      const breakdown = await getLocationBreakdown(productIds);
       for (const item of data.items) {
         const product = productMap.get(item.productId);
         if (!product) return errorResponse(`Product not found: ${item.productId}`, 404);
         if (!item.fromLocation || !item.toLocation) return errorResponse("Source and destination locations are required", 400);
         if (item.fromLocation === item.toLocation) return errorResponse("Source and destination locations must be different", 400);
-        const { store, warehouse } = splitStock(product.currentStock, warehouseMap.get(product.id) ?? 0);
-        const available = item.fromLocation === "WAREHOUSE" ? warehouse : store;
+        const available = breakdown.get(product.id)?.[item.fromLocation] ?? 0;
         if (available < item.quantity) {
-          return errorResponse(`Insufficient stock for ${product.name} at ${item.fromLocation === "WAREHOUSE" ? "Warehouse" : "Store"}. Available: ${available}`, 400);
+          return errorResponse(`Insufficient stock for ${product.name} at ${stockLocationLabel(item.fromLocation)}. Available: ${available}`, 400);
         }
       }
     }
@@ -204,8 +203,9 @@ export async function POST(req: NextRequest) {
               },
             });
           } else {
-            // Location mode: shift warehouse quantity. currentStock is unchanged.
-            await adjustWarehouseQty(tx, item.productId, item.toLocation === "WAREHOUSE" ? item.quantity : -item.quantity);
+            // Location mode: move qty out of source, into destination. Total unchanged.
+            await adjustLocationQty(tx, item.productId, item.fromLocation!, -item.quantity);
+            await adjustLocationQty(tx, item.productId, item.toLocation!, item.quantity);
             await tx.inventoryTransaction.create({
               data: {
                 type: "TRANSFER",
@@ -214,7 +214,7 @@ export async function POST(req: NextRequest) {
                 previousStock: product.currentStock,
                 newStock: product.currentStock,
                 referenceNo: orderNo,
-                notes: `[APPROVED] From: ${item.fromLocation === "WAREHOUSE" ? "Warehouse" : "Store"} → To: ${item.toLocation === "WAREHOUSE" ? "Warehouse" : "Store"} | Transfer Order: ${orderNo}`,
+                notes: `[APPROVED] From: ${stockLocationLabel(item.fromLocation)} → To: ${stockLocationLabel(item.toLocation)} | Transfer Order: ${orderNo}`,
                 userId: user.id,
               },
             });

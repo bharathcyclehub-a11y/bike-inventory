@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { usePermissions } from "@/lib/use-permissions";
-import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, type StockLocation } from "@/lib/inventory-config";
+import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, DEFAULT_STOCK_LOCATION, stockLocationLabel, type StockLocation } from "@/lib/inventory-config";
 
 interface LineItem {
   id: string;
@@ -111,7 +111,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   // Per-item bin selections: lineItemId → array of binIds (one per unit)
   const [binSelections, setBinSelections] = useState<Record<string, string[]>>({});
   // Location mode (bins dormant): where this shipment's stock is received
-  const [receiveLocation, setReceiveLocation] = useState<StockLocation>("STORE");
+  const [receiveLocation, setReceiveLocation] = useState<StockLocation>(DEFAULT_STOCK_LOCATION);
   const [shipmentType, setShipmentType] = useState<"BICYCLE" | "SPARE_PART" | "ACCESSORY" | "MIXED" | null>(null);
 
   useEffect(() => {
@@ -292,7 +292,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
             { label: "Quantity", value: `${li.quantity} units` },
             BIN_TRACKING_ENABLED
               ? { label: "Bin", value: bins.find(b => b.id === (binSelections[li.id]?.[0]))?.code || "Assigned" }
-              : { label: "Location", value: receiveLocation === "WAREHOUSE" ? "Warehouse" : "Store" },
+              : { label: "Location", value: stockLocationLabel(receiveLocation) },
           ],
           details: `Bill: ${shipment?.billNo}`,
         });

@@ -5,28 +5,32 @@
 // routes, and the per-unit allocation flow all remain in the codebase. While
 // BIN_TRACKING_ENABLED is false:
 //   - bin UI is hidden from the frontend
-//   - inbound receiving and transfers require a LOCATION, not a bin
-//   - location-level quantity (StockLevel) is the active source of truth
-// Flip this to true to bring bins back (plus a reconciliation step to slot the
-// existing per-location stock under bins again).
+//   - inbound/transfers/counts operate on LOCATIONS, not bins
+// Flip this to true to bring bins back.
 export const BIN_TRACKING_ENABLED = false;
 
-// The two stock locations we actively track. Mirrors the StockLocation enum in
-// prisma/schema.prisma.
-export type StockLocation = "STORE" | "WAREHOUSE";
+// The active stock locations. Two sites (BCH, BCC), each with a warehouse and a
+// store. Mirrors the StockLocation enum in prisma/schema.prisma. currentStock is the
+// sum across a product's location rows.
+export type StockLocation = "BCH_WAREHOUSE" | "BCH_STORE" | "BCC_WAREHOUSE" | "BCC_STORE";
 
-export const STOCK_LOCATIONS: { value: StockLocation; label: string }[] = [
-  { value: "STORE", label: "Store" },
-  { value: "WAREHOUSE", label: "Warehouse" },
+export const STOCK_LOCATIONS: { value: StockLocation; label: string; site: "BCH" | "BCC"; kind: "Warehouse" | "Store" }[] = [
+  { value: "BCH_WAREHOUSE", label: "BCH Warehouse", site: "BCH", kind: "Warehouse" },
+  { value: "BCH_STORE", label: "BCH Store", site: "BCH", kind: "Store" },
+  { value: "BCC_WAREHOUSE", label: "BCC Warehouse", site: "BCC", kind: "Warehouse" },
+  { value: "BCC_STORE", label: "BCC Store", site: "BCC", kind: "Store" },
 ];
 
-export const DEFAULT_STOCK_LOCATION: StockLocation = "STORE";
+// Where the current on-hand (90 units) is seeded; also the fallback for any
+// stock that lacks an explicit location.
+export const DEFAULT_STOCK_LOCATION: StockLocation = "BCH_WAREHOUSE";
 
-// Maps a legacy Bin.location string (e.g. "Bharath Cycle Hub - Ground Floor",
-// "Warehouse G1", "Bharath Cycle Centre") onto one of the two active buckets.
-// Anything that isn't clearly a warehouse falls back to STORE — this is also the
-// rule for products that never had a bin assigned.
-export function binLocationToStockLocation(binLocation: string | null | undefined): StockLocation {
-  if (binLocation && /warehouse/i.test(binLocation)) return "WAREHOUSE";
-  return "STORE";
+const VALID = new Set<string>(STOCK_LOCATIONS.map((l) => l.value));
+
+export function isStockLocation(value: string | null | undefined): value is StockLocation {
+  return !!value && VALID.has(value);
+}
+
+export function stockLocationLabel(value: string | null | undefined): string {
+  return STOCK_LOCATIONS.find((l) => l.value === value)?.label ?? "—";
 }

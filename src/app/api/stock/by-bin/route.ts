@@ -3,64 +3,43 @@ export const revalidate = 60; // cache 1 minute
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
-import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
+import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS } from "@/lib/inventory-config";
 
 export async function GET() {
   try {
     await requireAuth();
 
-    // ── Location mode (bins dormant): Store vs Warehouse summary ──
+    // ── Location mode (bins dormant): per-location summary across the 4 locations ──
     if (!BIN_TRACKING_ENABLED) {
-      const [grandRows, whRows] = await Promise.all([
-        prisma.$queryRaw<Array<{ total_stock: number; total_value: number; in_stock: number; low_stock: number; out_of_stock: number }>>`
-          SELECT
-            COALESCE(SUM("currentStock"), 0)::int as total_stock,
-            COALESCE(SUM("currentStock" * "sellingPrice"), 0)::float as total_value,
-            COUNT(*) FILTER (WHERE "currentStock" > 0)::int as in_stock,
-            COUNT(*) FILTER (WHERE "reorderLevel" > 0 AND "currentStock" <= "reorderLevel")::int as low_stock,
-            COUNT(*) FILTER (WHERE "currentStock" <= 0)::int as out_of_stock
-          FROM "Product" WHERE status = 'ACTIVE'
-        `,
-        // Warehouse quantity is clamped into [0, currentStock] so Store is never negative.
-        prisma.$queryRaw<Array<{ total_stock: number; total_value: number; product_count: number }>>`
-          SELECT
-            COALESCE(SUM(GREATEST(0, LEAST(sl.quantity, GREATEST(p."currentStock", 0)))), 0)::int as total_stock,
-            COALESCE(SUM(GREATEST(0, LEAST(sl.quantity, GREATEST(p."currentStock", 0))) * p."sellingPrice"), 0)::float as total_value,
-            COUNT(*) FILTER (WHERE GREATEST(0, LEAST(sl.quantity, GREATEST(p."currentStock", 0))) > 0)::int as product_count
-          FROM "StockLevel" sl
-          JOIN "Product" p ON p.id = sl."productId"
-          WHERE sl.location = 'WAREHOUSE' AND p.status = 'ACTIVE'
-        `,
-      ]);
+      const rows = await prisma.$queryRaw<Array<{ location: string; total_stock: number; total_value: number; product_count: number }>>`
+        SELECT
+          sl.location::text as location,
+          COALESCE(SUM(sl.quantity), 0)::int as total_stock,
+          COALESCE(SUM(sl.quantity * p."sellingPrice"), 0)::float as total_value,
+          COUNT(*) FILTER (WHERE sl.quantity > 0)::int as product_count
+        FROM "StockLevel" sl
+        JOIN "Product" p ON p.id = sl."productId"
+        WHERE p.status = 'ACTIVE'
+        GROUP BY sl.location
+      `;
+      const byLoc = new Map(rows.map((r) => [r.location, r]));
 
-      const grand = grandRows[0] || { total_stock: 0, total_value: 0, in_stock: 0, low_stock: 0, out_of_stock: 0 };
-      const wh = whRows[0] || { total_stock: 0, total_value: 0, product_count: 0 };
-      const storeStock = grand.total_stock - wh.total_stock;
-      const storeValue = grand.total_value - wh.total_value;
-
-      const data = [
-        {
-          key: "STORE",
-          label: "Store",
-          totalStock: storeStock,
-          totalValue: storeValue,
-          // Most products live only at the store; show the in-stock count here.
-          productCount: grand.in_stock - wh.product_count,
-          lowStockCount: grand.low_stock,
-          outOfStockCount: grand.out_of_stock,
-        },
-        {
-          key: "WAREHOUSE",
-          label: "Warehouse",
-          totalStock: wh.total_stock,
-          totalValue: wh.total_value,
-          productCount: wh.product_count,
+      const locations = STOCK_LOCATIONS.map((loc) => {
+        const r = byLoc.get(loc.value);
+        return {
+          key: loc.value,
+          label: loc.label,
+          site: loc.site,
+          kind: loc.kind,
+          totalStock: r?.total_stock ?? 0,
+          totalValue: r?.total_value ?? 0,
+          productCount: r?.product_count ?? 0,
           lowStockCount: 0,
           outOfStockCount: 0,
-        },
-      ];
+        };
+      });
 
-      return successResponse({ mode: "location", locations: data });
+      return successResponse({ mode: "location", locations });
     }
 
     // ── Bin mode (dormant) ──

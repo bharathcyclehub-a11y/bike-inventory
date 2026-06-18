@@ -5,6 +5,8 @@ import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { stockCountUpdateSchema } from "@/lib/validations";
 import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { BIN_TRACKING_ENABLED, isStockLocation, type StockLocation } from "@/lib/inventory-config";
+import { setLocationQty } from "@/lib/stock-location";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -166,6 +168,10 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       if (data.status === "APPROVED") {
         const BASELINE_END = new Date("2026-07-31T23:59:59+05:30");
         const isBaselinePeriod = new Date() <= BASELINE_END;
+        // Location mode: the count was scoped to one of the 4 locations, so apply the
+        // counted qty to THAT location (currentStock recomputes as the sum).
+        const isLocCount = !BIN_TRACKING_ENABLED && isStockLocation(existing.location);
+        const countLocation = existing.location as StockLocation;
 
         // Process all items that were counted (including 0 — means item not found at location)
         const countedItems = await tx.stockCountItem.findMany({
@@ -199,17 +205,24 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           }
 
           if (isBaselinePeriod) {
-            // --- BASELINE MODE (until May 31): Stock count = INWARD + PUTAWAY ---
-            // Only assign bin if item was actually found (count > 0)
-            const assignBin = existing.binId && item.countedQty > 0;
-            await tx.product.update({
-              where: { id: product.id },
-              data: {
-                currentStock: item.countedQty,
-                ...(assignBin && { binId: existing.binId }),
-                ...brandUpdate,
-              },
-            });
+            // --- BASELINE MODE: Stock count = INWARD + PUTAWAY ---
+            let newTotal = item.countedQty;
+            if (isLocCount) {
+              newTotal = await setLocationQty(tx, product.id, countLocation, item.countedQty);
+              if (Object.keys(brandUpdate).length) {
+                await tx.product.update({ where: { id: product.id }, data: brandUpdate });
+              }
+            } else {
+              const assignBin = existing.binId && item.countedQty > 0;
+              await tx.product.update({
+                where: { id: product.id },
+                data: {
+                  currentStock: item.countedQty,
+                  ...(assignBin && { binId: existing.binId }),
+                  ...brandUpdate,
+                },
+              });
+            }
 
             await tx.inventoryTransaction.create({
               data: {
@@ -217,24 +230,31 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
                 productId: product.id,
                 quantity: item.countedQty,
                 previousStock: product.currentStock,
-                newStock: item.countedQty,
+                newStock: newTotal,
                 referenceNo: existing.title,
-                notes: `[STOCK_COUNT] [BASELINE] Counted ${item.countedQty} units${existing.binId ? " — placed in bin" : ""}${item.suggestedBrand ? ` — brand: ${item.suggestedBrand}` : ""} during "${existing.title}"`,
+                notes: `[STOCK_COUNT] [BASELINE] Counted ${item.countedQty} units${isLocCount ? ` at ${countLocation}` : existing.binId ? " — placed in bin" : ""}${item.suggestedBrand ? ` — brand: ${item.suggestedBrand}` : ""} during "${existing.title}"`,
                 userId: user.id,
               },
             });
           } else {
-            // --- VERIFICATION MODE (after May 31): Stock count = AUDIT ---
-            const variance = item.countedQty - product.currentStock;
+            // --- VERIFICATION MODE: Stock count = AUDIT ---
+            const variance = item.countedQty - (isLocCount ? (item.systemQty ?? 0) : product.currentStock);
 
-            await tx.product.update({
-              where: { id: product.id },
-              data: {
-                currentStock: item.countedQty,
-                ...(existing.binId && { binId: existing.binId }),
-                ...brandUpdate,
-              },
-            });
+            if (isLocCount) {
+              await setLocationQty(tx, product.id, countLocation, item.countedQty);
+              if (Object.keys(brandUpdate).length) {
+                await tx.product.update({ where: { id: product.id }, data: brandUpdate });
+              }
+            } else {
+              await tx.product.update({
+                where: { id: product.id },
+                data: {
+                  currentStock: item.countedQty,
+                  ...(existing.binId && { binId: existing.binId }),
+                  ...brandUpdate,
+                },
+              });
+            }
 
             if (variance !== 0) {
               await tx.inventoryTransaction.create({
@@ -242,7 +262,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
                   type: "ADJUSTMENT",
                   productId: product.id,
                   quantity: Math.abs(variance),
-                  previousStock: product.currentStock,
+                  previousStock: isLocCount ? (item.systemQty ?? 0) : product.currentStock,
                   newStock: item.countedQty,
                   referenceNo: existing.title,
                   notes: `[STOCK_COUNT] [VERIFICATION] ${variance > 0 ? "Surplus" : "Shortage"} of ${Math.abs(variance)} found during "${existing.title}"`,

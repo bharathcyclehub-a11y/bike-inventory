@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
-import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, type StockLocation } from "@/lib/inventory-config";
+import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, stockLocationLabel, type StockLocation } from "@/lib/inventory-config";
 
 interface Product {
   id: string;
@@ -135,9 +135,9 @@ export default function NewTransferOrderPage() {
         quantity: 1,
         fromBinId: product.bin?.id || "",
         toBinId: "",
-        // Default direction: replenish the shop floor from the warehouse
-        fromLocation: "WAREHOUSE",
-        toLocation: "STORE",
+        // Default direction: replenish a shop floor from its warehouse
+        fromLocation: "BCH_WAREHOUSE",
+        toLocation: "BCH_STORE",
       },
     ]);
     setSearch("");
@@ -148,9 +148,10 @@ export default function NewTransferOrderPage() {
     setItems((prev) => prev.map((item, i) => {
       if (i !== index) return item;
       const next = { ...item, [field]: value };
-      // In location mode, keep To as the opposite of From (only two locations)
-      if (!BIN_TRACKING_ENABLED && field === "fromLocation") {
-        next.toLocation = value === "WAREHOUSE" ? "STORE" : "WAREHOUSE";
+      // If From now equals To, bump To to a different location.
+      if (!BIN_TRACKING_ENABLED && field === "fromLocation" && next.toLocation === value) {
+        const other = STOCK_LOCATIONS.find((l) => l.value !== value);
+        if (other) next.toLocation = other.value;
       }
       return next;
     }));
@@ -166,7 +167,7 @@ export default function NewTransferOrderPage() {
   }
 
   function locationLabel(loc: StockLocation) {
-    return loc === "WAREHOUSE" ? "Warehouse" : "Store";
+    return stockLocationLabel(loc);
   }
 
   const isValid = items.length > 0 && items.every((i) =>
