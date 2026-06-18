@@ -28,6 +28,14 @@ interface SearchResult {
 type Step = "brand" | "bin" | "count" | "submitted";
 type InlineEdit = { productId: string; field: "brand" | "category" } | null;
 
+// Auto-save key for an in-progress count, so a refresh / accidental close
+// doesn't wipe everything the user has entered.
+const DRAFT_KEY = "brand-count-draft";
+
+function clearBrandCountDraft() {
+  try { localStorage.removeItem(DRAFT_KEY); } catch { /* ignore */ }
+}
+
 export default function BrandCountPage() {
   const { data: session } = useSession();
   const userName = (session?.user as { name?: string })?.name || "You";
@@ -47,6 +55,7 @@ export default function BrandCountPage() {
   const [brandSearch, setBrandSearch] = useState("");
   const [resultId, setResultId] = useState("");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set());
+  const [draftRestored, setDraftRestored] = useState(false);
 
   // Inline brand/category edit
   const [inlineEdit, setInlineEdit] = useState<InlineEdit>(null);
@@ -56,6 +65,38 @@ export default function BrandCountPage() {
   const [notInListSearch, setNotInListSearch] = useState("");
   const [notInListResults, setNotInListResults] = useState<SearchResult[]>([]);
   const [notInListSearching, setNotInListSearching] = useState(false);
+
+  // Restore an in-progress count after a refresh / reopen.
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw) as {
+        step?: Step;
+        selectedBrand?: Brand | null;
+        selectedBin?: BinOption | null;
+        products?: ProductItem[];
+        counts?: Record<string, { qty: number | null; reorder: number | null }>;
+      };
+      if (d.step && d.step !== "submitted" && d.selectedBrand) {
+        setSelectedBrand(d.selectedBrand);
+        if (d.selectedBin) setSelectedBin(d.selectedBin);
+        if (Array.isArray(d.products) && d.products.length) setProducts(d.products);
+        if (d.counts) setCounts(d.counts);
+        setStep(d.step);
+        setDraftRestored(true);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // Auto-save the in-progress count on every change (skip the empty/done states).
+  useEffect(() => {
+    if (step === "submitted") return;
+    if (step === "brand" && !selectedBrand) return;
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ step, selectedBrand, selectedBin, products, counts }));
+    } catch { /* ignore */ }
+  }, [step, selectedBrand, selectedBin, products, counts]);
 
   useEffect(() => {
     Promise.all([
@@ -271,6 +312,7 @@ export default function BrandCountPage() {
         return;
       }
 
+      clearBrandCountDraft();
       setResultId(countId);
       setStep("submitted");
     } catch (e) {
@@ -328,6 +370,22 @@ export default function BrandCountPage() {
         <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-700">
           {error}
           <button onClick={() => setError("")} className="ml-2 underline">dismiss</button>
+        </div>
+      )}
+
+      {draftRestored && step !== "submitted" && (
+        <div className="bg-green-50 border border-green-200 rounded-lg p-2.5 mb-3 text-xs text-green-800 flex items-center justify-between gap-2">
+          <span>✓ Restored your in-progress count{selectedBrand ? ` for ${selectedBrand.name}` : ""}.</span>
+          <button
+            onClick={() => {
+              clearBrandCountDraft();
+              setStep("brand"); setSelectedBrand(null); setSelectedBin(null);
+              setProducts([]); setCounts({}); setSearch(""); setDraftRestored(false);
+            }}
+            className="underline shrink-0"
+          >
+            Start fresh
+          </button>
         </div>
       )}
 
@@ -694,9 +752,10 @@ export default function BrandCountPage() {
             </Link>
             <button
               onClick={() => {
+                clearBrandCountDraft();
                 setStep("brand"); setSelectedBrand(null); setSelectedBin(null);
                 setProducts([]); setCounts({}); setSearch(""); setResultId("");
-                setNotInListSearch(""); setNotInListResults([]);
+                setNotInListSearch(""); setNotInListResults([]); setDraftRestored(false);
               }}
               className="px-4 py-2 bg-slate-100 text-slate-700 rounded-lg text-sm font-medium">
               Count Another Brand
