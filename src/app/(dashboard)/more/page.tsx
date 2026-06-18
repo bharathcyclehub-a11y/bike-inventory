@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useSession, signOut } from "next-auth/react";
+import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
 import {
   User,
   Settings,
@@ -111,7 +112,7 @@ const MENU_GROUPS: MenuGroup[] = [
       { label: "Reports", icon: BarChart3, href: "/reports", roles: ["ADMIN", "SUPERVISOR", "STORE_MANAGER", "SALES_MANAGER", "CUSTOM"], featureKey: "reports" },
       { label: "Service Revenue", icon: Wrench, href: "/service-revenue", roles: ["ADMIN", "SERVICE_MANAGER"] },
       { label: "AI Insights", icon: Brain, href: "/ai", roles: ["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "CUSTOM"], featureKey: "reorder" },
-      { label: "Bins & Locations", icon: Warehouse, href: "/more/bins", roles: ["ADMIN"] },
+      ...(BIN_TRACKING_ENABLED ? [{ label: "Bins & Locations", icon: Warehouse, href: "/more/bins", roles: ["ADMIN"] }] as MenuItem[] : []),
       { label: "Brand Management", icon: Settings, href: "/more/brands", roles: ["ADMIN"] },
       { label: "Brand Lead Times", icon: Clock, href: "/more/brand-lead-times", roles: ["ADMIN"] },
       { label: "Price Correction", icon: IndianRupee, href: "/price-correction", roles: ["ADMIN"] },

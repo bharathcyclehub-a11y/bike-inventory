@@ -1252,7 +1252,7 @@ function PerItemView({
                             <span className="text-xs text-slate-400">{group.categoryName}</span>
                           )}
                         </div>
-                        <p className="text-[11px] text-slate-500 mt-1">{locationLine}</p>
+                        {BIN_TRACKING_ENABLED && <p className="text-[11px] text-slate-500 mt-1">{locationLine}</p>}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <div className="text-right">
@@ -1277,18 +1277,24 @@ function PerItemView({
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
-                              <span className="text-xs font-medium text-slate-700">
-                                {bin.binName || bin.binCode || "No Bin"}
-                              </span>
-                              {bin.binLocation && (
-                                <span className="text-[10px] text-slate-400">({bin.binLocation})</span>
-                              )}
-                            </div>
-                            <p className="text-[10px] text-slate-400 mt-0.5 ml-[18px]">
-                              SKU: {bin.sku}
-                            </p>
+                            {BIN_TRACKING_ENABLED ? (
+                              <div className="flex items-center gap-1.5">
+                                <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
+                                <span className="text-xs font-medium text-slate-700">
+                                  {bin.binName || bin.binCode || "No Bin"}
+                                </span>
+                                {bin.binLocation && (
+                                  <span className="text-[10px] text-slate-400">({bin.binLocation})</span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs font-medium text-slate-700">{bin.sku}</span>
+                            )}
+                            {BIN_TRACKING_ENABLED && (
+                              <p className="text-[10px] text-slate-400 mt-0.5 ml-[18px]">
+                                SKU: {bin.sku}
+                              </p>
+                            )}
                             <div className="flex items-center gap-3 mt-1 ml-[18px]">
                               <span className="text-[10px] text-slate-500">
                                 In: <span className="font-medium text-green-700">{formatRelativeDate(bin.lastInward)}</span>

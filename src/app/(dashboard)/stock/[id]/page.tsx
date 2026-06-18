@@ -2,6 +2,7 @@
 
 import { use, useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
+import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
 import Link from "next/link";
 import { ArrowLeft, QrCode, MapPin, Tag, Package, IndianRupee, Pencil, Save, X, Power } from "lucide-react";
 import { LabelPrintButton } from "@/components/label-print";
@@ -97,7 +98,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
   useEffect(() => {
     Promise.all([
       fetch("/api/brands").then((r) => r.json()),
-      fetch("/api/bins").then((r) => r.json()),
+      BIN_TRACKING_ENABLED ? fetch("/api/bins").then((r) => r.json()) : Promise.resolve({ success: false }),
     ]).then(([bRes, binRes]) => {
       if (bRes.success) setBrands(bRes.data);
       if (binRes.success) setBins(binRes.data);
@@ -277,14 +278,16 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                     {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                 </div>
-                <div>
-                  <label className="text-[10px] text-slate-500">Bin / Location</label>
-                  <select value={editData.binId as string} onChange={(e) => setEditData({ ...editData, binId: e.target.value })}
-                    className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="">No bin</option>
-                    {bins.map((b) => <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>)}
-                  </select>
-                </div>
+                {BIN_TRACKING_ENABLED && (
+                  <div>
+                    <label className="text-[10px] text-slate-500">Bin / Location</label>
+                    <select value={editData.binId as string} onChange={(e) => setEditData({ ...editData, binId: e.target.value })}
+                      className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                      <option value="">No bin</option>
+                      {bins.map((b) => <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>)}
+                    </select>
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-2">
                   <div>
                     <label className="text-[10px] text-slate-500">Size</label>
@@ -355,7 +358,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
               <p className="text-xs text-slate-500">Max Stock</p>
             </div>
           </div>
-          {product.bin ? (
+          {BIN_TRACKING_ENABLED && (product.bin ? (
             <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
               <MapPin className="h-4 w-4 text-blue-500" />
               <div>
@@ -370,7 +373,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
               <MapPin className="h-4 w-4 text-slate-300" />
               <p className="text-xs text-slate-400">No bin assigned</p>
             </div>
-          )}
+          ))}
         </CardContent>
       </Card>
 

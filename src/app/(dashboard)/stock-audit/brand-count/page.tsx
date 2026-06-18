@@ -9,6 +9,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
 
 interface Brand { id: string; name: string; _count: { products: number } }
 interface BinOption { id: string; code: string; name: string; location: string }
@@ -59,7 +60,7 @@ export default function BrandCountPage() {
   useEffect(() => {
     Promise.all([
       fetch("/api/brands").then((r) => r.json()),
-      fetch("/api/bins").then((r) => r.json()),
+      BIN_TRACKING_ENABLED ? fetch("/api/bins").then((r) => r.json()) : Promise.resolve({ success: false }),
       fetch("/api/categories").then((r) => r.json()),
     ]).then(([brandsRes, binsRes, catsRes]) => {
       if (brandsRes.success) setBrands(brandsRes.data.filter((b: Brand) => b._count.products > 0));
@@ -109,7 +110,8 @@ export default function BrandCountPage() {
   const handleSelectBrand = (brand: Brand) => {
     setSelectedBrand(brand);
     loadProducts(brand.id);
-    setStep("bin");
+    // Bins dormant: skip the bin step and go straight to counting.
+    setStep(BIN_TRACKING_ENABLED ? "bin" : "count");
   };
 
   const handleSelectBin = (bin: BinOption) => {
@@ -184,7 +186,7 @@ export default function BrandCountPage() {
   const totalProducts = products.length;
 
   const handleSubmit = async () => {
-    if (!selectedBrand || !selectedBin) return;
+    if (!selectedBrand || (BIN_TRACKING_ENABLED && !selectedBin)) return;
     const counted = Object.entries(counts).filter(([, c]) => c.qty !== null);
     if (counted.length === 0) { setError("Count at least one item"); return; }
 
@@ -195,14 +197,15 @@ export default function BrandCountPage() {
       const userId = (session?.user as { userId?: string })?.userId;
       if (!userId) { setError("Not logged in"); return; }
 
-      const title = `${selectedBrand.name} @ ${selectedBin.name} — Brand Count`;
+      const title = BIN_TRACKING_ENABLED && selectedBin
+        ? `${selectedBrand.name} @ ${selectedBin.name} — Brand Count`
+        : `${selectedBrand.name} — Brand Count`;
       const res = await fetch("/api/stock-counts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title,
-          binId: selectedBin.id,
-          location: selectedBin.location,
+          ...(BIN_TRACKING_ENABLED && selectedBin ? { binId: selectedBin.id, location: selectedBin.location } : {}),
           productIds: products.map((p) => p.id),
           assignedToId: userId,
           selfCount: true,
@@ -313,7 +316,9 @@ export default function BrandCountPage() {
           <p className="text-[10px] text-slate-500">
             {step === "brand" && "Step 1: Select brand"}
             {step === "bin" && `Step 2: ${selectedBrand?.name} — Select bin`}
-            {step === "count" && `Step 3: Count ${selectedBrand?.name} items in ${selectedBin?.name}`}
+            {step === "count" && (BIN_TRACKING_ENABLED
+              ? `Step 3: Count ${selectedBrand?.name} items in ${selectedBin?.name}`
+              : `Step 2: Count ${selectedBrand?.name} items`)}
             {step === "submitted" && "Done! Waiting for approval"}
           </p>
         </div>
@@ -657,8 +662,13 @@ export default function BrandCountPage() {
                 )}
               </div>
 
-              <button onClick={() => { setStep("bin"); setSelectedBin(null); }}
-                className="text-xs text-blue-600 mt-4 underline">← Change bin</button>
+              {BIN_TRACKING_ENABLED ? (
+                <button onClick={() => { setStep("bin"); setSelectedBin(null); }}
+                  className="text-xs text-blue-600 mt-4 underline">← Change bin</button>
+              ) : (
+                <button onClick={() => { setStep("brand"); setSelectedBrand(null); setProducts([]); setCounts({}); }}
+                  className="text-xs text-blue-600 mt-4 underline">← Change brand</button>
+              )}
             </>
           )}
         </div>
@@ -671,7 +681,7 @@ export default function BrandCountPage() {
           <div>
             <p className="text-lg font-bold text-green-900">Count Submitted!</p>
             <p className="text-sm text-slate-600 mt-1">
-              {countedCount} items counted for {selectedBrand?.name} in {selectedBin?.name}
+              {countedCount} items counted for {selectedBrand?.name}{BIN_TRACKING_ENABLED && selectedBin ? ` in ${selectedBin.name}` : ""}
             </p>
             <p className="text-xs text-slate-500 mt-2">
               Waiting for approval. Once approved, these become the actual stock levels.
@@ -702,7 +712,7 @@ export default function BrandCountPage() {
             <div>
               <p className="text-xs text-slate-600"><strong>{countedCount}</strong> of {totalProducts} counted</p>
               <p className="text-[10px] text-slate-400">
-                by {userName} · {selectedBrand?.name} · {selectedBin?.code}
+                by {userName} · {selectedBrand?.name}{BIN_TRACKING_ENABLED && selectedBin ? ` · ${selectedBin.code}` : ""}
               </p>
             </div>
             <button onClick={handleSubmit} disabled={submitting}

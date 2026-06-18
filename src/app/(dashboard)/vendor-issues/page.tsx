@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Search, AlertCircle, Plus, Trash2, Share2, Building2, Users } from "lucide-react";
+import { Search, AlertCircle, Plus, Trash2, Share2, Building2, Users, CalendarCheck } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -79,6 +79,7 @@ export default function VendorIssuesPage() {
   const [dateTo, setDateTo] = useState<string | undefined>();
   const [brandFilter, setBrandFilter] = useState("ALL");
   const [actionError, setActionError] = useState<string | null>(null);
+  const [reportLoading, setReportLoading] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -169,6 +170,59 @@ export default function VendorIssuesPage() {
     window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
   };
 
+  // Daily progress report — what came in today, what was processed, current backlog.
+  const handleDailyReport = async () => {
+    if (reportLoading) return;
+    setReportLoading(true);
+    setActionError(null);
+    try {
+      const res = await fetch("/api/vendor-issues/daily-report");
+      const json = await res.json();
+      if (!json.success) { setActionError(json.error || "Failed to build report"); return; }
+      const r = json.data as {
+        date: string;
+        createdTodayCount: number; resolvedTodayCount: number;
+        openTotal: number; inProgressTotal: number;
+        createdToday: Array<{ issueNo: string; issueType: string; priority: string; status: string; vendor: { name: string } | null; clientName: string | null }>;
+        resolvedToday: Array<{ issueNo: string; issueType: string; vendor: { name: string } | null; clientName: string | null }>;
+      };
+      const who = (val: { vendor: { name: string } | null; clientName: string | null }) => val.vendor?.name || val.clientName || "—";
+      const dateStr = new Date(r.date).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+
+      const lines: string[] = [];
+      lines.push("📊 *Ops Issues — Daily Report*");
+      lines.push(`📅 ${dateStr}`);
+      lines.push("");
+      lines.push(`🆕 New today: ${r.createdTodayCount}`);
+      lines.push(`✅ Resolved today: ${r.resolvedTodayCount}`);
+      lines.push(`🔧 In progress: ${r.inProgressTotal}`);
+      lines.push(`📂 Open backlog: ${r.openTotal}`);
+
+      if (r.createdToday.length) {
+        lines.push("");
+        lines.push(`🆕 *New today (${r.createdTodayCount})*`);
+        r.createdToday.slice(0, 15).forEach((i, n) => {
+          lines.push(`${n + 1}. [${i.issueNo}] ${i.issueType.replace(/_/g, " ")} — ${who(i)} — ${i.priority}`);
+        });
+        if (r.createdToday.length > 15) lines.push(`…and ${r.createdToday.length - 15} more`);
+      }
+      if (r.resolvedToday.length) {
+        lines.push("");
+        lines.push(`✅ *Resolved today (${r.resolvedTodayCount})*`);
+        r.resolvedToday.slice(0, 15).forEach((i, n) => {
+          lines.push(`${n + 1}. [${i.issueNo}] ${i.issueType.replace(/_/g, " ")} — ${who(i)}`);
+        });
+        if (r.resolvedToday.length > 15) lines.push(`…and ${r.resolvedToday.length - 15} more`);
+      }
+      lines.push("\n_Sent from Bike Inventory App_");
+      window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Failed to build report");
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
   const handleDelete = async (e: React.MouseEvent, issueId: string, issueNo: string) => {
     e.preventDefault();
     e.stopPropagation();
@@ -236,13 +290,23 @@ export default function VendorIssuesPage() {
     <div className="pb-24">
       <div className="flex items-center justify-between mb-3">
         <h1 className="text-lg font-bold text-slate-900">Ops Issues</h1>
-        <button
-          onClick={() => shareIssuesWhatsApp(sourceTab !== "CLIENT", sourceTab !== "VENDOR")}
-          className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center active:scale-95 transition-transform shadow"
-          title="Share issues on WhatsApp"
-        >
-          <Share2 className="w-4 h-4 text-white" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleDailyReport}
+            disabled={reportLoading}
+            className="flex items-center gap-1.5 h-9 px-3 rounded-full bg-slate-900 text-white text-xs font-medium active:scale-95 transition-transform shadow disabled:opacity-50"
+            title="Share today's progress report on WhatsApp"
+          >
+            <CalendarCheck className="w-4 h-4" /> {reportLoading ? "..." : "Daily Report"}
+          </button>
+          <button
+            onClick={() => shareIssuesWhatsApp(sourceTab !== "CLIENT", sourceTab !== "VENDOR")}
+            className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center active:scale-95 transition-transform shadow"
+            title="Share issues on WhatsApp"
+          >
+            <Share2 className="w-4 h-4 text-white" />
+          </button>
+        </div>
       </div>
 
       {actionError && (
