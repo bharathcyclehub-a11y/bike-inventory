@@ -12,6 +12,7 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { useDebounce, fuzzyMatch } from "@/lib/utils";
 
 interface StockCountItemData {
@@ -72,6 +73,8 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
   const canApprove = userRole === "ADMIN" || userRole === "SUPERVISOR" || userRole === "ACCOUNTS_MANAGER";
   const isAdmin = userRole === "ADMIN";
   const [summary, setSummary] = useState<StockCountSummary | null>(null);
+  // Screenshot receipt shown when a count is completed (WhatsApp verification gate)
+  const [receipt, setReceipt] = useState<{ referenceId: string; items: Array<{ label: string; value: string }> } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [brands, setBrands] = useState<Record<string, string>>({});
   const [brandList, setBrandList] = useState<string[]>([]);
@@ -268,6 +271,18 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       const data = await res.json();
       if (!data.success) {
         setActionError(data.error || `Failed to change status to ${newStatus}`);
+      } else if (newStatus === "COMPLETED" && summary) {
+        // Screenshottable receipt for the WhatsApp group to verify/approve.
+        setReceipt({
+          referenceId: summary.countNo || summary.title,
+          items: [
+            { label: "Count", value: summary.title },
+            { label: "Counted by", value: summary.assignedTo?.name || "—" },
+            { label: "Items counted", value: `${summary.countedItems}/${summary.totalItems}` },
+            { label: "Items with variance", value: `${summary.itemsWithVariance}` },
+            { label: "Total variance", value: `${summary.totalVariance > 0 ? "+" : ""}${summary.totalVariance}` },
+          ],
+        });
       }
       fetchSummary();
     } catch (e) {
@@ -825,6 +840,17 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
           </div>
         </div>
       )}
+
+      <ActionConfirmation
+        open={!!receipt}
+        onClose={() => setReceipt(null)}
+        type="success"
+        title="Stock Count Completed"
+        referenceId={receipt?.referenceId || ""}
+        performedBy={(session?.user as { name?: string })?.name}
+        items={receipt?.items}
+        details="Screenshot and share on the WhatsApp group for verification."
+      />
     </div>
   );
 }

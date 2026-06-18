@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Truck, CheckCircle2, Loader2, MapPin, Navigation, AlertTriangle } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { ActionConfirmation } from "@/components/ui/action-confirmation";
 
 interface ScheduledDelivery {
   id: string;
@@ -172,6 +173,8 @@ export default function DispatchPage() {
   const [selectedOut, setSelectedOut] = useState<Set<string>>(new Set());
   const [dispatching, setDispatching] = useState(false);
   const [delivering, setDelivering] = useState(false);
+  // Screenshot receipt shown after dispatch (WhatsApp verification gate)
+  const [receipt, setReceipt] = useState<{ referenceId: string; items: Array<{ label: string; value: string }> } | null>(null);
   const [actionError, setActionError] = useState("");
   const [tab, setTab] = useState<"dispatch" | "return">("dispatch");
   const [routeMode, setRouteMode] = useState(false);
@@ -209,6 +212,7 @@ export default function DispatchPage() {
     if (selected.size === 0) return;
     setDispatching(true);
     try {
+      const dispatched = deliveries.filter((d) => selected.has(d.id));
       const res = await fetch("/api/deliveries/batch", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -219,6 +223,13 @@ export default function DispatchPage() {
         setActionError(json.error || "Dispatch failed");
         return;
       }
+      // Screenshottable receipt of what just went out, for the WhatsApp group.
+      const rows = dispatched.slice(0, 8).map((d) => ({ label: d.customerName, value: d.invoiceNo }));
+      if (dispatched.length > 8) rows.push({ label: `+ ${dispatched.length - 8} more`, value: "" });
+      setReceipt({
+        referenceId: dispatched.length === 1 ? dispatched[0].invoiceNo : `${dispatched.length} orders dispatched`,
+        items: rows,
+      });
       setDeliveries((prev) => prev.filter((d) => !selected.has(d.id)));
       setSelected(new Set());
     } catch (e) { setActionError(e instanceof Error ? e.message : "Dispatch failed"); }
@@ -482,6 +493,16 @@ export default function DispatchPage() {
           </button>
         </div>
       )}
+
+      <ActionConfirmation
+        open={!!receipt}
+        onClose={() => setReceipt(null)}
+        type="success"
+        title="Dispatched for Delivery"
+        referenceId={receipt?.referenceId || ""}
+        items={receipt?.items}
+        details="Screenshot and share on the WhatsApp group for verification."
+      />
     </div>
   );
 }

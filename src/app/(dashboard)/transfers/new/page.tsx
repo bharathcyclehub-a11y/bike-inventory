@@ -8,6 +8,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
+import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, type StockLocation } from "@/lib/inventory-config";
 
 interface Product {
@@ -69,6 +70,14 @@ export default function NewTransferOrderPage() {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  // Screenshot receipt shown after submit (the WhatsApp verification gate)
+  const [receipt, setReceipt] = useState<{
+    type: "success" | "warning";
+    title: string;
+    referenceId: string;
+    items: Array<{ label: string; value: string }>;
+    details: string;
+  } | null>(null);
 
   // Item search state
   const [search, setSearch] = useState("");
@@ -186,8 +195,26 @@ export default function NewTransferOrderPage() {
         }),
       });
       const data = await res.json();
-      if (data.success) { clearDraft(); router.push("/transfers"); }
-      else setError(data.error || "Failed to create transfer order.");
+      if (data.success) {
+        clearDraft();
+        const approved = data.data?.status === "APPROVED";
+        // Build a screenshottable receipt: one row per item, product → route × qty.
+        const receiptItems = items.map((i) => ({
+          label: i.product.name.length > 28 ? i.product.name.slice(0, 28) + "…" : i.product.name,
+          value: BIN_TRACKING_ENABLED
+            ? `${getBinLabel(i.fromBinId)} → ${getBinLabel(i.toBinId)} ×${i.quantity}`
+            : `${locationLabel(i.fromLocation)} → ${locationLabel(i.toLocation)} ×${i.quantity}`,
+        }));
+        setReceipt({
+          type: approved ? "success" : "warning",
+          title: approved ? "Transfer Approved" : "Transfer Submitted",
+          referenceId: data.data?.orderNo || "Transfer",
+          items: receiptItems,
+          details: approved
+            ? "Stock moved. Screenshot and share on the WhatsApp group."
+            : "Pending approval. Screenshot and share on the WhatsApp group for verification.",
+        });
+      } else setError(data.error || "Failed to create transfer order.");
     } catch {
       setError("Network error. Please check your connection.");
     } finally {
@@ -395,6 +422,17 @@ export default function NewTransferOrderPage() {
           )}
         </Button>
       </div>
+
+      <ActionConfirmation
+        open={!!receipt}
+        onClose={() => { setReceipt(null); router.push("/transfers"); }}
+        type={receipt?.type || "success"}
+        title={receipt?.title || ""}
+        referenceId={receipt?.referenceId || ""}
+        performedBy={(session?.user as { name?: string })?.name}
+        items={receipt?.items}
+        details={receipt?.details}
+      />
     </div>
   );
 }
