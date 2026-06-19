@@ -22,6 +22,15 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+/* Desktop: the UI is mobile-first (small text). Nudge the root font size up on
+   wide screens so rem-based text AND spacing scale together for comfortable
+   desktop viewing. Mobile (< 1024px) is unchanged. */
+@media (min-width: 1024px) {
+  :root {
+    font-size: 17px;
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
