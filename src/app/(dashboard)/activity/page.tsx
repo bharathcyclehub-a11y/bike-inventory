@@ -180,7 +180,7 @@ export default function ActivityPage() {
 
       {/* Admin: User selector */}
       {isAdmin && users.length > 0 && (
-        <div className="flex gap-1.5 overflow-x-auto scrollbar-hide mb-3 pb-1">
+        <div className="flex gap-1.5 overflow-x-auto lg:overflow-visible lg:flex-wrap scrollbar-hide mb-3 pb-1">
           <button
             onClick={() => setSelectedUser(null)}
             className={`shrink-0 px-2.5 py-1.5 rounded-full text-xs font-medium transition-colors ${

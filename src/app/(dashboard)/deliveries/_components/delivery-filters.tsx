@@ -42,7 +42,7 @@ export function DeliveryFilters({
   return (
     <>
       {/* Status filter chips */}
-      <div className="flex gap-1.5 overflow-x-auto scrollbar-hide mb-1.5 pb-1">
+      <div className="flex gap-1.5 overflow-x-auto lg:overflow-visible lg:flex-wrap scrollbar-hide mb-1.5 pb-1">
         {FILTERS.map((f) => (
           <button
             key={f.key}

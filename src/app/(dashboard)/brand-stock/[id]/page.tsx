@@ -339,7 +339,7 @@ export default function BrandStockReviewPage({ params }: { params: Promise<{ id:
       )}
 
       {/* Sticky Bottom Bar */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-3 z-50 max-w-screen-sm mx-auto">
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 p-3 z-50 max-w-screen-sm lg:max-w-none mx-auto">
         <div className="flex items-center justify-between mb-2">
           <div>
             <p className="text-xs text-slate-600"><strong>{selectedItems.length}</strong> items · <strong>{totalOrderQty}</strong> qty</p>

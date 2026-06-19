@@ -60,11 +60,11 @@ export function BottomSheetModal({
         onClick={onClose}
       />
       <div
-        className={`absolute bottom-0 left-0 right-0 flex justify-center transition-transform duration-300 ease-out ${
-          animating ? "translate-y-0" : "translate-y-full"
+        className={`absolute bottom-0 left-0 right-0 flex justify-center lg:inset-0 lg:items-center transition-transform duration-300 ease-out ${
+          animating ? "translate-y-0" : "translate-y-full lg:translate-y-0"
         }`}
       >
-        <div className="w-full max-w-md bg-white rounded-t-2xl shadow-xl flex flex-col max-h-[90dvh]">
+        <div className="w-full max-w-md lg:max-w-lg bg-white rounded-t-2xl lg:rounded-2xl shadow-xl flex flex-col max-h-[90dvh] lg:max-h-[85vh]">
           <div className="p-5 overflow-y-auto flex-1">
             <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
             {description && (
