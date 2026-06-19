@@ -209,7 +209,7 @@ export const FEATURE_NAV_ITEMS: NavItem[] = [
   { href: "/accounts", label: "Accounts", icon: FileText, key: "accounts" },
   { href: "/reports", label: "Reports", icon: BarChart3, key: "reports" },
   { href: "/team", label: "Team", icon: Users, key: "team" },
-  { href: "/barcode", label: "Barcode", icon: QrCode, key: "barcode" },
+  { href: "/scanner", label: "Barcode", icon: QrCode, key: "barcode" },
 ];
 
 // Resolve href for desktop context (prefix with /desktop)

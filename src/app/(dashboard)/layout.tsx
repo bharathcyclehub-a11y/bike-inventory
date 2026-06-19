@@ -45,7 +45,7 @@ export default function DashboardLayout({
         </div>
 
         <main className="flex-1 pb-nav lg:pb-10">
-          <div className="max-w-lg lg:max-w-5xl mx-auto px-4 py-4 lg:px-8 lg:py-6">{children}</div>
+          <div className="max-w-lg lg:max-w-6xl xl:max-w-7xl mx-auto px-4 py-4 lg:px-8 lg:py-6">{children}</div>
         </main>
 
         {/* Mobile bottom nav (hidden on desktop) */}
