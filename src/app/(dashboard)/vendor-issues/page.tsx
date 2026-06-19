@@ -166,7 +166,7 @@ export default function VendorIssuesPage() {
     }
 
     lines.push(`📊 *Total: ${toShare.length} open issues*`);
-    lines.push("\n_Sent from Bike Inventory App_");
+    lines.push("\n_Sent from BCH OPS App_");
     window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
   };
 
@@ -214,7 +214,7 @@ export default function VendorIssuesPage() {
         });
         if (r.resolvedToday.length > 15) lines.push(`…and ${r.resolvedToday.length - 15} more`);
       }
-      lines.push("\n_Sent from Bike Inventory App_");
+      lines.push("\n_Sent from BCH OPS App_");
       window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Failed to build report");

@@ -95,7 +95,7 @@ export default function BrandStockPage() {
         lines.push("");
         lines.push(`📊 ${inStock.length} models · ${totalUnits} units`);
       }
-      lines.push("\n_Sent from Bike Inventory App_");
+      lines.push("\n_Sent from BCH OPS App_");
       window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
     } finally {
       setSharing((prev) => { const n = new Set(prev); n.delete(brand.id); return n; });

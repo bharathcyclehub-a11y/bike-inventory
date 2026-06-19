@@ -211,7 +211,6 @@ const LOGIC_SECTIONS: LogicSection[] = [
 
       // ── Fetch Buttons ──
       { label: "Zoho Item Import", type: "fetch", detail: "Same 4-step Zoho pull: init → items → review → approve. Imports new products from Zoho Inventory. Creates Product records with SKU, name, cost price, selling price.", api: "POST /api/zoho/trigger-pull step='items'", affects: "Creates new Product records in database", roles: "Admin", important: true },
-      { label: "Zoho Category Sync", type: "fetch", detail: "Paginated sync: First dry-run to preview changes, then apply. Updates product categories by matching Zoho item groups. Shows matched/updated counts per page.", api: "POST /api/zoho/test-items {dryRun: true/false, page}", affects: "Updates product categoryId based on Zoho groups", roles: "Admin" },
 
       // ── Bulk Actions ──
       { label: "Bulk Actions", type: "action", detail: "Select mode: toggle checkboxes on products. Actions: (1) Assign Brand — dropdown, (2) Change Status — ACTIVE/INACTIVE, (3) Assign Category — dropdown. Applies to all selected.", api: "POST /api/products/bulk with {productIds, brandId?, status?, categoryId?}", affects: "Updates brand/status/category for selected products" },

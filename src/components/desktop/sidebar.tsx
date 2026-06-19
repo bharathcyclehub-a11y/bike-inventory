@@ -53,7 +53,7 @@ export function Sidebar({ role }: SidebarProps) {
         <div className="bg-slate-900 rounded-lg p-1.5">
           <Bike className="h-5 w-5 text-white" />
         </div>
-        <span className="text-base font-bold text-slate-900">Bike Inventory</span>
+        <span className="text-base font-bold text-slate-900">BCH OPS</span>
       </div>
 
       {/* Navigation */}

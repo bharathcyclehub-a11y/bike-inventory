@@ -146,7 +146,7 @@ export default function ActivityPage() {
       }
     }
 
-    msg += "\n_Sent from Bike Inventory App_";
+    msg += "\n_Sent from BCH OPS App_";
     return msg;
   };
 

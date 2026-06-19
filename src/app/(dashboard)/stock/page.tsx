@@ -173,67 +173,6 @@ export default function StockPage() {
   const [bulkCategoryId, setBulkCategoryId] = useState("");
   const [categories, setCategories] = useState<CategoryItem[]>([]);
 
-  // Zoho category sync (paginated — 200 items per request)
-  const [classifyStep, setClassifyStep] = useState<"idle" | "loading" | "preview" | "applying">("idle");
-  const [classifyError, setClassifyError] = useState("");
-  const [classifyProgress, setClassifyProgress] = useState("");
-  const [classifyPreview, setClassifyPreview] = useState<{
-    totalZohoItems: number; matched: number; updated: number; noCategory: number; notFound: number;
-    categoryDistribution: Record<string, number>;
-  } | null>(null);
-
-  async function runPagedSync(dryRun: boolean) {
-    const totals = { totalZohoItems: 0, matched: 0, updated: 0, noCategory: 0, notFound: 0, categoryDistribution: {} as Record<string, number> };
-    let currentPage = 1;
-    let hasMore = true;
-
-    while (hasMore) {
-      setClassifyProgress(`${dryRun ? "Scanning" : "Syncing"} page ${currentPage} (${totals.totalZohoItems} items so far)...`);
-      const res = await fetch("/api/zoho/test-items", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dryRun, page: currentPage }),
-      });
-      if (!res.ok) throw new Error(`Server error: ${res.status} ${res.statusText}`);
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Failed");
-
-      const d = data.data;
-      totals.totalZohoItems += d.itemsInPage;
-      totals.matched += d.matched;
-      totals.updated += d.updated;
-      totals.noCategory += d.noCategory;
-      totals.notFound += d.notFound;
-      for (const [cat, count] of Object.entries(d.categoryDistribution)) {
-        totals.categoryDistribution[cat] = (totals.categoryDistribution[cat] || 0) + (count as number);
-      }
-      hasMore = d.hasMore;
-      currentPage++;
-    }
-    return totals;
-  }
-
-  async function handleZohoCategorySync(apply: boolean) {
-    setClassifyError("");
-    setClassifyProgress("");
-    if (apply) {
-      setClassifyStep("applying");
-      try {
-        const totals = await runPagedSync(false);
-        setBulkMessage(`Synced categories: ${totals.updated} items updated across ${Object.keys(totals.categoryDistribution).length} categories`);
-        fetchProducts(1);
-        fetch("/api/categories").then(r => r.json()).then(r => { if (r.success) setCategories(r.data); });
-      } catch (e) { setClassifyError(e instanceof Error ? e.message : "Network error"); }
-      setClassifyStep("idle");
-      setClassifyPreview(null);
-    } else {
-      setClassifyStep("loading");
-      try {
-        const totals = await runPagedSync(true);
-        setClassifyPreview(totals);
-        setClassifyStep("preview");
-      } catch (e) { setClassifyError(e instanceof Error ? e.message : "Network error"); setClassifyStep("idle"); }
-    }
-  }
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkMessage, setBulkMessage] = useState("");
 
@@ -526,69 +465,6 @@ export default function StockPage() {
         <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-lg p-2.5 mb-2">
           <span className="text-xs text-green-700 font-medium">{bulkMessage}</span>
           <button onClick={() => setBulkMessage("")} className="text-green-500"><X className="h-3.5 w-3.5" /></button>
-        </div>
-      )}
-
-      {/* Category sync error */}
-      {classifyError && (
-        <div className="flex items-center justify-between bg-red-50 border border-red-200 rounded-lg p-2.5 mb-2">
-          <span className="text-xs text-red-700 font-medium">{classifyError}</span>
-          <button onClick={() => setClassifyError("")} className="text-red-500"><X className="h-3.5 w-3.5" /></button>
-        </div>
-      )}
-
-      {/* Category sync loading */}
-      {classifyStep === "loading" && (
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
-          <div className="flex items-center gap-2 mb-2">
-            <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
-            <span className="text-xs font-medium text-purple-800">{classifyProgress || "Connecting to Zoho..."}</span>
-          </div>
-          <div className="w-full bg-purple-200 rounded-full h-1.5">
-            <div className="bg-purple-600 h-1.5 rounded-full animate-pulse" style={{ width: "60%" }} />
-          </div>
-        </div>
-      )}
-
-      {/* Zoho Category Sync Preview */}
-      {classifyStep === "preview" && classifyPreview && (
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
-          <p className="text-xs font-semibold text-purple-800 mb-2">
-            Zoho Category Sync — {classifyPreview.totalZohoItems} items in Zoho, {classifyPreview.matched} matched in app
-          </p>
-          <div className="grid grid-cols-2 gap-1.5 mb-3 max-h-40 overflow-y-auto">
-            {Object.entries(classifyPreview.categoryDistribution)
-              .sort(([, a], [, b]) => b - a)
-              .map(([cat, count]) => (
-              <p key={cat} className="text-xs text-slate-700">
-                <span className="font-medium">{cat}:</span> {count}
-              </p>
-            ))}
-          </div>
-          <p className="text-[10px] text-slate-500 mb-2">
-            {classifyPreview.noCategory} items have no category in Zoho &bull; {classifyPreview.notFound} not found in app
-          </p>
-          <div className="flex gap-2">
-            <button onClick={() => handleZohoCategorySync(true)}
-              className="px-4 py-1.5 bg-purple-700 text-white rounded-lg text-xs font-medium">
-              Apply Sync
-            </button>
-            <button onClick={() => { setClassifyStep("idle"); setClassifyPreview(null); }}
-              className="px-3 py-1.5 border border-purple-300 text-purple-700 rounded-lg text-xs">
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-      {classifyStep === "applying" && (
-        <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 mb-2">
-          <div className="flex items-center gap-2 mb-2">
-            <Loader2 className="h-4 w-4 animate-spin text-purple-600" />
-            <span className="text-xs font-medium text-purple-800">{classifyProgress || "Applying categories..."}</span>
-          </div>
-          <div className="w-full bg-purple-200 rounded-full h-1.5">
-            <div className="bg-purple-600 h-1.5 rounded-full animate-pulse" style={{ width: "75%" }} />
-          </div>
         </div>
       )}
 

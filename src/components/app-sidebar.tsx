@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bike, LogOut, Package, LayoutDashboard } from "lucide-react";
+import { LogOut, Package, LayoutDashboard } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { cn } from "@/lib/utils";
 import { getPrimaryTabs, FEATURE_NAV_ITEMS, NAV_FEATURE_MAP, HOME_TAB, type NavItem } from "@/lib/nav-config";
@@ -67,10 +67,9 @@ export function AppSidebar({ role, className }: AppSidebarProps) {
   return (
     <aside className={cn("w-60 h-screen sticky top-0 bg-white border-r border-slate-200 flex-col shrink-0", className)}>
       <div className="flex items-center gap-2.5 px-5 h-16 border-b border-slate-100 shrink-0">
-        <div className="bg-slate-900 rounded-lg p-1.5">
-          <Bike className="h-5 w-5 text-white" />
-        </div>
-        <span className="text-base font-bold text-slate-900">Bike Inventory</span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/logo.jpg" alt="BCH OPS" className="h-9 w-9 rounded-lg object-cover" />
+        <span className="text-base font-bold text-slate-900">BCH OPS</span>
       </div>
 
       <nav className="flex-1 overflow-y-auto py-3 px-3">

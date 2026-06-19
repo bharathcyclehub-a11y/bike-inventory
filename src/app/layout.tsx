@@ -7,13 +7,13 @@ import "./globals.css";
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "Bike Inventory",
+  title: "BCH OPS",
   description: "Bicycle store inventory and accounts management",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Bike Inventory",
+    title: "BCH OPS",
   },
 };
 

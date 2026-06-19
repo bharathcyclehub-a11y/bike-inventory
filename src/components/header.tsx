@@ -1,7 +1,6 @@
 "use client";
 
 import { useSession } from "next-auth/react";
-import { Bike, User } from "lucide-react";
 
 export function Header() {
   const { data: session } = useSession();
@@ -17,11 +16,10 @@ export function Header() {
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200 safe-top">
       <div className="flex items-center justify-between h-14 px-4 max-w-lg mx-auto">
         <div className="flex items-center gap-2">
-          <div className="bg-slate-900 rounded-lg p-1.5">
-            <Bike className="h-5 w-5 text-white" />
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.jpg" alt="BCH OPS" className="h-8 w-8 rounded-lg object-cover" />
           <span className="text-base font-bold text-slate-900">
-            Bike Inventory
+            BCH OPS
           </span>
         </div>
         <div className="flex items-center gap-2">

@@ -165,7 +165,7 @@ export default function MorePage() {
       </button>
 
       <p className="text-xs text-slate-300 text-center mt-8">
-        Bike Inventory v0.8.0 | Final
+        BCH OPS v0.8.0 | Final
       </p>
     </div>
   );

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { Bike, LogIn } from "lucide-react";
+import { LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -42,10 +42,9 @@ export default function LoginPage() {
     <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
-          <div className="bg-slate-900 rounded-2xl p-4 mb-4">
-            <Bike className="h-10 w-10 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-900">Bike Inventory</h1>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.jpg" alt="BCH OPS" className="h-20 w-20 rounded-2xl object-cover mb-4 shadow-sm" />
+          <h1 className="text-2xl font-bold text-slate-900">BCH OPS</h1>
           <p className="text-sm text-slate-500 mt-1">
             Enter your access code to continue
           </p>
