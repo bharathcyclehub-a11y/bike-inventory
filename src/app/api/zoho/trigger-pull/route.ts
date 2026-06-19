@@ -105,24 +105,9 @@ export async function POST(req: NextRequest) {
               existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id }, include: { brand: { select: { name: true } } } });
             }
             if (existing) {
-              const updateData: Record<string, unknown> = {};
-              // Update brand if currently Imported/Unbranded and Zoho has brand data
-              const currentBrand = (existing.brand as { name: string } | null)?.name || "";
-              if (zohoBrand && ["Imported", "Unbranded", ""].includes(currentBrand)) {
-                let brand = await prisma.brand.findFirst({ where: { name: { equals: zohoBrand, mode: "insensitive" } } });
-                if (!brand) brand = await prisma.brand.create({ data: { name: zohoBrand } });
-                updateData.brandId = brand.id;
-              }
-              // Update category from Zoho
-              const zohoCatName = String(item.category_name || "").trim();
-              if (zohoCatName) {
-                let cat = await prisma.category.findFirst({ where: { name: zohoCatName } });
-                if (!cat) cat = await prisma.category.create({ data: { name: zohoCatName, description: `Zoho category: ${zohoCatName}` } });
-                updateData.categoryId = cat.id;
-              }
-              if (Object.keys(updateData).length > 0) {
-                await prisma.product.update({ where: { id: existing.id }, data: updateData });
-              }
+              // Existing items are FROZEN — Zoho never modifies items already in the
+              // app (brand, category, pricing, SKU, name, stock all stay as edited).
+              // Only brand-new items are pulled in for review below.
               continue;
             }
 
@@ -170,23 +155,7 @@ export async function POST(req: NextRequest) {
                 existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id }, include: { brand: { select: { name: true } } } });
               }
               if (existing) {
-                const updateData: Record<string, unknown> = {};
-                const currentBrand = (existing.brand as { name: string } | null)?.name || "";
-                if (zohoBrand && ["Imported", "Unbranded", ""].includes(currentBrand)) {
-                  let brand = await prisma.brand.findFirst({ where: { name: { equals: zohoBrand, mode: "insensitive" } } });
-                  if (!brand) brand = await prisma.brand.create({ data: { name: zohoBrand } });
-                  updateData.brandId = brand.id;
-                }
-                // Update category from Zoho
-                const zohoCatName = String(item.category_name || "").trim();
-                if (zohoCatName) {
-                  let cat = await prisma.category.findFirst({ where: { name: zohoCatName } });
-                  if (!cat) cat = await prisma.category.create({ data: { name: zohoCatName, description: `Zoho category: ${zohoCatName}` } });
-                  updateData.categoryId = cat.id;
-                }
-                if (Object.keys(updateData).length > 0) {
-                  await prisma.product.update({ where: { id: existing.id }, data: updateData });
-                }
+                // Existing items are FROZEN — Zoho never modifies items already in the app.
                 continue;
               }
 

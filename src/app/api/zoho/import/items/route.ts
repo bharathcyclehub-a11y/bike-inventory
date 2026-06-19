@@ -49,22 +49,12 @@ export async function POST() {
         const zohoItem = item as Record<string, unknown>;
         const sku = (item.sku || `ZOHO-${String(Date.now()).slice(-6)}`).substring(0, 50);
 
-        // Check if product already exists by SKU — update pricing only (brand managed manually)
+        // Existing items are FROZEN — Zoho never overwrites items already in the app.
         if (item.sku) {
           const existing = await prisma.product.findFirst({
             where: { sku: item.sku },
           });
           if (existing) {
-            await prisma.product.update({
-              where: { id: existing.id },
-              data: {
-                costPrice: Number(zohoItem.purchase_rate || existing.costPrice),
-                sellingPrice: Number(zohoItem.rate || existing.sellingPrice),
-                mrp: Number(zohoItem.rate || existing.mrp),
-                gstRate: Number(zohoItem.tax_percentage || existing.gstRate),
-                hsnCode: String(zohoItem.hsn_or_sac || existing.hsnCode || ""),
-              },
-            });
             skipped++;
             continue;
           }
