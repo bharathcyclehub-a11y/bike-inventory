@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { useDebounce } from "@/lib/utils";
 import { ExportButtons } from "@/components/export-buttons";
 import { FilterSheet } from "@/components/filter-sheet";
+import { DesktopTable } from "@/components/desktop-table";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 
 const VENDOR_COLUMNS: ExportColumn[] = [
@@ -158,7 +159,42 @@ export default function VendorsPage() {
           ))}
         </div>
       ) : (
-        <div className="space-y-2">
+        <>
+        <DesktopTable
+          className="hidden lg:block"
+          rows={filtered}
+          rowKey={(v) => v.id}
+          rowHref={(v) => `/vendors/${v.id}`}
+          emptyText="No vendors found"
+          columns={[
+            { header: "Vendor", cell: (v) => {
+              const stars = getStarRating(v._count.bills, allBillCounts);
+              return (
+                <div className="flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-slate-400 shrink-0" />
+                  <span className="font-medium text-slate-900">{v.name}</span>
+                  {stars > 0 && (
+                    <span className="flex items-center gap-0.5 shrink-0">
+                      {Array.from({ length: stars }).map((_, i) => (
+                        <Star key={i} className="h-3 w-3 fill-amber-400 text-amber-400" />
+                      ))}
+                    </span>
+                  )}
+                </div>
+              );
+            } },
+            { header: "City", cell: (v) => v.city || "—" },
+            { header: "Bills", cell: (v) => v._count.bills || "—", className: "text-right w-20 tabular-nums" },
+            { header: "Status", cell: (v) => <Badge variant={v.isActive ? "success" : "default"}>{v.isActive ? "Active" : "Inactive"}</Badge> },
+            { header: "Outstanding", cell: (v) => v.outstandingBalance > 0
+              ? <span className="font-medium text-red-600 tabular-nums">₹{v.outstandingBalance.toLocaleString("en-IN")}</span>
+              : <span className="text-slate-400">—</span>, className: "text-right" },
+            { header: "", cell: (v) => v.phone
+              ? <a href={`tel:${v.phone}`} onClick={(e) => e.stopPropagation()} className="inline-flex p-1.5 rounded-full hover:bg-slate-100"><Phone className="h-4 w-4 text-slate-500" /></a>
+              : null, className: "w-12" },
+          ]}
+        />
+        <div className="space-y-2 lg:hidden">
           {filtered.map((v) => {
             const stars = getStarRating(v._count.bills, allBillCounts);
             return (
@@ -215,6 +251,7 @@ export default function VendorsPage() {
             </div>
           )}
         </div>
+        </>
       )}
     </div>
   );

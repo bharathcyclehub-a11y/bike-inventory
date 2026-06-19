@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
+import { DesktopTable } from "@/components/desktop-table";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { useDebounce, getAging, AGING_COLORS, AGING_BADGE } from "@/lib/utils";
 import { type DateRangeKey } from "@/components/date-filter";
@@ -135,7 +136,34 @@ export default function PurchaseOrdersPage() {
           ))}
         </div>
       ) : (
-        <div className="space-y-2">
+        <>
+        <DesktopTable
+          className="hidden lg:block"
+          rows={orders}
+          rowKey={(po) => po.id}
+          rowHref={(po) => `/purchase-orders/${po.id}`}
+          emptyText="No purchase orders found"
+          columns={[
+            { header: "PO #", cell: (po) => <span className="font-medium text-slate-900">{po.poNumber}</span> },
+            { header: "Vendor", cell: (po) => po.vendor.name },
+            { header: "Date", cell: (po) => new Date(po.orderDate).toLocaleDateString("en-IN"), className: "whitespace-nowrap text-slate-500" },
+            { header: "Items", cell: (po) => po.items.reduce((s, i) => s + i.quantity, 0), className: "text-right tabular-nums w-16" },
+            { header: "Total", cell: (po) => <span className="font-semibold text-slate-900 tabular-nums">{formatCurrency(po.grandTotal)}</span>, className: "text-right whitespace-nowrap" },
+            { header: "Status", cell: (po) => {
+              const needsTracking = ["SENT_TO_VENDOR", "PARTIALLY_RECEIVED"].includes(po.status);
+              const aging = needsTracking ? getAging(po.orderDate) : null;
+              return (
+                <div className="flex items-center gap-1.5">
+                  <Badge variant={statusVariant(po.status)} className="text-[10px]">{po.status.replace(/_/g, " ")}</Badge>
+                  {aging && aging.level !== "ok" && (
+                    <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${AGING_BADGE[aging.level]}`}>{aging.text}</span>
+                  )}
+                </div>
+              );
+            } },
+          ]}
+        />
+        <div className="space-y-2 lg:hidden">
           {orders.map((po) => {
             const needsTracking = ["SENT_TO_VENDOR", "PARTIALLY_RECEIVED"].includes(po.status);
             const aging = needsTracking ? getAging(po.orderDate) : null;
@@ -178,6 +206,7 @@ export default function PurchaseOrdersPage() {
             </div>
           )}
         </div>
+        </>
       )}
     </div>
   );
