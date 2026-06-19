@@ -70,11 +70,16 @@ body {
   bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 8px);
 }
 
-/* Desktop: there's no bottom nav and a 15rem sidebar — keep fixed action bars
-   inside the content area instead of spanning under the sidebar. */
+/* Desktop: there's no bottom nav and a 15rem sidebar. Lift fixed bottom elements
+   to sit just above where the nav was. Only FULL-WIDTH bars (they carry Tailwind's
+   left-0) are shifted right to clear the sidebar — corner FABs (right-anchored,
+   no left-0) keep their position so they don't stretch into a full-width bar. */
 @media (min-width: 1024px) {
   .above-nav {
-    bottom: 1rem !important;
+    bottom: 1.25rem !important;
+  }
+  .above-nav.left-0,
+  .fixed.bottom-0.left-0.right-0 {
     left: 15rem !important;
   }
 }
