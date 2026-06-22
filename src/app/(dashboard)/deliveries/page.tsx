@@ -3,9 +3,13 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSession } from "next-auth/react";
 import { useSearchParams } from "next/navigation";
-import { Loader2, Truck } from "lucide-react";
-import { useDebounce } from "@/lib/utils";
+import Link from "next/link";
+import { Loader2, Truck, Trash2 } from "lucide-react";
+import { useDebounce, getAging, AGING_BADGE } from "@/lib/utils";
 import { usePermissions } from "@/lib/use-permissions";
+import { Badge } from "@/components/ui/badge";
+import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
+import { DesktopTable } from "@/components/desktop-table";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { DeliveryStats, type Stats } from "./_components/delivery-stats";
@@ -250,7 +254,61 @@ export default function DeliveriesPage() {
           <p className="text-sm text-slate-400">No deliveries found</p>
         </div>
       ) : (
-        <div className="space-y-2.5">
+        <>
+        <DesktopTable
+          className="hidden lg:block"
+          rows={deliveries}
+          rowKey={(d) => d.id}
+          rowHref={(d) => `/deliveries/${d.id}`}
+          emptyText="No deliveries found"
+          columns={[
+            { header: "Invoice", cell: (d) => (
+              <div className="flex items-center gap-1.5">
+                <span className="font-medium text-slate-900">{d.invoiceNo}</span>
+                {d.isOutstation && <Badge variant="warning" className="text-[9px]">Outstation</Badge>}
+                {d.reversePickup && <Badge variant="info" className="text-[9px]">Reverse</Badge>}
+              </div>
+            ) },
+            { header: "Customer", cell: (d) => (
+              <div>
+                <p className="text-slate-800">{d.customerName}</p>
+                {d.customerArea && <p className="text-[11px] text-slate-400">{d.customerArea}</p>}
+              </div>
+            ) },
+            { header: "Items", cell: (d) => {
+              const items = d.lineItems || [];
+              const text = items.map((i) => `${i.name}${i.quantity > 1 ? ` x${i.quantity}` : ""}`).join(", ");
+              return <span className="text-slate-500 line-clamp-1 max-w-[20rem] inline-block align-middle">{text || "—"}</span>;
+            } },
+            { header: "Amount", cell: (d) => <span className="tabular-nums">{new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(d.invoiceAmount)}</span>, className: "text-right whitespace-nowrap" },
+            { header: "Date", cell: (d) => new Date(d.invoiceDate).toLocaleDateString("en-IN"), className: "whitespace-nowrap text-slate-500" },
+            { header: "Status", cell: (d) => {
+              const isPending = ["PENDING", "VERIFIED", "SCHEDULED"].includes(d.status);
+              const aging = isPending ? getAging(d.invoiceDate) : null;
+              return (
+                <div className="flex items-center gap-1.5">
+                  <Badge className={`text-[10px] ${getStatusColor(d.status)}`}>{getStatusLabel(d.status)}</Badge>
+                  {aging && aging.level !== "ok" && <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full ${AGING_BADGE[aging.level]}`}>{aging.text}</span>}
+                </div>
+              );
+            } },
+            { header: "", className: "text-right", cell: (d) => (
+              <div className="flex items-center justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+                {d.status === "PENDING" && (
+                  <>
+                    <Link href={`/deliveries/${d.id}`}><button className="px-2 py-1 rounded-md bg-blue-600 text-white text-xs font-medium">Schedule</button></Link>
+                    <Link href={`/deliveries/${d.id}?action=walkout`}><button className="px-2 py-1 rounded-md bg-green-600 text-white text-xs font-medium">Walk-out</button></Link>
+                    <button onClick={() => setPrebookConfirm(d)} disabled={prebooking === d.id} className="px-2 py-1 rounded-md bg-purple-600 text-white text-xs font-medium disabled:opacity-50">{prebooking === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Pre-book"}</button>
+                  </>
+                )}
+                {d.status === "SCHEDULED" && <Link href="/deliveries/dispatch"><button className="px-2 py-1 rounded-md bg-orange-600 text-white text-xs font-medium">Dispatch</button></Link>}
+                {d.status === "PREBOOKED" && <button onClick={() => handleMarkReady(d.id)} className="px-2 py-1 rounded-md bg-blue-600 text-white text-xs font-medium">Mark Ready</button>}
+                {isAdmin && <button onClick={() => setDeleteConfirm(d.id)} disabled={deleting === d.id} className="p-1.5 rounded-md bg-slate-100 text-slate-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-50">{deleting === d.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}</button>}
+              </div>
+            ) },
+          ]}
+        />
+        <div className="space-y-2.5 lg:hidden">
           {deliveries.map((d) => (
             <DeliveryCard
               key={d.id}
@@ -264,6 +322,7 @@ export default function DeliveriesPage() {
             />
           ))}
         </div>
+        </>
       )}
 
       {/* Delete Confirmation */}

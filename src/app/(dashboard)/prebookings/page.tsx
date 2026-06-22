@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { FilterSheet } from "@/components/filter-sheet";
+import { DesktopTable } from "@/components/desktop-table";
 import { usePermissions } from "@/lib/use-permissions";
 
 interface PreBooking {
@@ -359,7 +360,55 @@ export default function PreBookingsPage() {
           <p className="text-sm text-slate-400">No pre-bookings found</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <>
+        <DesktopTable
+          className="hidden lg:block"
+          rows={preBookings}
+          rowKey={(pb) => pb.id}
+          emptyText="No pre-bookings found"
+          columns={[
+            { header: "Customer", cell: (pb) => (
+              <div>
+                <p className="font-medium text-slate-900">{pb.customerName}</p>
+                {pb.salesPerson && <p className="text-[11px] text-slate-400">Sales: {pb.salesPerson}</p>}
+              </div>
+            ) },
+            { header: "Product", cell: (pb) => (
+              <div>
+                <p className="text-slate-700">{pb.productName}</p>
+                {pb.brand && <p className="text-[11px] text-slate-400">{pb.brand.name}</p>}
+              </div>
+            ) },
+            { header: "Invoice", cell: (pb) => <span className="text-slate-500">{pb.zohoInvoiceNo}</span> },
+            { header: "Age", cell: (pb) => (pb.status !== "FULFILLED" && pb.status !== "CANCELLED")
+              ? <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${agingColor(pb.createdAt)}`}><Clock className="h-2.5 w-2.5" />{daysAgo(pb.createdAt)}</span>
+              : <span className="text-slate-400">—</span>, className: "whitespace-nowrap" },
+            { header: "Status", cell: (pb) => {
+              const badge = STATUS_BADGE[pb.status] || { variant: "default" as const, label: pb.status };
+              return <Badge variant={badge.variant}>{badge.label}</Badge>;
+            } },
+            { header: "", className: "text-right", cell: (pb) => (
+              <div className="flex items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                {pb.matchedShipment && (
+                  <Link href={`/inbound/${pb.matchedShipment.id}`} className="inline-flex items-center gap-1 text-xs text-blue-700 hover:underline">
+                    <Truck className="h-3.5 w-3.5" /> {pb.matchedShipment.shipmentNo}
+                  </Link>
+                )}
+                {pb.status === "WAITING" && canMatch && (
+                  <button onClick={() => openManualMatch(pb)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-50 text-amber-700 text-xs font-medium border border-amber-200 hover:bg-amber-100">
+                    <Link2 className="h-3.5 w-3.5" /> Match
+                  </button>
+                )}
+                {pb.customerPhone && (
+                  <a href={`https://wa.me/91${pb.customerPhone.replace(/\D/g, "").slice(-10)}`} target="_blank" rel="noopener noreferrer" className="inline-flex p-1.5 rounded-full hover:bg-green-50">
+                    <Phone className="h-3.5 w-3.5 text-green-600" />
+                  </a>
+                )}
+              </div>
+            ) },
+          ]}
+        />
+        <div className="space-y-2 lg:hidden">
           {preBookings.map((pb) => {
             const badge = STATUS_BADGE[pb.status] || { variant: "default" as const, label: pb.status };
             return (
@@ -423,6 +472,7 @@ export default function PreBookingsPage() {
             );
           })}
         </div>
+        </>
       )}
 
       {/* Manual Match Modal */}

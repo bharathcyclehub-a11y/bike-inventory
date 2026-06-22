@@ -378,7 +378,7 @@ export default function ZohoSettingsPage() {
       ) : (
         <>
           {/* 3-Source Connection Cards */}
-          <div className="grid grid-cols-1 gap-2 mb-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2 mb-4">
             {/* Zoho Books Card */}
             <Card className={`border ${status?.connected ? "border-green-200 bg-green-50" : "border-slate-200"}`}>
               <CardContent className="p-3">

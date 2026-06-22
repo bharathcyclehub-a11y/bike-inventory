@@ -81,7 +81,7 @@ export default function StockByLocationPage() {
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
                 {SITE_NAMES[group.site] || group.site}
               </p>
-              <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 {group.locs.map((loc) => (
                   <Card key={loc.key}>
                     <CardContent className="p-4">
