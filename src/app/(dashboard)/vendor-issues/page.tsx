@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { useDebounce } from "@/lib/utils";
 import { type DateRangeKey } from "@/components/date-filter";
 import { FilterSheet } from "@/components/filter-sheet";
+import { DesktopTable } from "@/components/desktop-table";
 
 interface IssueItem {
   id: string;
@@ -286,6 +287,41 @@ export default function VendorIssuesPage() {
     </Link>
   );
 
+  // Desktop: dense table; mobile: the existing cards.
+  const renderIssueList = (list: IssueItem[]) => (
+    <>
+      <DesktopTable
+        className="hidden lg:block"
+        rows={list}
+        rowKey={(i) => i.id}
+        rowHref={(i) => `/vendor-issues/${i.id}`}
+        emptyText="No issues found"
+        columns={[
+          { header: "Issue", cell: (i) => (
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-900">{i.issueNo}</span>
+              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${ISSUE_TYPE_COLORS[i.issueType] || ISSUE_TYPE_COLORS.OTHER}`}>{i.issueType.replace(/_/g, " ")}</span>
+            </div>
+          ) },
+          { header: "Brand / Client", cell: (i) => i.issueSource === "CLIENT"
+            ? <span><span className="text-teal-600 font-medium">Client:</span> {i.clientName || "Unknown"}</span>
+            : <span><span className="text-orange-600 font-medium">Brand:</span> {i.vendor?.name || "Unknown"}</span> },
+          { header: "Description", cell: (i) => <span className="text-slate-600 line-clamp-1 max-w-[24rem] inline-block align-middle">{i.description}</span> },
+          { header: "Priority", cell: (i) => <Badge variant={PRIORITY_VARIANT[i.priority] || "default"} className="text-[10px]">{i.priority}</Badge> },
+          { header: "Status", cell: (i) => <Badge variant={STATUS_VARIANT[i.status] || "default"} className="text-[10px]">{i.status.replace(/_/g, " ")}</Badge> },
+          { header: "Age", className: "whitespace-nowrap", cell: (i) => {
+            const days = (i.status !== "CLOSED" && i.status !== "RESOLVED") ? overdueDays(i.createdAt) : 0;
+            return <span className="text-slate-500">{new Date(i.createdAt).toLocaleDateString("en-IN")}{days > 0 && <span className="text-red-500 font-medium ml-1">({days}d)</span>}</span>;
+          } },
+          ...(isAdmin ? [{ header: "", className: "text-right w-10", cell: (i: IssueItem) => (
+            <button onClick={(e) => handleDelete(e, i.id, i.issueNo)} className="p-1.5 rounded-full hover:bg-red-50 text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
+          ) }] : []),
+        ]}
+      />
+      <div className="space-y-0 lg:hidden">{list.map(renderIssueCard)}</div>
+    </>
+  );
+
   return (
     <div className="pb-24">
       <div className="flex items-center justify-between mb-3">
@@ -420,7 +456,7 @@ export default function VendorIssuesPage() {
                       <Share2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  <div className="space-y-0">{filteredBrandIssues.map(renderIssueCard)}</div>
+                  {renderIssueList(filteredBrandIssues)}
                 </div>
               )}
 
@@ -438,7 +474,7 @@ export default function VendorIssuesPage() {
                       <Share2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
-                  <div className="space-y-0">{clientIssues.map(renderIssueCard)}</div>
+                  {renderIssueList(clientIssues)}
                 </div>
               )}
 
@@ -454,7 +490,7 @@ export default function VendorIssuesPage() {
           {/* VENDOR tab: only brand issues */}
           {sourceTab === "VENDOR" && (
             <div className="space-y-0">
-              {filteredBrandIssues.length > 0 ? filteredBrandIssues.map(renderIssueCard) : (
+              {filteredBrandIssues.length > 0 ? renderIssueList(filteredBrandIssues) : (
                 <div className="text-center py-12">
                   <Building2 className="h-8 w-8 text-slate-300 mx-auto mb-2" />
                   <p className="text-sm text-slate-400">No brand issues found</p>
@@ -466,7 +502,7 @@ export default function VendorIssuesPage() {
           {/* CLIENT tab: only client issues */}
           {sourceTab === "CLIENT" && (
             <div className="space-y-0">
-              {clientIssues.length > 0 ? clientIssues.map(renderIssueCard) : (
+              {clientIssues.length > 0 ? renderIssueList(clientIssues) : (
                 <div className="text-center py-12">
                   <Users className="h-8 w-8 text-slate-300 mx-auto mb-2" />
                   <p className="text-sm text-slate-400">No client issues found</p>

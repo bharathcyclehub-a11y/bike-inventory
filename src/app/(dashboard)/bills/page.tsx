@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ExportButtons } from "@/components/export-buttons";
+import { DesktopTable } from "@/components/desktop-table";
 import { exportToExcel, exportToPDF, type ExportColumn } from "@/lib/export";
 import { useDebounce } from "@/lib/utils";
 import { type DateRangeKey } from "@/components/date-filter";
@@ -504,7 +505,32 @@ export default function BillsPage() {
           ))}
         </div>
       ) : (
-        <div className="space-y-2">
+        <>
+        <DesktopTable
+          className="hidden lg:block"
+          rows={bills}
+          rowKey={(bill) => bill.id}
+          rowHref={(bill) => `/bills/${bill.id}`}
+          emptyText="No bills found"
+          columns={[
+            { header: "Vendor", cell: (bill) => {
+              const due = new Date(bill.billDate); due.setDate(due.getDate() + (bill.vendor.paymentTermDays || 30));
+              const isOverdue = due < new Date() && bill.amount - bill.paidAmount > 0;
+              return <div className="flex items-center gap-1.5">{isOverdue && <AlertTriangle className="h-3.5 w-3.5 text-red-500 shrink-0" />}<span className="font-medium text-slate-900">{bill.vendor.name}</span></div>;
+            } },
+            { header: "Bill No", cell: (bill) => <span className="text-slate-500">{bill.billNo}</span> },
+            { header: "Due", cell: (bill) => { const due = new Date(bill.billDate); due.setDate(due.getDate() + (bill.vendor.paymentTermDays || 30)); return due.toLocaleDateString("en-IN"); }, className: "whitespace-nowrap text-slate-500" },
+            { header: "Amount", cell: (bill) => <span className="tabular-nums">{formatCurrency(bill.amount)}</span>, className: "text-right whitespace-nowrap" },
+            { header: "Paid", cell: (bill) => <span className="tabular-nums text-green-600">{formatCurrency(bill.paidAmount)}</span>, className: "text-right whitespace-nowrap" },
+            { header: "Balance", cell: (bill) => { const r = bill.amount - bill.paidAmount; return <span className={`tabular-nums font-semibold ${r > 0 ? "text-red-600" : "text-green-600"}`}>{formatCurrency(r)}</span>; }, className: "text-right whitespace-nowrap" },
+            { header: "Status", cell: (bill) => {
+              const due = new Date(bill.billDate); due.setDate(due.getDate() + (bill.vendor.paymentTermDays || 30));
+              const isOverdue = due < new Date() && bill.amount - bill.paidAmount > 0;
+              return <Badge variant={bill.status === "PAID" ? "success" : isOverdue ? "danger" : "warning"} className="text-[10px]">{isOverdue ? "OVERDUE" : bill.status.replace(/_/g, " ")}</Badge>;
+            } },
+          ]}
+        />
+        <div className="space-y-2 lg:hidden">
           {bills.map((bill) => {
             const remaining = bill.amount - bill.paidAmount;
             // Overdue based on billDate + vendor payment terms from app
@@ -559,8 +585,9 @@ export default function BillsPage() {
               <p className="text-sm text-slate-400">No bills found</p>
             </div>
           )}
+        </div>
 
-          {/* Totals */}
+          {/* Totals — shown on all sizes */}
           {bills.length > 0 && (
             <Card className="bg-slate-50 mt-3">
               <CardContent className="p-3">
@@ -584,7 +611,7 @@ export default function BillsPage() {
               </CardContent>
             </Card>
           )}
-        </div>
+        </>
       )}
     </div>
   );

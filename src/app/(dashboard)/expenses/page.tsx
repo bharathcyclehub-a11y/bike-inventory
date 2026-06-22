@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { DesktopTable } from "@/components/desktop-table";
 import { usePermissions } from "@/lib/use-permissions";
 
 interface ExpenseItem {
@@ -91,6 +92,12 @@ export default function ExpensesPage() {
     );
   }
 
+  const visibleExpenses = expenses.filter((exp) => {
+    if (!searchText) return true;
+    const q = searchText.toLowerCase();
+    return exp.description.toLowerCase().includes(q) || exp.paidBy.toLowerCase().includes(q);
+  });
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3">
@@ -141,12 +148,23 @@ export default function ExpensesPage() {
           <div className="h-6 w-6 border-2 border-slate-900 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : (
-        <div className="space-y-2">
-          {expenses.filter((exp) => {
-            if (!searchText) return true;
-            const q = searchText.toLowerCase();
-            return exp.description.toLowerCase().includes(q) || exp.paidBy.toLowerCase().includes(q);
-          }).map((exp) => (
+        <>
+        <DesktopTable
+          className="hidden lg:block"
+          rows={visibleExpenses}
+          rowKey={(exp) => exp.id}
+          emptyText="No expenses found"
+          columns={[
+            { header: "Description", cell: (exp) => <span className="font-medium text-slate-900">{exp.description}</span> },
+            { header: "Date", cell: (exp) => new Date(exp.date).toLocaleDateString("en-IN"), className: "whitespace-nowrap text-slate-500" },
+            { header: "Paid By", cell: (exp) => exp.paidBy },
+            { header: "Mode", cell: (exp) => <span className="text-slate-500">{exp.paymentMode}</span> },
+            { header: "Category", cell: (exp) => <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${CATEGORY_COLORS[exp.category] || "bg-slate-100 text-slate-700"}`}>{exp.category.replace(/_/g, " ")}</span> },
+            { header: "Amount", cell: (exp) => <span className="font-semibold text-slate-900 tabular-nums">{formatCurrency(exp.amount)}</span>, className: "text-right whitespace-nowrap" },
+          ]}
+        />
+        <div className="space-y-2 lg:hidden">
+          {visibleExpenses.map((exp) => (
             <Card key={exp.id} className="mb-2">
               <CardContent className="p-3">
                 <div className="flex items-start justify-between">
@@ -172,6 +190,7 @@ export default function ExpensesPage() {
             </div>
           )}
         </div>
+        </>
       )}
     </div>
   );
