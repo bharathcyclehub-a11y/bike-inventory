@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { Search, AlertCircle, Plus, Trash2, Share2, Building2, Users, CalendarCheck } from "lucide-react";
+import { Search, AlertCircle, Plus, Trash2, Share2, Building2, Users, CalendarCheck, MessagesSquare, X, Loader2 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -22,7 +22,7 @@ interface IssueItem {
   status: string;
   priority: string;
   createdAt: string;
-  vendor: { name: string } | null;
+  vendor: { id: string; name: string; waGroupName: string | null; waGroupCode: string | null } | null;
   clientName: string | null;
   openCount: number;
   inProgressCount: number;
@@ -60,6 +60,13 @@ function overdueDays(createdAt: string): number {
   return Math.floor((Date.now() - new Date(createdAt).getTime()) / 86400000);
 }
 
+// Normalize a group code to always show a leading "#".
+function fmtGroupCode(code: string | null | undefined): string {
+  const c = (code || "").trim();
+  if (!c) return "";
+  return c.startsWith("#") ? c : `#${c}`;
+}
+
 export default function VendorIssuesPage() {
   const { data: session } = useSession();
   const role = (session?.user as { role?: string })?.role || "";
@@ -81,6 +88,10 @@ export default function VendorIssuesPage() {
   const [brandFilter, setBrandFilter] = useState("ALL");
   const [actionError, setActionError] = useState<string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
+  // Brand → WhatsApp group editor
+  const [groupsOpen, setGroupsOpen] = useState(false);
+  const [groupDraft, setGroupDraft] = useState<Record<string, { name: string; code: string }>>({});
+  const [savingGroups, setSavingGroups] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -117,6 +128,14 @@ export default function VendorIssuesPage() {
     return acc;
   }, {});
 
+  // Brand → vendor id + its mapped WhatsApp group (used for per-brand share routing).
+  const brandMeta: Record<string, { id: string; waGroupName: string | null; waGroupCode: string | null }> = {};
+  for (const i of brandIssues) {
+    if (i.vendor?.name && !brandMeta[i.vendor.name]) {
+      brandMeta[i.vendor.name] = { id: i.vendor.id, waGroupName: i.vendor.waGroupName, waGroupCode: i.vendor.waGroupCode };
+    }
+  }
+
   // Apply brand filter
   const filteredBrandIssues = brandFilter === "ALL"
     ? brandIssues
@@ -140,6 +159,16 @@ export default function VendorIssuesPage() {
       : shareBrand && shareClient ? "⚠️ *Ops Issues Summary*"
       : shareBrand ? "⚠️ *Brand Issues Summary*"
       : "⚠️ *Client Issues Summary*";
+
+    // Per-brand share → prepend the mapped WhatsApp group as a routing label (the human taps that group).
+    if (shareBrand && brandFilter !== "ALL") {
+      const meta = brandMeta[brandFilter];
+      const code = fmtGroupCode(meta?.waGroupCode);
+      if (meta && (meta.waGroupName || code)) {
+        lines.push(`📍 *${meta.waGroupName || brandFilter}*${code ? `  ${code}` : ""}`);
+        lines.push("");
+      }
+    }
     lines.push(heading);
     lines.push(`📅 ${today.toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" })}`);
     lines.push("");
@@ -177,6 +206,58 @@ export default function VendorIssuesPage() {
     lines.push(`📊 *Total: ${toShare.length} open issues*`);
     lines.push("\n_Sent from BCH OPS App_");
     window.open(`https://wa.me/?text=${encodeURIComponent(lines.join("\n"))}`, "_blank");
+  };
+
+  // Open the brand → WhatsApp group editor, seeded from current mappings.
+  const openGroupsEditor = () => {
+    const draft: Record<string, { name: string; code: string }> = {};
+    for (const b of brandNames) {
+      const meta = brandMeta[b];
+      if (meta) draft[meta.id] = { name: meta.waGroupName || "", code: meta.waGroupCode || "" };
+    }
+    setGroupDraft(draft);
+    setActionError(null);
+    setGroupsOpen(true);
+  };
+
+  // Persist only the brands whose group/name changed, then reflect locally (no refetch needed).
+  const saveGroups = async () => {
+    setSavingGroups(true);
+    setActionError(null);
+    try {
+      const updates: Array<{ id: string; name: string; code: string }> = [];
+      for (const b of brandNames) {
+        const meta = brandMeta[b];
+        const d = meta && groupDraft[meta.id];
+        if (!meta || !d) continue;
+        const name = d.name.trim();
+        const code = d.code.trim();
+        if (name !== (meta.waGroupName || "") || code !== (meta.waGroupCode || "")) {
+          updates.push({ id: meta.id, name, code });
+        }
+      }
+      for (const u of updates) {
+        const res = await fetch(`/api/vendors/${u.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ waGroupName: u.name, waGroupCode: u.code }),
+        });
+        const json = await res.json();
+        if (!json.success) throw new Error(json.error || "Failed to save group");
+      }
+      // Mirror saved values into loaded issues so the next share uses them immediately.
+      setIssues((prev) => prev.map((it) => {
+        const d = it.vendor && groupDraft[it.vendor.id];
+        return it.vendor && d
+          ? { ...it, vendor: { ...it.vendor, waGroupName: d.name.trim() || null, waGroupCode: d.code.trim() || null } }
+          : it;
+      }));
+      setGroupsOpen(false);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Failed to save groups");
+    } finally {
+      setSavingGroups(false);
+    }
   };
 
   // Daily progress report — what came in today, what was processed, current backlog.
@@ -344,6 +425,13 @@ export default function VendorIssuesPage() {
             <CalendarCheck className="w-4 h-4" /> {reportLoading ? "..." : "Daily Report"}
           </button>
           <button
+            onClick={openGroupsEditor}
+            className="w-9 h-9 rounded-full bg-white border border-slate-200 flex items-center justify-center active:scale-95 transition-transform shadow-sm"
+            title="Map brands to WhatsApp groups"
+          >
+            <MessagesSquare className="w-4 h-4 text-slate-600" />
+          </button>
+          <button
             onClick={() => shareIssuesWhatsApp(sourceTab !== "CLIENT", sourceTab !== "VENDOR")}
             className="w-9 h-9 rounded-full bg-green-500 flex items-center justify-center active:scale-95 transition-transform shadow"
             title="Share issues on WhatsApp"
@@ -432,6 +520,16 @@ export default function VendorIssuesPage() {
             : []),
         ]}
       />
+
+      {/* Nudge: a brand is selected but has no WhatsApp group mapped yet */}
+      {brandFilter !== "ALL" && brandMeta[brandFilter] && !(brandMeta[brandFilter].waGroupName || brandMeta[brandFilter].waGroupCode) && (
+        <button
+          onClick={openGroupsEditor}
+          className="mb-3 w-full text-left text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 active:scale-[0.99] transition-transform"
+        >
+          No WhatsApp group set for <span className="font-semibold">{brandFilter}</span>. Tap to add its group &amp; #code so shares route to the right group.
+        </button>
+      )}
 
       {/* Content */}
       {loading ? (
@@ -528,6 +626,81 @@ export default function VendorIssuesPage() {
       >
         <Plus className="h-5 w-5" />
       </Link>
+
+      {/* Brand → WhatsApp group editor */}
+      {groupsOpen && (
+        <div
+          className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-black/40 sm:p-4"
+          onClick={() => !savingGroups && setGroupsOpen(false)}
+        >
+          <div
+            className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl max-h-[85vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between p-4 border-b border-slate-100">
+              <div className="pr-3">
+                <h2 className="text-base font-bold text-slate-900">WhatsApp Groups</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Map each brand to its group &amp; #code. It&apos;s added to the share so you tap the right group.</p>
+              </div>
+              <button onClick={() => !savingGroups && setGroupsOpen(false)} className="p-1.5 rounded-full hover:bg-slate-100 shrink-0">
+                <X className="w-5 h-5 text-slate-500" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {brandNames.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-6">No brands with issues yet.</p>
+              ) : (
+                brandNames.map((b) => {
+                  const meta = brandMeta[b];
+                  if (!meta) return null;
+                  const d = groupDraft[meta.id] || { name: "", code: "" };
+                  return (
+                    <div key={meta.id} className="border border-slate-100 rounded-xl p-3">
+                      <p className="text-sm font-semibold text-slate-800 mb-2">
+                        {b} <span className="text-xs font-normal text-slate-400">({openByBrand[b] || 0} open)</span>
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          value={d.name}
+                          onChange={(e) => setGroupDraft((prev) => ({ ...prev, [meta.id]: { ...d, name: e.target.value } }))}
+                          placeholder="Group name"
+                          className="flex-1 min-w-0 h-9 px-3 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/40"
+                        />
+                        <input
+                          value={d.code}
+                          onChange={(e) => setGroupDraft((prev) => ({ ...prev, [meta.id]: { ...d, code: e.target.value } }))}
+                          placeholder="#code"
+                          className="w-24 shrink-0 h-9 px-3 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-green-500/40"
+                        />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {actionError && groupsOpen && (
+              <p className="px-4 text-xs text-red-600">{actionError}</p>
+            )}
+            <div className="p-4 border-t border-slate-100 flex gap-2">
+              <button
+                onClick={() => !savingGroups && setGroupsOpen(false)}
+                className="flex-1 h-10 rounded-full border border-slate-200 text-sm font-medium text-slate-600"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveGroups}
+                disabled={savingGroups}
+                className="flex-1 h-10 rounded-full bg-green-600 text-white text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {savingGroups ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : "Save"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

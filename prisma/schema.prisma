@@ -481,6 +481,8 @@ model Vendor {
   phone           String?
   email           String?
   whatsappNumber  String?
+  waGroupName     String?         // Ops Issues: WhatsApp group this brand's issues are shared to
+  waGroupCode     String?         // Ops Issues: human routing label for the group (e.g. "#1234")
   paymentTermDays Int             @default(30)
   creditLimit     Float           @default(0)
   cdTermsDays     Int?

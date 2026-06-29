@@ -145,6 +145,8 @@ export const vendorSchema = z.object({
   phone: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
   whatsappNumber: z.string().optional(),
+  waGroupName: z.string().optional(),
+  waGroupCode: z.string().optional(),
   paymentTermDays: z.number().int().min(0).optional(),
   creditLimit: z.number().min(0).optional(),
   cdTermsDays: z.number().int().min(0).optional(),

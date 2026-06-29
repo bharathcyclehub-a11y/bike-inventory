@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
             priority: true,
             createdAt: true,
             clientName: true,
-            vendor: { select: { name: true } },
+            vendor: { select: { id: true, name: true, waGroupName: true, waGroupCode: true } },
           },
           orderBy: { createdAt: "desc" },
           skip,
