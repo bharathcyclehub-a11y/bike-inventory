@@ -109,6 +109,14 @@ export default function VendorIssuesPage() {
     new Set(brandIssues.filter(i => i.vendor?.name).map(i => i.vendor!.name))
   ).sort();
 
+  // Live count of OPEN issues per brand — shown next to each brand in the filter.
+  const openByBrand = brandIssues.reduce<Record<string, number>>((acc, i) => {
+    if (i.status === "OPEN" && i.vendor?.name) {
+      acc[i.vendor.name] = (acc[i.vendor.name] || 0) + 1;
+    }
+    return acc;
+  }, {});
+
   // Apply brand filter
   const filteredBrandIssues = brandFilter === "ALL"
     ? brandIssues
@@ -418,7 +426,7 @@ export default function VendorIssuesPage() {
                 label: "Brand",
                 value: brandFilter,
                 defaultValue: "ALL",
-                options: [{ key: "ALL", label: "All" }, ...brandNames.map((b) => ({ key: b, label: b }))],
+                options: [{ key: "ALL", label: "All" }, ...brandNames.map((b) => ({ key: b, label: `${b} (${openByBrand[b] || 0})` }))],
                 onChange: (key: string) => setBrandFilter(key),
               }]
             : []),
