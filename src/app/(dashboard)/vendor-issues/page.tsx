@@ -237,10 +237,10 @@ export default function VendorIssuesPage() {
         }
       }
       for (const u of updates) {
-        const res = await fetch(`/api/vendors/${u.id}`, {
-          method: "PUT",
+        const res = await fetch(`/api/vendor-issues/groups`, {
+          method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ waGroupName: u.name, waGroupCode: u.code }),
+          body: JSON.stringify({ vendorId: u.id, waGroupName: u.name, waGroupCode: u.code }),
         });
         const json = await res.json();
         if (!json.success) throw new Error(json.error || "Failed to save group");
