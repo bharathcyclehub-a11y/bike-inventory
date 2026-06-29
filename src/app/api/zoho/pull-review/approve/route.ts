@@ -195,9 +195,12 @@ export async function POST(req: NextRequest) {
           const total = Number(d.total || 0);
           const balance = Number(d.balance || 0);
 
-          // Match products for line items — auto-create if not found
+          // Match products for line items — auto-create if not found.
+          // Accounting (Bills & Payments) imports are FINANCIAL-ONLY: they must never
+          // create products or touch the stock chain, so the whole loop is skipped for them.
           const matchedProducts: Array<{ li: typeof lineItems[0]; product: { id: string; currentStock: number } }> = [];
 
+          if (source !== "accounting") {
           // Resolve brand for new products (use vendor name as brand)
           const billVendorName = String(d.vendorName).trim();
           let itemBrand = await prisma.brand.findFirst({ where: { name: { equals: billVendorName, mode: "insensitive" } } });
@@ -292,6 +295,7 @@ export async function POST(req: NextRequest) {
             }
             matchedProducts.push({ li, product });
           }
+          } // end if (source !== "accounting") — accounting imports stay financial-only
 
           // Calculate due date: use Zoho's dueDate unless it equals billDate (missing), then use vendor's payment terms
           const billDate = new Date(String(d.date));

@@ -147,7 +147,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
 
       await prisma.bankTransaction.update({
-        where: { id: txnId },
+        where: { id: singleId },
         data: {
           matchStatus: "MATCHED",
           confirmedVendorId: vendorId,
@@ -185,7 +185,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       });
 
       await prisma.bankTransaction.update({
-        where: { id: txnId },
+        where: { id: singleId },
         data: {
           matchStatus: "EXPENSE",
           confirmedExpenseId: expense.id,
@@ -198,7 +198,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (action === "ignore") {
       await prisma.bankTransaction.update({
-        where: { id: txnId },
+        where: { id: singleId },
         data: { matchStatus: "IGNORED", processedAt: new Date() },
       });
       return successResponse({ action: "ignored" });
@@ -206,7 +206,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (action === "flag") {
       await prisma.bankTransaction.update({
-        where: { id: txnId },
+        where: { id: singleId },
         data: { matchStatus: "FLAGGED", flagReason: body.flagReason || "Manually flagged", processedAt: new Date() },
       });
       return successResponse({ action: "flagged" });
