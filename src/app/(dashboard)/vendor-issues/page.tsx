@@ -413,9 +413,9 @@ export default function VendorIssuesPage() {
 
   return (
     <div className="pb-24">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex flex-wrap items-center justify-between gap-y-2 mb-3">
         <h1 className="text-lg font-bold text-slate-900">Ops Issues</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             onClick={handleDailyReport}
             disabled={reportLoading}
@@ -426,10 +426,10 @@ export default function VendorIssuesPage() {
           </button>
           <button
             onClick={openGroupsEditor}
-            className="w-9 h-9 rounded-full bg-white border border-slate-200 flex items-center justify-center active:scale-95 transition-transform shadow-sm"
+            className="flex items-center gap-1.5 h-9 px-3 rounded-full bg-white border border-slate-200 text-slate-600 text-xs font-medium active:scale-95 transition-transform shadow-sm"
             title="Map brands to WhatsApp groups"
           >
-            <MessagesSquare className="w-4 h-4 text-slate-600" />
+            <MessagesSquare className="w-4 h-4" /> Groups
           </button>
           <button
             onClick={() => shareIssuesWhatsApp(sourceTab !== "CLIENT", sourceTab !== "VENDOR")}
