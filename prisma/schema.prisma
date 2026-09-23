@@ -8,18 +8,114 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-enum Role {
-  CEO
-  ADMIN
-  SUPERVISOR
-  PURCHASE_MANAGER
-  ACCOUNTS_MANAGER
-  INWARDS_EXECUTIVE
-  OUTWARDS_EXECUTIVE
-  STORE_MANAGER
-  SALES_MANAGER
-  SERVICE_MANAGER
-  CUSTOM
+// ─── RBAC ────────────────────────────────────────────────────
+// Roles, modules and permissions are DATA, not code. The former `enum Role` and the
+// hardcoded permission maps in src/lib/permissions-server.ts have been replaced by the
+// Module / Permission / Role / RolePermission tables below, so access can be changed at
+// runtime without a redeploy.
+//
+//   Module  1──*  Permission  *──*  Role  1──*  User
+//                        └── RolePermission ──┘
+//
+// A module is a functional area ("stock"). A permission is one action on one module
+// ("stock.edit"). A role holds any number of permissions. A user has exactly one role.
+
+model Module {
+  id          String   @id @default(cuid())
+  key         String   @unique // stable identifier used in code: "stock", "inbound"
+  label       String // human label shown in the sidebar and the admin editor
+  description String?
+  icon        String? // lucide icon name, resolved client-side
+  route       String? // primary route, used to build the sidebar
+  group       String? // sidebar grouping: "Accounts", "Purchase", "Operations", "Admin"
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  // false = only the system role may hold this module's permissions. Enforced in the two
+  // role-write routes by `Role.isSystem` (a column, never a role name — CLAUDE.md rule 1),
+  // and shown greyed out on /team/permissions. Seeded from `ModuleSeed.assignable`.
+  // First used by brand_ledger / brand_ledger_gaps (plan 0909-vendor-ledger-screens, R7).
+  assignable  Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // ── Sub-module tree ────────────────────────────────────────────────────────
+  // NULL = a root module, which is every row that existed before Staff LMS. The sidebar
+  // renders roots as collapsible parents and children indented beneath them.
+  //
+  // Restrict, NOT Cascade — deliberately. Deleting a parent must never silently delete
+  // its children: that cascades into `permissions`, which cascades into
+  // `role_permissions`, revoking grants across every role with no error and no audit
+  // trail. Restrict forces the admin (or the seeder) to re-parent or delete children first.
+  //
+  // FOUR INVARIANTS THE FOREIGN KEY CANNOT EXPRESS. All four are asserted in
+  // prisma/seed-rbac.ts, because each fails silently rather than loudly:
+  //   1. Depth is exactly two. A self-FK permits arbitrary nesting and Postgres cannot cap
+  //      it without a recursive CHECK; a grandchild would exist in the DB and render
+  //      NOWHERE — the grant works and the link never appears.
+  //   2. No cycles. A -> B -> A satisfies the FK and hangs a recursive sidebar builder.
+  //   3. `group` belongs to the parent only. A child with its own group gives the sidebar
+  //      two competing grouping mechanisms and renders the section twice.
+  //   4. `sortOrder` is sibling-scoped for children; roots keep the global band ordering.
+  parentId String?  @map("parent_id")
+  parent   Module?  @relation("ModuleTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Module[] @relation("ModuleTree")
+
+  permissions Permission[]
+
+  @@index([isActive, sortOrder])
+  @@index([parentId, sortOrder]) // the sidebar reads children by parent, in order
+  @@map("modules")
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  key         String   @unique // "stock.edit" — module.key + "." + action
+  moduleId    String
+  action      String // view | create | edit | delete | approve | fetch
+  label       String
+  description String?
+  createdAt   DateTime @default(now())
+
+  module Module           @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  roles  RolePermission[]
+
+  @@unique([moduleId, action]) // one row per module+action
+  @@index([moduleId])
+  @@map("permissions")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  key         String   @unique // "ADMIN" — stable identifier
+  name        String // "Administrator" — editable display name
+  description String?
+  isSystem    Boolean  @default(false) // system roles cannot be deleted or renamed
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  users       User[]
+  permissions RolePermission[]
+
+  @@index([isActive])
+  @@map("roles")
+}
+
+// Join table carrying the grants. A row's existence IS the grant — there is no
+// boolean column, so revoking is a delete and the table never holds "false" noise.
+model RolePermission {
+  id           String   @id @default(cuid())
+  roleId       String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permissions")
 }
 
 enum TransactionType {
@@ -127,69 +223,191 @@ enum ProductCondition {
   DAMAGED
 }
 
-enum ProductType {
-  BICYCLE
-  SPARE_PART
-  ACCESSORY
-  BOX_PIECE
-  WIP
-  FINISHED_GOOD
+// ─── Store hierarchy ─────────────────────────────────────────────────────────
+//
+// These two models REPLACED the StockLocation enum, which is GONE as of Phase 4 of
+// docs/implementation/pending/store-hierarchy-and-team-plan.md. Six columns were repointed at
+// them and FootfallDaily was dropped; there is no enum left to fall back to.
+//
+// The split is not cosmetic — it decides which table each foreign key points at:
+//
+//   Stock quantity, transfers          -> Warehouse   stock is held in a physical space
+//   Footfall counting, devices         -> Store       a camera counts people through a door
+//
+// `code` on both models deliberately reuses the OLD ENUM STRINGS ("BCH_WAREHOUSE",
+// "BCH_STORE", ...). That is what keeps /stock/by-location/BCH_WAREHOUSE resolvable across
+// the transition and makes the Phase 4 backfill a plain lookup instead of a mapping table.
+
+/// A site — the shop itself, with a door people walk through. Stock does NOT live here;
+/// it lives in this store's Warehouse rows. Footfall does, because the camera is at the door.
+model Store {
+  id            String  @id @default(cuid())
+  code          String  @unique // "BCH_STORE", "BCC_STORE" — the old enum strings
+  name          String // "BCH Store"
+  address       String?
+  phone         String?
+  // Every store has its own GSTIN (owner). These decide the transfer document in P14: two
+  // stores with different GSTINs need a TAX INVOICE, movement inside one store needs only a
+  // DELIVERY CHALLAN. Nullable because every existing row predates them; P14 refuses an
+  // inter-store transfer while either is missing rather than guessing.
+  gstin         String? // 15 characters, e.g. 29ABCDE1234F1Z5
+  stateCode     String? // first two digits of the GSTIN, e.g. "29" — Karnataka
+  // The prefix this store's sales invoices carry: "BCH/", "BCC/". Unique because two stores
+  // claiming one prefix would make `storeIdForInvoice()` ambiguous.
+  //
+  // NOT a database prefix search, so no index beyond the unique one: `storeIdForInvoice()`
+  // (P1b) is a pure function over the store list already in memory -- there are two stores --
+  // and picks the longest matching prefix in JavaScript. Null until the owner fills it in on
+  // /stores; until then every sale falls back to the primary store with a log.warn.
+  invoicePrefix String? @unique
+
+  // ⚠ These three columns are ADDITIVE-ONLY in this migration, on purpose (CLAUDE.md rule 7).
+  // Nothing writes them yet and no zod schema accepts them: `invoicePrefix` gets its input on
+  // /stores in P1b, `gstin`/`stateCode` in P13. The column has to exist a release before the
+  // code that fills it, not the other way round.
+
+  isActive  Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  warehouses Warehouse[]
+  users      User[]
+
+  // Footfall is counted at the shop door, so these hang off the store, not a warehouse.
+  // All three already carried a column named `storeId`; Phase 4 changed its TYPE from the
+  // StockLocation enum to this foreign key and kept the name.
+  countEvents      CountEvent[]
+  agentHeartbeats  AgentHeartbeat[]
+  analyticsDevices AnalyticsDevice[]
+
+  stockCounts StockCount[] @relation("StockCountStore")
+  deliveries  Delivery[]   @relation("DeliveryStore")
+
+  // The store lane of a transfer — what was PICKED on /transfers/new, beside the warehouse it
+  // resolved to on TransferOrder. Restrict: a store with transfer history is not deletable.
+  transfersFrom TransferOrder[] @relation("TransferOrderFromStore")
+  transfersTo   TransferOrder[] @relation("TransferOrderToStore")
 }
 
-// Active stock-tracking locations. Bins (see Bin model) are dormant; per-location
-// quantity lives in StockLevel keyed by this enum. Two sites (BCH, BCC), each with
-// a warehouse and a store. STORE/WAREHOUSE are legacy values kept only so old rows
-// migrate cleanly — they are no longer used by the app.
-enum StockLocation {
-  STORE
-  WAREHOUSE
-  BCH_WAREHOUSE
-  BCH_STORE
-  BCC_WAREHOUSE
-  BCC_STORE
+/// What kind of place a warehouse is. FLOOR is the shop — where a customer sees the bike;
+/// GODOWN is storage. Decided 9 Sep 2026 (plan 0909-stock-store-and-warehouse-scoping, D2):
+/// three call sites need "the shop of this store" — outbound ordering, the inbound default and
+/// the transfer form's store panel — and a naming convention cannot be enforced by anything.
+/// Not unique per store on purpose: a shop may have two display areas. "The floor" is the first
+/// by sortOrder.
+enum WarehouseKind {
+  FLOOR
+  GODOWN
+}
+
+/// A place that holds stock — a godown or the shop floor (see `kind`). One godown per store
+/// on day one, but the whole point of the model is that a second location is an INSERT rather
+/// than a migration — see the plan's §2.1. The floor is exactly that second row (D1).
+model Warehouse {
+  id        String        @id @default(cuid())
+  storeId   String
+  // RESTRICT, explicitly. Deleting a store that still has warehouses must FAIL at the
+  // database. The API's delete rule (Phase 6) catches it first and returns a readable
+  // message; this is the backstop for when that check is missed. Never Cascade — it would
+  // silently take the warehouses, and with them every StockLevel row pointing at one.
+  store     Store         @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  code      String        @unique // "BCH_WAREHOUSE", "BCC_WAREHOUSE"
+  name      String // "BCH Warehouse"
+  kind      WarehouseKind @default(GODOWN)
+  isActive  Boolean       @default(true)
+  sortOrder Int           @default(0)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  users         User[]
+  stockLevels   StockLevel[]
+  transfersFrom TransferOrderItem[] @relation("TransferFromWarehouse")
+  transfersTo   TransferOrderItem[] @relation("TransferToWarehouse")
+  stockCounts   StockCount[]        @relation("StockCountWarehouse")
+
+  // The HEADER lane of a transfer, as opposed to the per-item lanes above. Both exist during
+  // P14/P15: the header is the lane the whole order moves on, the item lanes are legacy and
+  // are dropped in the release after P15.
+  orderTransfersFrom TransferOrder[] @relation("TransferOrderFromWarehouse")
+  orderTransfersTo   TransferOrder[] @relation("TransferOrderToWarehouse")
+
+  bins           Bin[]
+  homeBinRules   HomeBinRule[]
+  inventoryUnits InventoryUnit[]
+  assemblyTasks  AssemblyTask[]
+  binMovements   BinMovementLog[]
+
+  // `code` is globally unique above, which already prevents a duplicate. This pair is kept
+  // because the natural key of a warehouse is (site, code) and a future rename that relaxes
+  // the global constraint must not silently allow two "MAIN" warehouses under one store.
+  @@unique([storeId, code])
+  @@index([storeId])
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String
-  email         String    @unique
-  password      String
-  role          Role
-  customRoleName String?
-  permissions   Json?
-  accessCode    String    @unique
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id         String   @id @default(cuid())
+  name       String
+  email      String   @unique
+  password   String
+  roleId     String
+  role       Role     @relation(fields: [roleId], references: [id])
+  accessCode String   @unique
+  isActive   Boolean  @default(true)
+  // Avatar shown beside a mechanic's name across the workshop screens. Display only —
+  // carried over from the service app's User because its UI leans on it heavily. The
+  // service app's `pin` column was NOT carried over: there is one login, and it is the
+  // inventory access code.
+  emoji      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
-  transactions  InventoryTransaction[]
-  stockCounts   StockCount[]
+  // Where this person works. BOTH nullable and independent: a user may be assigned to a
+  // store, to a warehouse, to both, or to neither. Neither is a permission — access is
+  // decided by the role's grants, never by which site someone is attached to. Assigned on
+  // /team in Phase 3.
+  // SetNull, explicitly, and it differs from Warehouse.store on purpose. A staff assignment
+  // must NOT block deleting a site — the person still exists and still logs in, they are
+  // simply unassigned. Restrict here would mean reassigning every employee before a store
+  // could be closed. What blocks a store delete is its warehouses (see Warehouse.store).
+  storeId     String?
+  store       Store?     @relation(fields: [storeId], references: [id], onDelete: SetNull)
+  warehouseId String?
+  warehouse   Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
 
-  createdPOs       PurchaseOrder[]  @relation("POCreatedBy")
-  approvedPOs      PurchaseOrder[]  @relation("POApprovedBy")
-  recordedPayments VendorPayment[]  @relation("PaymentRecordedBy")
-  recordedExpenses Expense[]        @relation("ExpenseRecordedBy")
+  transactions InventoryTransaction[]
+  stockCounts  StockCount[]
+
+  createdPOs               PurchaseOrder[]   @relation("POCreatedBy")
+  approvedPOs              PurchaseOrder[]   @relation("POApprovedBy")
+  // Only for PurchaseOrder.sentBy, the denormalised "who sent it last" on the header.
+  // PurchaseOrderSend.sentById deliberately has NO relation — a send trail outlives its user.
+  sentPOs                  PurchaseOrder[]   @relation("POSentBy")
+  recordedPayments         VendorPayment[]   @relation("PaymentRecordedBy")
+  recordedExpenses         Expense[]         @relation("ExpenseRecordedBy")
   recordedCustomerPayments CustomerPayment[] @relation("CustomerPaymentRecordedBy")
-  createdIssues    VendorIssue[]    @relation("IssueCreatedBy")
-  issueNotes       VendorIssueNote[] @relation("IssueNoteAuthor")
-  navTabs          String[]         @default([]) // admin-chosen bottom-nav hrefs (empty = role default)
-  approvedStockCounts StockCount[] @relation("StockCountApprovedBy")
-  verifiedDeliveries  Delivery[]   @relation("DeliveryVerifiedBy")
-  uploadedStatements  BankStatement[] @relation("StatementUploader")
+  createdIssues            VendorIssue[]     @relation("IssueCreatedBy")
+  issueNotes               VendorIssueNote[] @relation("IssueNoteAuthor")
+  navTabs                  String[]          @default([]) // admin-chosen bottom-nav hrefs (empty = role default)
+  approvedStockCounts      StockCount[]      @relation("StockCountApprovedBy")
+  verifiedDeliveries       Delivery[]        @relation("DeliveryVerifiedBy")
+  uploadedStatements       BankStatement[]   @relation("StatementUploader")
+  ledgerUploads            LedgerUpload[]    @relation("LedgerUploadedBy")
+  ledgerAiRuns             LedgerAiRun[]     @relation("LedgerAiRunCreatedBy")
 
-  // Service tickets
-
-
-  // Service jobs
-
+  // Service / workshop (merged from bch-service)
+  assignedJobs       ServiceJob[]  @relation("ServiceJobMechanic")
+  createdServiceJobs ServiceJob[]  @relation("ServiceJobCreatedBy")
+  serviceReviews     Review[]      @relation("ServiceReviewMechanic")
+  assemblyLogs       AssemblyLog[] @relation("AssemblyMechanic")
 
   // Transfer orders
-  createdTransfers  TransferOrder[]     @relation("TransferCreatedBy")
-  reviewedTransfers TransferOrder[]     @relation("TransferReviewedBy")
+  createdTransfers  TransferOrder[] @relation("TransferCreatedBy")
+  reviewedTransfers TransferOrder[] @relation("TransferReviewedBy")
 
   // Second-hand cycles
-  createdSecondHand  SecondHandCycle[]   @relation("SecondHandCreatedBy")
-  verifiedSecondHand SecondHandCycle[]   @relation("SecondHandVerifiedBy")
+  createdSecondHand  SecondHandCycle[] @relation("SecondHandCreatedBy")
+  verifiedSecondHand SecondHandCycle[] @relation("SecondHandVerifiedBy")
 
   // Inbound shipments
   createdInboundShipments   InboundShipment[] @relation("InboundCreatedBy")
@@ -204,106 +422,187 @@ model User {
   verifiedSettlements DailySettlement[] @relation("SettlementCashVerifier")
 
   // Operations Hub (Tasks, SOPs, Updates)
-  postedUpdates      StoreUpdate[]   @relation("UpdatePostedBy")
-  opsActivityLogs    OpsActivityLog[] @relation("OpsActivityLoggedBy")
-  brandStockUploads  BrandStockUpload[] @relation("BrandStockUploadedBy")
-  reportedProblems   AppProblem[]       @relation("ProblemReportedBy")
+  //
+  // No back-relation for the activity log. `ActivityLog` replaced `OpsActivityLog` and holds
+  // `userId` + `userName` as plain columns on purpose, so a log entry outlives the user it
+  // names -- see the model comment. Deleting a user must not cascade away the record of what
+  // they did.
+  postedUpdates     StoreUpdate[]      @relation("UpdatePostedBy")
+  brandStockUploads BrandStockUpload[] @relation("BrandStockUploadedBy")
+
+  // Brand ledger reconciliation
+  importedStatements   BrandStatement[]     @relation("StatementImportedBy")
+  createdLedgerGaps    LedgerGap[]          @relation("LedgerGapCreatedBy")
+  ledgerGapNotes       LedgerGapNote[]      @relation("LedgerGapNoteAuthor")
+  uploadedGapEvidence  LedgerGapEvidence[]  @relation("GapEvidenceUploadedBy")
+  createdDiscountTerms VendorDiscountTerm[] @relation("DiscountTermCreatedBy")
+
+  // Assembly & Build-line
+  assembledUnits        InventoryUnit[]  @relation("UnitAssembler")
+  assignedAssemblyTasks AssemblyTask[]   @relation("AssignedMechanic")
+  createdAssemblyTasks  AssemblyTask[]   @relation("TaskAssignedBy")
+  binMovements          BinMovementLog[]
+  complaintFaults       Complaint[]      @relation("MechanicAssemblyFaults")
+  attributedComplaints  Complaint[]      @relation("ComplaintAttributedBy")
+
+  // Staff LMS (merged from bch-sales-training). There is ONE user table: a learner is an
+  // ordinary User holding a staff_lms grant, not a separate account. The source app's
+  // `users` row — plaintext 4-digit pin, unsigned session cookie — was deleted on merge.
+  //
+  // All six cascade on delete, so removing a user removes their learning history with
+  // them. /team deactivates rather than deletes today; a future hard delete would be quiet.
+  lmsProgress           LmsProgress?           @relation("LmsProgressUser")
+  lmsQuizAttempts       LmsQuizAttempt[]       @relation("LmsQuizAttemptUser")
+  lmsWeeklyTestAttempts LmsWeeklyTestAttempt[] @relation("LmsWeeklyTestAttemptUser")
+  lmsLessonProgress     LmsLessonProgress[]    @relation("LmsLessonProgressUser")
+  lmsAchievements       LmsUserAchievement[]   @relation("LmsUserAchievementUser")
+  lmsActivityLogs       LmsActivityLog[]       @relation("LmsActivityLogUser")
+
+  // Notifications. Both cascade: a device token is a credential for this person's screen and
+  // a preference is about this person alone — neither has meaning once the user is gone.
+  // The delivery log (NotificationOutbox) deliberately has NO relation here, so it survives.
+  pushDevices             PushDevice[]
+  notificationPreferences NotificationPreference[]
+  poExtractions           PoExtraction[]           @relation("PoExtractionCreatedBy")
+
+  @@index([roleId])
 }
 
 model Category {
-  id            String    @id @default(cuid())
-  name          String    @unique
-  description   String?
-  parentId      String?
-  parent        Category? @relation("CategoryTree", fields: [parentId], references: [id])
-  children      Category[] @relation("CategoryTree")
-  movingLevel   String    @default("NORMAL") // FAST, NORMAL, SLOW
-  reorderLevel  Int       @default(0)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id             String     @id @default(cuid())
+  name           String     @unique
+  description    String?
+  parentId       String?
+  parent         Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children       Category[] @relation("CategoryTree")
+  reorderLevel   Int        @default(0)
+  // The `category_id` this category has in Zoho Inventory. Nullable: a category created here
+  // has no Zoho counterpart until someone syncs it. Unique so a Zoho category can never map
+  // to two rows. It is what the catalog import resolves the parent tree through — Zoho's
+  // `parent_category_id` names a Zoho id, not one of ours.
+  zohoCategoryId String?    @unique
+  // Inactive rows are hidden from every picker; nothing is deleted — plan 0809-brand-category-inactive
+  isActive       Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
-  products      Product[]
+  products         Product[]
+  inboundShipments InboundShipment[]
+  homeBinRules     HomeBinRule[]
 }
 
 model Brand {
-  id            String    @id @default(cuid())
-  name          String    @unique
-  contactName   String?
-  contactPhone  String?
+  id             String   @id @default(cuid())
+  name           String   @unique
+  contactName    String?
+  contactPhone   String?
   whatsappNumber String?
-  cdTermsDays   Int?      // Cash Discount terms in days
-  cdPercentage  Float?    // Cash Discount percentage
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  cdTermsDays    Int? // Cash Discount terms in days
+  cdPercentage   Float? // Cash Discount percentage
+  // Days this brand takes to deliver. Was a whole BrandLeadTime table holding this ONE
+  // integer, keyed 1:1 on brandId. It had 0 rows and all three readers already collapsed a
+  // missing row to `?? 7` — so "no row" and "7" were already synonyms, and @default(7) says
+  // that in the schema instead of encoding it as row-absence at three call sites.
+  leadDays       Int      @default(7)
+  // The `brand_id` this brand has in Zoho Inventory. Nullable: a brand created here has no
+  // Zoho counterpart until someone syncs it. Unique so a Zoho brand can never map to two
+  // rows. Zoho's item export carries the brand NAME only, so this is the sole stable handle
+  // back to Zoho's /brands endpoint.
+  zohoBrandId    String?  @unique
+  // Inactive rows are hidden from every picker; nothing is deleted — plan 0809-brand-category-inactive
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  products      Product[]
-  leadTime      BrandLeadTime?
+  products         Product[]
   inboundShipments InboundShipment[]
-  preBookings     PreBooking[]
-  stockUploads    BrandStockUpload[] @relation("BrandStockUploads")
-  skuMappings     BrandSkuMapping[]  @relation("BrandSkuMappings")
+  preBookings      PreBooking[]
+  stockUploads     BrandStockUpload[] @relation("BrandStockUploads")
+  skuMappings      BrandSkuMapping[]  @relation("BrandSkuMappings")
+
+  // Brand ledger reconciliation. cdTermsDays/cdPercentage above are DEAD — every one of the
+  // 50 cash-discount usages in src/ reads Vendor, not Brand. Agreed terms live in
+  // VendorDiscountTerm; drop the two columns in a later cleanup.
+  ledgerEntries BrandLedgerEntry[]   @relation("BrandLedgerEntries")
+  ledgerGaps    LedgerGap[]          @relation("BrandLedgerGaps")
+  discountTerms VendorDiscountTerm[] @relation("BrandDiscountTerms")
+  vendors       BrandVendor[]        @relation("BrandVendors")
+  homeBinRules  HomeBinRule[]
 }
 
 model Product {
-  id            String         @id @default(cuid())
-  sku           String         @unique
-  name          String
-  description   String?
-  zohoItemId    String?        @unique // Zoho Books item_id for sync
-  categoryId    String
-  category      Category       @relation(fields: [categoryId], references: [id])
-  brandId       String
-  brand         Brand          @relation(fields: [brandId], references: [id])
-  type          ProductType    @default(SPARE_PART)
-  status        ProductStatus  @default(ACTIVE)
-  condition     ProductCondition @default(NEW)
+  id          String           @id @default(cuid())
+  sku         String           @unique
+  name        String
+  description String?
+  zohoItemId  String?          @unique // Zoho Books item_id for sync
+  categoryId  String
+  category    Category         @relation(fields: [categoryId], references: [id])
+  brandId     String
+  brand       Brand            @relation(fields: [brandId], references: [id])
+  status      ProductStatus    @default(ACTIVE)
+  condition   ProductCondition @default(NEW)
 
   // Pricing
-  costPrice     Float          @default(0)
-  sellingPrice  Float          @default(0)
-  mrp           Float          @default(0)
-  gstRate       Float          @default(18)
-  hsnCode       String?
+  costPrice    Float   @default(0)
+  sellingPrice Float   @default(0)
+  mrp          Float   @default(0)
+  gstRate      Float   @default(18)
+  hsnCode      String?
 
   // Stock
-  currentStock  Int            @default(0)
-  reservedStock Int            @default(0)
-  minStock      Int            @default(0)
-  maxStock      Int            @default(0)
-  reorderLevel  Int            @default(0)
-  reorderQty    Int            @default(0)
+  currentStock  Int @default(0)
+  reservedStock Int @default(0)
+  minStock      Int @default(0)
+  maxStock      Int @default(0)
+  reorderLevel  Int @default(0)
+  reorderQty    Int @default(0)
 
   // Bicycle specific
-  size          String?        // For bicycles: 16", 20", 24", 26", etc.
-  color         String?
-  imageUrls     String[]       // Array of image URLs
-  tags          String[]       // Condition tags, custom tags
+  size      String? // dropped next release — plan 0909-stock-screens-size-category-and-sidebar §5
+  color     String?
+  imageUrls String[] // Array of image URLs
+  tags      String[] // Condition tags, custom tags
 
-  binId         String?
-  bin           Bin?           @relation(fields: [binId], references: [id])
+  // The ONE assembly condition level for this product (plan 1509-assembly-queue…, D3). Null =
+  // not decided yet: the first Assign on /assembly asks and saves the answer here, and every
+  // later bicycle of this product is assigned at this level without asking. Edited from
+  // /stock and the product details, guarded by assembly.approve (D4).
+  assemblyLevel AssemblyLevel?
+
+  binId String?
+  bin   Bin?    @relation(fields: [binId], references: [id])
 
   reorderVendorId String?
-  reorderVendor   Vendor?      @relation("ReorderVendor", fields: [reorderVendorId], references: [id])
+  reorderVendor   Vendor? @relation("ReorderVendor", fields: [reorderVendorId], references: [id])
 
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  transactions  InventoryTransaction[]
-  stockCounts   StockCountItem[]
-  serialItems   SerialItem[]
-  stockLevels   StockLevel[]
+  transactions       InventoryTransaction[]
+  stockCounts        StockCountItem[]
+  serialItems        SerialItem[]
+  stockLevels        StockLevel[]
   purchaseOrderItems PurchaseOrderItem[]
   transferOrderItems TransferOrderItem[]
-  inboundLineItems InboundLineItem[]
-  brandStockMatches  BrandStockItem[]  @relation("BrandStockMatches")
-  brandSkuMappings   BrandSkuMapping[] @relation("BrandSkuMappingProducts")
+  inboundLineItems   InboundLineItem[]
+  binStocks          BinStock[]
+  homeBinRules       HomeBinRule[]
+  inventoryUnits     InventoryUnit[]
+  binMovements       BinMovementLog[]
+  brandStockMatches  BrandStockItem[]       @relation("BrandStockMatches")
+  brandSkuMappings   BrandSkuMapping[]      @relation("BrandSkuMappingProducts")
+
+  // Staff LMS learning cards that have been soft-linked to this SKU. Optional and NULL on
+  // every seeded row — an LmsProduct is a sales STORY (one bicycle model, mostly narrative
+  // JSON), not a stock-keeping unit, and it maps to N SKUs or to none. See LmsProduct.
+  lmsProducts       LmsProduct[]       @relation("LmsProductSku")
+  poExtractionItems PoExtractionItem[] @relation("PoExtractionItemProduct")
 
   @@index([status])
   @@index([categoryId])
   @@index([brandId])
   @@index([reorderVendorId])
-  @@index([type])
-  @@index([status, type])
   @@index([status, categoryId])
   @@index([status, brandId])
   @@index([status, currentStock])
@@ -315,46 +614,49 @@ model Product {
 // truth for "how much, where". Product.currentStock is the cached SUM of these rows,
 // recomputed on every change (see src/lib/stock-location.ts).
 model StockLevel {
-  id               String        @id @default(cuid())
+  id               String    @id @default(cuid())
   productId        String
-  product          Product       @relation(fields: [productId], references: [id])
-  location         StockLocation
-  quantity         Int           @default(0)
-  reservedQuantity Int           @default(0)
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
+  product          Product   @relation(fields: [productId], references: [id])
+  // Was `location: StockLocation`. Restrict, so a warehouse holding stock cannot be deleted
+  // out from under these rows — the API's delete rule reports the count first (Phase 6).
+  warehouseId      String
+  warehouse        Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  quantity         Int       @default(0)
+  reservedQuantity Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  @@unique([productId, location])
-  @@index([location])
+  @@unique([productId, warehouseId])
+  @@index([warehouseId])
 }
 
 model SerialItem {
-  id            String        @id @default(cuid())
-  serialCode    String        @unique  // Format: {SKU}-{sequence} e.g. "HRO-MTB26-0001"
-  productId     String
-  product       Product       @relation(fields: [productId], references: [id])
-  status        SerialStatus  @default(IN_STOCK)
-  condition     ProductCondition @default(NEW)
+  id         String           @id @default(cuid())
+  serialCode String           @unique // Format: {SKU}-{sequence} e.g. "HRO-MTB26-0001"
+  productId  String
+  product    Product          @relation(fields: [productId], references: [id])
+  status     SerialStatus     @default(IN_STOCK)
+  condition  ProductCondition @default(NEW)
 
   // Location
-  binId         String?
-  bin           Bin?          @relation(fields: [binId], references: [id])
+  binId String?
+  bin   Bin?    @relation(fields: [binId], references: [id])
 
   // Tracking
-  batchNo       String?       // Inward batch reference
-  invoiceNo     String?       // Purchase invoice
-  receivedAt    DateTime      @default(now())
+  batchNo       String? // Inward batch reference
+  invoiceNo     String? // Purchase invoice
+  receivedAt    DateTime  @default(now())
   soldAt        DateTime?
   customerName  String?
   saleInvoiceNo String?
 
   // Barcode
-  barcodeData   String?       // Encoded barcode string (= serialCode by default)
-  barcodeFormat String        @default("CODE128") // CODE128, QR, EAN13
+  barcodeData   String? // Encoded barcode string (= serialCode by default)
+  barcodeFormat String  @default("CODE128") // CODE128, QR, EAN13
 
-  notes         String?
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   transactionItems SerialTransactionItem[]
 
@@ -364,62 +666,268 @@ model SerialItem {
 }
 
 model SerialTransactionItem {
-  id              String              @id @default(cuid())
-  serialItemId    String
-  serialItem      SerialItem          @relation(fields: [serialItemId], references: [id])
-  transactionId   String
-  transaction     InventoryTransaction @relation(fields: [transactionId], references: [id])
-  createdAt       DateTime            @default(now())
+  id            String               @id @default(cuid())
+  serialItemId  String
+  serialItem    SerialItem           @relation(fields: [serialItemId], references: [id])
+  transactionId String
+  transaction   InventoryTransaction @relation(fields: [transactionId], references: [id])
+  createdAt     DateTime             @default(now())
 
   @@index([serialItemId])
   @@index([transactionId])
 }
 
 model Bin {
-  id            String    @id @default(cuid())
-  code          String    @unique  // e.g., "A-01-03" (Aisle-Rack-Shelf)
-  name          String
-  location      String    // "Store" or "Warehouse"
-  zone          String?   // Zone within location
-  capacity      Int?
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id              String      @id @default(cuid())
+  code            String      // e.g. "A1", "ASM"
+  name            String      // e.g. "Shelf Rack 1"
+  warehouseId     String      @map("warehouse_id")
+  warehouse       Warehouse   @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  location        String?     // legacy "Store" or "Warehouse"
+  directions      String?     // "Ground floor, left of entrance, first rack"
+  floor           String?     // "Ground", "1st Floor"
+  zone            String?     // Zone within location e.g. "Zone A"
+  capacity        Int?        // Optional capacity
+  isAssemblyArea  Boolean     @default(false) @map("is_assembly_area")
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
-  products      Product[]
-  serialItems   SerialItem[]
-  stockCounts   StockCount[]
-  transfersFrom TransferOrderItem[] @relation("TransferFromBin")
-  transfersTo   TransferOrderItem[] @relation("TransferToBin")
-  secondHandCycles SecondHandCycle[] @relation("SecondHandBin")
+  products         Product[]
+  serialItems      SerialItem[]
+  stockCounts      StockCount[]
+  transfersFrom    TransferOrderItem[] @relation("TransferFromBin")
+  transfersTo      TransferOrderItem[] @relation("TransferToBin")
+  secondHandCycles SecondHandCycle[]   @relation("SecondHandBin")
   inboundLineItems InboundLineItem[]
+
+  binStocks       BinStock[]
+  units           InventoryUnit[]
+  homeBinRules    HomeBinRule[]
+  fromMovements   BinMovementLog[] @relation("MoveFromBin")
+  toMovements     BinMovementLog[] @relation("MoveToBin")
+
+  @@unique([warehouseId, code])
+  @@index([warehouseId, isActive])
+  @@map("bins")
+}
+
+model BinStock {
+  id          String    @id @default(cuid())
+  binId       String    @map("bin_id")
+  bin         Bin       @relation(fields: [binId], references: [id], onDelete: Cascade)
+  productId   String    @map("product_id")
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  quantity    Int       @default(0)
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([binId, productId])
+  @@index([productId])
+  @@map("bin_stocks")
+}
+
+model HomeBinRule {
+  id          String     @id @default(cuid())
+  warehouseId String     @map("warehouse_id")
+  warehouse   Warehouse  @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  brandId     String?    @map("brand_id")
+  brand       Brand?     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  categoryId  String?    @map("category_id")
+  category    Category?  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  productId   String?    @map("product_id")
+  product     Product?   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  binId       String     @map("bin_id")
+  bin         Bin        @relation(fields: [binId], references: [id], onDelete: Cascade)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([warehouseId, brandId, categoryId])
+  @@map("home_bin_rules")
+}
+
+model InventoryUnit {
+  id                String              @id @default(cuid())
+  unitCode          String              @unique @map("unit_code") // "U-000481"
+  productId         String              @map("product_id")
+  product           Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  warehouseId       String              @map("warehouse_id")
+  warehouse         Warehouse           @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  binId             String?             @map("bin_id")
+  bin               Bin?                @relation(fields: [binId], references: [id], onDelete: SetNull)
+  frameNumber       String?             @map("frame_number")
+  status            UnitStatus          @default(RECEIVED)
+  inboundShipmentId String?             @map("inbound_shipment_id")
+  inboundShipment   InboundShipment?    @relation(fields: [inboundShipmentId], references: [id])
+  
+  // Assembly attribution
+  assembledById     String?             @map("assembled_by_id")
+  assembledBy       User?               @relation("UnitAssembler", fields: [assembledById], references: [id])
+  assembledAt       DateTime?           @map("assembled_at")
+  assemblyLevel     AssemblyLevel?      @map("assembly_level")
+
+  // Sales linkage
+  saleInvoiceNo     String?             @map("sale_invoice_no")
+  soldAt            DateTime?           @map("sold_at")
+  customerName      String?             @map("customer_name")
+  customerPhone     String?             @map("customer_phone")
+
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  assemblyTasks     AssemblyTask[]
+  complaints        Complaint[]
+  transferItems     TransferOrderUnit[]
+  movements         BinMovementLog[]
+
+  @@index([warehouseId, status])
+  @@index([productId, status])
+  @@index([binId])
+  @@map("inventory_units")
+}
+
+enum UnitStatus {
+  RECEIVED
+  PUT_AWAY
+  ASSIGNED
+  IN_ASSEMBLY
+  ASSEMBLED
+  RESERVED
+  SOLD
+  RETURNED
+  DAMAGED
+  TRANSFERRED
+  LOST
+}
+
+enum AssemblyLevel {
+  A50   // 50%
+  A85   // 85%
+  FULL  // 100%
+}
+
+model AssemblyTask {
+  id               String             @id @default(cuid())
+  unitId           String             @map("unit_id")
+  unit             InventoryUnit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  warehouseId      String             @map("warehouse_id")
+  warehouse        Warehouse          @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  level            AssemblyLevel
+  status           AssemblyTaskStatus @default(PENDING)
+  
+  assignedToId     String             @map("assigned_to_id")
+  assignedTo       User               @relation("AssignedMechanic", fields: [assignedToId], references: [id])
+  assignedById     String             @map("assigned_by_id")
+  assignedBy       User               @relation("TaskAssignedBy", fields: [assignedById], references: [id])
+  assignedAt       DateTime           @default(now()) @map("assigned_at")
+
+  startedAt        DateTime?          @map("started_at")
+  holdStartedAt    DateTime?          @map("hold_started_at")
+  totalHoldSeconds Int                @default(0) @map("total_hold_seconds")
+  holdReason       String?            @map("hold_reason")
+  completedAt      DateTime?          @map("completed_at")
+  photoUrl         String?            @map("photo_url")
+  notes            String?
+
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([warehouseId, status])
+  @@index([assignedToId, status])
+  @@map("assembly_tasks")
+}
+
+enum AssemblyTaskStatus {
+  PENDING
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+model BinMovementLog {
+  id          String         @id @default(cuid())
+  warehouseId String         @map("warehouse_id")
+  warehouse   Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  unitId      String?        @map("unit_id")
+  unit        InventoryUnit? @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  productId   String?        @map("product_id")
+  product     Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  quantity    Int            @default(1)
+  fromBinId   String?        @map("from_bin_id")
+  fromBin     Bin?           @relation("MoveFromBin", fields: [fromBinId], references: [id])
+  toBinId     String?        @map("to_bin_id")
+  toBin       Bin?           @relation("MoveToBin", fields: [toBinId], references: [id])
+  reason      String         // "Put-away round 1", "Moved by assignment", "Manual relocation"
+  movedById   String         @map("moved_by_id")
+  movedBy     User           @relation(fields: [movedById], references: [id])
+  createdAt   DateTime       @default(now())
+
+  @@index([warehouseId, createdAt])
+  @@index([unitId])
+  @@map("bin_movement_logs")
+}
+
+model TransferOrderUnit {
+  id              String        @id @default(cuid())
+  transferOrderId String        @map("transfer_order_id")
+  transferOrder   TransferOrder @relation(fields: [transferOrderId], references: [id], onDelete: Cascade)
+  unitId          String        @map("unit_id")
+  unit            InventoryUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  dispatchedAt    DateTime?     @map("dispatched_at")
+  receivedAt      DateTime?     @map("received_at")
+
+  @@unique([transferOrderId, unitId])
+  @@map("transfer_order_units")
+}
+
+model Complaint {
+  id              String         @id @default(cuid())
+  ticketNo        String         @unique @map("ticket_no") // Auto: CMP-YYYYMM-NNNN
+  unitId          String         @map("unit_id")
+  unit            InventoryUnit  @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  customerName    String         @map("customer_name")
+  customerPhone   String         @map("customer_phone")
+  description     String
+  photoUrl        String?        @map("photo_url")
+  isAssemblyFault Boolean        @default(false) @map("is_assembly_fault")
+  faultMechanicId String?        @map("fault_mechanic_id")
+  faultMechanic   User?          @relation("MechanicAssemblyFaults", fields: [faultMechanicId], references: [id])
+  attributedById  String?        @map("attributed_by_id")
+  attributedBy    User?          @relation("ComplaintAttributedBy", fields: [attributedById], references: [id])
+  status          String         @default("OPEN")
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([unitId])
+  @@index([faultMechanicId])
+  @@map("complaints")
 }
 
 model InventoryTransaction {
-  id            String           @id @default(cuid())
+  id            String          @id @default(cuid())
   type          TransactionType
   productId     String
-  product       Product          @relation(fields: [productId], references: [id])
+  product       Product         @relation(fields: [productId], references: [id])
   quantity      Int
   previousStock Int
   newStock      Int
 
   // Reference
-  referenceNo   String?          // PO number, Invoice number, etc.
-  notes         String?
+  referenceNo String? // PO number, Invoice number, etc.
+  notes       String?
 
   // Who
-  userId        String
-  user          User             @relation(fields: [userId], references: [id])
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
   // RGP (Returnable Gate Pass)
-  isRgp         Boolean          @default(false)
+  isRgp         Boolean   @default(false)
   rgpReturnDate DateTime?
-  rgpReturned   Boolean          @default(false)
+  rgpReturned   Boolean   @default(false)
 
-  createdAt     DateTime         @default(now())
+  createdAt DateTime @default(now())
 
-  serialItems   SerialTransactionItem[]
+  serialItems SerialTransactionItem[]
 
   @@index([productId])
   @@index([userId])
@@ -430,47 +938,69 @@ model InventoryTransaction {
 }
 
 model StockCount {
-  id              String           @id @default(cuid())
-  countNo         String?          @unique // Auto: SC-YYYYMM-NNNN
-  title           String           // "Weekly Audit - Week 15"
+  id              String     @id @default(cuid())
+  countNo         String?    @unique // Auto: SC-YYYYMM-NNNN
+  title           String // "Weekly Audit - Week 15"
   assignedToId    String
-  assignedTo      User             @relation(fields: [assignedToId], references: [id])
+  assignedTo      User       @relation(fields: [assignedToId], references: [id])
   binId           String?
-  bin             Bin?             @relation(fields: [binId], references: [id])
-  status          String           @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, APPROVED, REJECTED
+  bin             Bin?       @relation(fields: [binId], references: [id])
+  status          String     @default("PENDING") // PENDING, IN_PROGRESS, COMPLETED, APPROVED, REJECTED
   dueDate         DateTime
   completedAt     DateTime?
   approvedById    String?
-  approvedBy      User?            @relation("StockCountApprovedBy", fields: [approvedById], references: [id])
+  approvedBy      User?      @relation("StockCountApprovedBy", fields: [approvedById], references: [id])
   approvedAt      DateTime?
   rejectionReason String?
   notes           String?
-  productType     String?          // Filter: BICYCLE, SPARE_PART, ACCESSORY, or null=all
-  location        String?          // Location-level scope: "BCH-GF", "BCH-FF", etc. Null = single bin or all
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
+  // Audit scope (R2). THREE states, not two -- see §5.1 of the 0409 plan:
+  //   storeId set, warehouseId null  -> the whole store, every warehouse under it
+  //   both set                       -> that one warehouse
+  //   both null                      -> a legacy audit with no resolvable scope, or a single
+  //                                     bin count. Never read as "the whole store".
+  // Restrict on both: a store or warehouse with audit history is not deletable, and the
+  // audit's scope must not silently become null underneath it.
+  storeId         String?
+  store           Store?     @relation("StockCountStore", fields: [storeId], references: [id], onDelete: Restrict)
+  warehouseId     String?
+  warehouse       Warehouse? @relation("StockCountWarehouse", fields: [warehouseId], references: [id], onDelete: Restrict)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
 
-  items           StockCountItem[]
+  items StockCountItem[]
+
+  // `[assignedToId, status]` serves the dashboard's `?mine=1&status=` query, which is the
+  // one read that runs on every page load. A lone index on a five-value `status` across a
+  // few hundred rows would not earn its keep; the pair does.
+  @@index([assignedToId, status])
+  @@index([storeId])
+  @@index([warehouseId])
 }
 
 model StockCountItem {
-  id              String     @id @default(cuid())
-  stockCountId    String
-  stockCount      StockCount @relation(fields: [stockCountId], references: [id])
-  productId       String
-  product         Product    @relation(fields: [productId], references: [id])
-  systemQty       Int
-  countedQty      Int?
-  variance        Int?
-  suggestedBrand  String?    // Staff suggests brand for "Imported" items
-  notes           String?
-  countedAt       DateTime?
+  id             String     @id @default(cuid())
+  stockCountId   String
+  stockCount     StockCount @relation(fields: [stockCountId], references: [id])
+  productId      String
+  product        Product    @relation(fields: [productId], references: [id])
+  systemQty      Int
+  countedQty     Int?
+  variance       Int?
+  suggestedBrand String? // Staff suggests brand for "Imported" items
+  notes          String?
+  countedAt      DateTime?
+
+  // This table had NO index at all. It is the one that grows per product per audit -- a
+  // 300-line count is 300 rows -- and both of its foreign keys are read on every screen that
+  // opens an audit. Postgres does not index a foreign key for you.
+  @@index([stockCountId])
+  @@index([productId])
 }
 
 model Vendor {
-  id              String          @id @default(cuid())
-  name            String          @unique
-  code            String          @unique
+  id              String   @id @default(cuid())
+  name            String   @unique
+  code            String   @unique
   gstin           String?
   pan             String?
   addressLine1    String?
@@ -481,27 +1011,38 @@ model Vendor {
   phone           String?
   email           String?
   whatsappNumber  String?
-  waGroupName     String?         // Ops Issues: WhatsApp group this brand's issues are shared to
-  waGroupCode     String?         // Ops Issues: human routing label for the group (e.g. "#1234")
-  paymentTermDays Int             @default(30)
-  creditLimit     Float           @default(0)
+  waGroupName     String? // Ops Issues: WhatsApp group this brand's issues are shared to
+  waGroupCode     String? // Ops Issues: human routing label for the group (e.g. "#1234")
+  paymentTermDays Int      @default(30)
+  creditLimit     Float    @default(0)
   cdTermsDays     Int?
   cdPercentage    Float?
-  openingBalance  Float           @default(0) // As of 2026-04-01
-  isActive        Boolean         @default(true)
+  openingBalance  Float    @default(0) // As of 2026-04-01
+  isActive        Boolean  @default(true)
   notes           String?
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  contacts            VendorContact[]
-  purchaseOrders      PurchaseOrder[]
-  bills               VendorBill[]
-  payments            VendorPayment[]
-  credits             VendorCredit[]
-  issues              VendorIssue[]
-  suggestedBankTxns   BankTransaction[] @relation("SuggestedVendorTxn")
-  confirmedBankTxns   BankTransaction[] @relation("ConfirmedVendorTxn")
-  reorderProducts     Product[]         @relation("ReorderVendor")
+  contacts          VendorContact[]
+  purchaseOrders    PurchaseOrder[]
+  bills             VendorBill[]
+  payments          VendorPayment[]
+  credits           VendorCredit[]
+  issues            VendorIssue[]
+  suggestedBankTxns BankTransaction[] @relation("SuggestedVendorTxn")
+  confirmedBankTxns BankTransaction[] @relation("ConfirmedVendorTxn")
+  reorderProducts   Product[]         @relation("ReorderVendor")
+
+  // Brand ledger reconciliation
+  ledgerEntries BrandLedgerEntry[]
+  statements    BrandStatement[]
+  ledgerGaps    LedgerGap[]
+  discountTerms VendorDiscountTerm[]
+  brands        BrandVendor[]        @relation("VendorBrands")
+  poExtractions PoExtraction[]       @relation("PoExtractionVendor")
+  ledgerProfile VendorLedgerProfile?
+  ledgerUploads LedgerUpload[]
+  ledgerAiRuns  LedgerAiRun[]
 
   @@index([name])
 }
@@ -523,40 +1064,117 @@ model VendorContact {
 }
 
 model PurchaseOrder {
-  id              String              @id @default(cuid())
-  poNumber        String              @unique
+  id              String    @id @default(cuid())
+  poNumber        String    @unique
   vendorId        String
-  vendor          Vendor              @relation(fields: [vendorId], references: [id])
-  status          POStatus            @default(DRAFT)
-  subtotal        Float               @default(0)
-  gstTotal        Float               @default(0)
-  grandTotal      Float               @default(0)
-  orderDate       DateTime            @default(now())
+  vendor          Vendor    @relation(fields: [vendorId], references: [id])
+  status          POStatus  @default(DRAFT)
+  subtotal        Float     @default(0)
+  gstTotal        Float     @default(0)
+  grandTotal      Float     @default(0)
+  orderDate       DateTime  @default(now())
   expectedDate    DateTime?
   approvedById    String?
-  approvedBy      User?               @relation("POApprovedBy", fields: [approvedById], references: [id])
+  approvedBy      User?     @relation("POApprovedBy", fields: [approvedById], references: [id])
   approvedAt      DateTime?
   createdById     String
-  createdBy       User                @relation("POCreatedBy", fields: [createdById], references: [id])
+  createdBy       User      @relation("POCreatedBy", fields: [createdById], references: [id])
   notes           String?
   deliveryAddress String?
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
 
-  items           PurchaseOrderItem[]
-  bills           VendorBill[]
+  // ─── Sending the PO to the vendor (R9, written by P12) ────────────────────────────────
+  //
+  // These five are a DENORMALISED summary of the latest send, kept on the header so the list
+  // screen can show "sent 2 days ago" without joining the trail below. `sends` is the record
+  // of what actually happened, including the failures; these are the answer to "is it out?".
+  sentAt      DateTime?
+  sentById    String?
+  // SetNull, written explicitly rather than left to Prisma's default for an optional
+  // relation. Deleting a user must not delete the purchase order, and this column is only
+  // the convenience copy — the durable answer to "who sent it" is PurchaseOrderSend.sentById
+  // + sentByName, which carry no foreign key precisely so they survive the user's deletion.
+  sentBy      User?                     @relation("POSentBy", fields: [sentById], references: [id], onDelete: SetNull)
+  sentToEmail String?
+  sentVia     PurchaseOrderSendChannel?
+  // Counts every ATTEMPT that reached SENT, so a re-send to a corrected address is visible
+  // as a re-send rather than overwriting the first one silently.
+  sendCount   Int                       @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items PurchaseOrderItem[]
+  bills VendorBill[]
+  sends PurchaseOrderSend[]
 
   @@index([vendorId])
   @@index([status])
   @@index([createdAt])
 }
 
+enum PurchaseOrderSendStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// MANUAL is not a gap — it is "the buyer sent it some other way and said so". Keeping it as a
+// channel means "Mark sent" writes a row in the same trail as an email, instead of leaving a
+// PO that went out over WhatsApp looking unsent.
+enum PurchaseOrderSendChannel {
+  EMAIL
+  WHATSAPP
+  MANUAL
+}
+
+// One row per attempt to get a PO to a vendor, successes and failures alike.
+//
+// A FAILED row is the point of the table: an SMTP rejection currently vanishes into a toast,
+// so nobody can answer "did the vendor ever get PO-00042?" a week later. `error` keeps the
+// reason, `messageId` keeps the proof.
+model PurchaseOrderSend {
+  id              String        @id @default(cuid())
+  purchaseOrderId String
+  // RESTRICT, explicitly, and not Cascade. A PO that has been sent to a vendor is a document
+  // that exists in someone else's inbox — it is CANCELLED, never deleted, and its send trail
+  // must not be removable by deleting the parent.
+  purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+
+  channel PurchaseOrderSendChannel
+  status  PurchaseOrderSendStatus  @default(PENDING)
+
+  toEmail String?
+  ccEmail String?
+  subject String?
+  note    String? @db.Text
+
+  // No FK to User, and a name snapshot beside the id — the same policy as ActivityLog and
+  // NotificationOutbox. A send trail outlives the buyer who sent it.
+  sentById   String
+  sentByName String
+
+  messageId String? // the SMTP server's id on a 250 — the proof it was accepted
+  error     String? @db.Text
+  pdfUrl    String? // the exact PDF attached, kept because the PO may be edited afterwards
+
+  attemptedAt DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([purchaseOrderId, attemptedAt])
+}
+
 model PurchaseOrderItem {
   id              String        @id @default(cuid())
   purchaseOrderId String
   purchaseOrder   PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
-  productId       String
-  product         Product       @relation(fields: [productId], references: [id])
+  /// Optional since 9 Sep 2026 (plan 0909-po-sheet-ai-extraction, D2): a line raised from the
+  /// vendor's sheet is the item NAME the sheet gave, and nothing from the products table. The
+  /// link stays for older lines and for a later plan that wants optional linking.
+  productId       String?
+  product         Product?      @relation(fields: [productId], references: [id])
+  /// The item name as ordered — from the sheet for sheet-built lines, backfilled from the
+  /// product for lines that predate the column. The PDF's Description column reads this.
+  name            String
   quantity        Int
   receivedQty     Int           @default(0)
   unitPrice       Float
@@ -584,14 +1202,15 @@ model VendorBill {
   nextFollowUpDate DateTime?
   followUpNotes    String?
   notes            String?
-  billedTo         String?        // "HUB" or "CENTRE"
+  billedTo         String? // "HUB" or "CENTRE"
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
-  payments           VendorPayment[]
-  issues             VendorIssue[]
-  suggestedBankTxns  BankTransaction[] @relation("SuggestedBillTxn")
-  inboundShipment    InboundShipment?
+  payments          VendorPayment[]
+  issues            VendorIssue[]
+  suggestedBankTxns BankTransaction[]  @relation("SuggestedBillTxn")
+  inboundShipment   InboundShipment?
+  ledgerEntries     BrandLedgerEntry[] // brand statement rows matched to this bill
 
   @@unique([vendorId, billNo])
   @@index([vendorId])
@@ -600,22 +1219,24 @@ model VendorBill {
 }
 
 model VendorPayment {
-  id                String        @id @default(cuid())
-  vendorId          String
-  vendor            Vendor        @relation(fields: [vendorId], references: [id])
-  billId            String?
-  bill              VendorBill?   @relation(fields: [billId], references: [id])
-  amount            Float
-  cdDiscountAmount  Float         @default(0) // Cash discount applied
-  paymentMode       PaymentMode
-  paymentDate       DateTime
-  referenceNo       String?
-  notes             String?
-  creditId          String?
-  credit            VendorCredit? @relation(fields: [creditId], references: [id])
-  recordedById      String
-  recordedBy        User          @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
-  createdAt         DateTime      @default(now())
+  id               String        @id @default(cuid())
+  vendorId         String
+  vendor           Vendor        @relation(fields: [vendorId], references: [id])
+  billId           String?
+  bill             VendorBill?   @relation(fields: [billId], references: [id])
+  amount           Float
+  cdDiscountAmount Float         @default(0) // Cash discount applied
+  paymentMode      PaymentMode
+  paymentDate      DateTime
+  referenceNo      String?
+  notes            String?
+  creditId         String?
+  credit           VendorCredit? @relation(fields: [creditId], references: [id])
+  recordedById     String
+  recordedBy       User          @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  createdAt        DateTime      @default(now())
+
+  ledgerEntries BrandLedgerEntry[] // brand statement rows matched to this payment
 
   @@index([vendorId])
   @@index([billId])
@@ -623,39 +1244,40 @@ model VendorPayment {
 }
 
 model VendorCredit {
-  id            String          @id @default(cuid())
-  vendorId      String
-  vendor        Vendor          @relation(fields: [vendorId], references: [id])
-  creditNoteNo  String
-  amount        Float
-  usedAmount    Float           @default(0)
-  reason        String?
-  creditDate    DateTime
-  notes         String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id           String   @id @default(cuid())
+  vendorId     String
+  vendor       Vendor   @relation(fields: [vendorId], references: [id])
+  creditNoteNo String
+  amount       Float
+  usedAmount   Float    @default(0)
+  reason       String?
+  creditDate   DateTime
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   payments      VendorPayment[]
+  ledgerEntries BrandLedgerEntry[] // brand statement rows matched to this credit note
 
   @@unique([vendorId, creditNoteNo])
   @@index([vendorId])
 }
 
 model Expense {
-  id            String          @id @default(cuid())
-  date          DateTime
-  amount        Float
-  category      ExpenseCategory
-  description   String
-  paidBy        String
-  paymentMode   PaymentMode
-  referenceNo   String?
-  receiptUrl    String?
-  notes         String?
-  recordedById  String
-  recordedBy    User            @relation("ExpenseRecordedBy", fields: [recordedById], references: [id])
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  id           String          @id @default(cuid())
+  date         DateTime
+  amount       Float
+  category     ExpenseCategory
+  description  String
+  paidBy       String
+  paymentMode  PaymentMode
+  referenceNo  String?
+  receiptUrl   String?
+  notes        String?
+  recordedById String
+  recordedBy   User            @relation("ExpenseRecordedBy", fields: [recordedById], references: [id])
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
   @@index([date])
   @@index([category])
@@ -678,62 +1300,74 @@ enum BankTxnMatchStatus {
 }
 
 model BankStatement {
-  id              String            @id @default(cuid())
-  bank            String            // HDFC, ICICI
-  accountNumber   String?
-  fileName        String
-  fromDate        DateTime?
-  toDate          DateTime?
-  totalCredits    Float             @default(0)
-  totalDebits     Float             @default(0)
-  txnCount        Int               @default(0)
-  matchedCount    Int               @default(0)
-  flaggedCount    Int               @default(0)
-  uploadedById    String
-  uploadedBy      User              @relation("StatementUploader", fields: [uploadedById], references: [id])
-  createdAt       DateTime          @default(now())
+  id            String    @id @default(cuid())
+  bank          String // HDFC, ICICI
+  accountNumber String?
+  fileName      String
+  fromDate      DateTime?
+  toDate        DateTime?
+  totalCredits  Float     @default(0)
+  totalDebits   Float     @default(0)
+  txnCount      Int       @default(0)
+  matchedCount  Int       @default(0)
+  flaggedCount  Int       @default(0)
+  uploadedById  String
+  uploadedBy    User      @relation("StatementUploader", fields: [uploadedById], references: [id])
+  createdAt     DateTime  @default(now())
 
-  transactions    BankTransaction[]
+  transactions BankTransaction[]
 
   @@index([createdAt])
 }
 
 model BankTransaction {
-  id              String              @id @default(cuid())
-  statementId     String
-  statement       BankStatement       @relation(fields: [statementId], references: [id], onDelete: Cascade)
-  date            DateTime
-  description     String
-  reference       String?
-  amount          Float
-  type            BankTxnType         // CREDIT or DEBIT
-  balance         Float?
-  matchStatus     BankTxnMatchStatus  @default(UNMATCHED)
-  flagReason      String?
+  id                 String             @id @default(cuid())
+  statementId        String
+  statement          BankStatement      @relation(fields: [statementId], references: [id], onDelete: Cascade)
+  date               DateTime
+  description        String
+  reference          String?
+  amount             Float
+  type               BankTxnType // CREDIT or DEBIT
+  balance            Float?
+  matchStatus        BankTxnMatchStatus @default(UNMATCHED)
+  flagReason         String?
   // AI-suggested matches
-  suggestedVendorId   String?
-  suggestedVendor     Vendor?         @relation("SuggestedVendorTxn", fields: [suggestedVendorId], references: [id])
-  suggestedBillId     String?
-  suggestedBill       VendorBill?     @relation("SuggestedBillTxn", fields: [suggestedBillId], references: [id])
-  suggestedCategory   String?         // For expenses
-  confidence          Float?          // AI match confidence 0-1
+  suggestedVendorId  String?
+  suggestedVendor    Vendor?            @relation("SuggestedVendorTxn", fields: [suggestedVendorId], references: [id])
+  suggestedBillId    String?
+  suggestedBill      VendorBill?        @relation("SuggestedBillTxn", fields: [suggestedBillId], references: [id])
+  suggestedCategory  String? // For expenses
+  confidence         Float? // AI match confidence 0-1
   // Confirmed matches
-  confirmedVendorId   String?
-  confirmedVendor     Vendor?         @relation("ConfirmedVendorTxn", fields: [confirmedVendorId], references: [id])
-  confirmedPaymentId  String?
-  confirmedExpenseId  String?
-  processedAt         DateTime?
-  createdAt           DateTime        @default(now())
+  confirmedVendorId  String?
+  confirmedVendor    Vendor?            @relation("ConfirmedVendorTxn", fields: [confirmedVendorId], references: [id])
+  confirmedPaymentId String?
+  confirmedExpenseId String?
+  processedAt        DateTime?
+  createdAt          DateTime           @default(now())
 
-  settlementMatches   SettlementMatch[]
+  settlementMatches SettlementMatch[]
 
   @@index([statementId])
   @@index([matchStatus])
   @@index([date])
 }
 
-model ZohoConfig {
-  id                   String    @id @default("singleton")
+// One row per external integration. Replaces ZohoConfig, ZakyaConfig and
+// ZohoInventoryConfig, which were three tables with byte-identical columns — same 13
+// fields in the same order, differing in nothing but their name.
+//
+// `provider` is the primary key and a plain String rather than an enum, deliberately:
+// adding a fourth integration should be a row, not a migration. The three valid values
+// are validated with zod in the route.
+//
+// Valid values: ZOHO_BOOKS | ZAKYA_POS | ZOHO_INVENTORY
+//
+// Secrets are plaintext, matching the tables this replaces. Anyone with database read
+// access holds the OAuth credentials; that is an accepted trade-off, not an oversight.
+model IntegrationConfig {
+  provider             String    @id
   clientId             String?
   clientSecret         String?
   refreshToken         String?
@@ -743,51 +1377,306 @@ model ZohoConfig {
   organizationName     String?
   isConnected          Boolean   @default(false)
   lastSyncAt           DateTime?
+  // Set when a token refresh is REFUSED (integrations/base.ts). `isConnected` is only ever
+  // written by a successful connect, so a Zoho whose refresh token has been revoked keeps a
+  // green badge on /settings/integrations forever and /deliveries reports "no new invoices"
+  // for what is actually a dead connection (R1). This timestamp is what lets the badge tell
+  // the truth; P4 reads it.
+  lastAuthErrorAt      DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
+
+  @@map("integration_config")
 }
 
-model ZakyaConfig {
-  id                   String    @id @default("singleton")
-  clientId             String?
-  clientSecret         String?
-  refreshToken         String?
-  accessToken          String?
-  accessTokenExpiresAt DateTime?
-  organizationId       String?
-  organizationName     String?
-  isConnected          Boolean   @default(false)
-  lastSyncAt           DateTime?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+// Where uploaded media lives. One row, chosen and configured from Settings -> Storage
+// rather than from environment variables, so switching provider needs no redeploy.
+//
+// `provider` is a plain String, not an enum, on purpose: adding a provider later should be
+// a row, not a migration. The valid values are validated with zod in the route.
+//
+// Secrets are stored in plaintext, matching ZohoConfig.clientSecret above. That is a
+// deliberate, accepted trade-off, not an oversight: anyone with database read access holds
+// the AWS keys. The API never returns secretAccessKey to the browser - it masks it.
+model StorageConfig {
+  id              String  @id @default("singleton")
+  provider        String  @default("LOCAL") // LOCAL | S3
+  bucket          String?
+  region          String? // real AWS region, e.g. ap-south-1
+  accessKeyId     String?
+  secretAccessKey String?
+  publicBaseUrl   String? // CloudFront domain or public bucket URL; base for stored file URLs
+  localDir        String? // filesystem root when provider = LOCAL
+
+  // Set only by a successful round-trip test, never by saving the form. A provider that has
+  // not proven it can put, get and delete an object must not become the live one.
+  isConnected   Boolean   @default(false)
+  lastTestedAt  DateTime?
+  lastTestError String?   @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
-model ZohoInventoryConfig {
-  id                   String    @id @default("singleton")
-  clientId             String?
-  clientSecret         String?
-  refreshToken         String?
-  accessToken          String?
-  accessTokenExpiresAt DateTime?
-  organizationId       String?
-  organizationName     String?
-  isConnected          Boolean   @default(false)
-  lastSyncAt           DateTime?
-  createdAt            DateTime  @default(now())
-  updatedAt            DateTime  @updatedAt
+// ─── AI ────────────────────────────────────────────────────────────────────────
+//
+// One row per AI provider we hold a key for. Exactly one row has isActive = true; that is
+// the provider every runAi() call in src/lib/ai uses. Configured from Settings → AI with no
+// redeploy, for the same reason StorageConfig exists: which provider is live is DATA.
+//
+// `key` is a plain String, not an enum, matching StorageConfig.provider — adding a provider
+// should be a row, not a migration. The valid values and the model list per provider are
+// validated with src/lib/ai/models.ts in the route.
+//
+// apiKey is plaintext, matching StorageConfig.secretAccessKey and IntegrationConfig
+// .clientSecret above. Same deliberate trade-off (owner, 8 Sep 2026): anyone with database
+// read access already holds the AWS keys and the Zoho refresh token. The API NEVER returns
+// this field to the browser — not even masked; it sends `hasApiKey: boolean`.
+//
+// "At most one active" is not a database constraint (Prisma cannot express a partial unique
+// index). The activate route is the only writer of isActive and flips every other row false
+// inside one transaction; the resolver takes the most recently updated row if it ever finds
+// two, and warns.
+model AiProvider {
+  key           String    @id // "anthropic" | "google" | "openai"
+  apiKey        String?   @db.Text
+  model         String? // validated against src/lib/ai/models.ts
+  isActive      Boolean   @default(false)
+  // Set ONLY by a successful test call, never by saving the form — a provider that has not
+  // proven it can answer must not become the live one. Cleared by every save.
+  isConnected   Boolean   @default(false)
+  lastTestedAt  DateTime?
+  lastTestError String?   @db.Text
+  updatedById   String? // bare string, no relation — the row outlives a deleted user
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // No index on isActive ON PURPOSE. The table has one row per provider — three today, a
+  // handful ever — and the planner sequential-scans a table that small whatever indexes it
+  // carries. An index here is maintenance cost with nothing to buy.
+  @@map("ai_provider")
+}
+
+// AI call spend and token audit log.
+// Append-only record of every AI request across all modules.
+model AiCallLog {
+  id           String   @id @default(cuid())
+  purpose      String   // e.g. "bank.statement_parse", "po.sheet_columns", "payments.screenshot_scan", etc.
+  providerKey  String   // "anthropic" | "google" | "openai"
+  model        String   // "claude-opus-5", "gemini-3.8-flash", etc.
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  totalTokens  Int      @default(0)
+  costUsd      Decimal  @db.Decimal(10, 6)
+  costInr      Decimal  @db.Decimal(10, 4)
+  latencyMs    Int
+  stopReason   String?
+  ok           Boolean  @default(true)
+  errorKind    String?  // null if ok, or "rate_limit" | "max_tokens" | "parse" | etc.
+  userId       String?  // bare string, no relation — outlives a deleted user
+  createdAt    DateTime @default(now())
+
+  @@index([purpose, createdAt])
+  @@index([providerKey, createdAt])
+  @@index([createdAt])
+  @@map("ai_call_log")
+}
+
+// ─── Notifications ─────────────────────────────────────────────────────────────
+//
+// Push (FCM, to the browser PWA and to the separate Expo app) and email (SMTP), raised by
+// real events rather than a scheduler — this app has no cron, and nothing here depends on
+// one. Plan: docs/implementation/pending/notifications-and-settings-rbac-plan.md, Part B.
+//
+// Five tables. Config is a singleton like StorageConfig. PushDevice is the token registry.
+// NotificationEventSetting is the admin's per-event on/off; NotificationPreference is each
+// user's own opt-out. NotificationOutbox is the delivery log.
+
+// One row, configured from Settings -> Notifications, so a credential change needs no
+// redeploy. Mirrors StorageConfig deliberately: secrets in plaintext (the accepted trade-off
+// recorded above IntegrationConfig), `*Connected` set ONLY by a real round-trip test and never
+// by saving the form, and the API masks `smtpPassword` and `fcmServiceAccount` on read.
+//
+// `emailProvider` / `pushProvider` are plain Strings, not enums, for the reason written above
+// both config tables: adding a provider should be a row, not a migration. Validated with zod
+// in the route. Valid values today: emailProvider SMTP | GMAIL_OAUTH | SES; pushProvider FCM.
+// Only SMTP and FCM are implemented — the others are declared so they can be rows later.
+model NotificationConfig {
+  id String @id @default("singleton")
+
+  // ── Email ──
+  emailProvider      String    @default("SMTP")
+  smtpHost           String?
+  smtpPort           Int?
+  smtpSecure         Boolean   @default(false) // true = 465 implicit TLS, false = 587 STARTTLS
+  smtpUser           String?
+  smtpPassword       String? // Gmail App Password. NEVER returned to the browser, never logged.
+  fromName           String?
+  fromEmail          String?
+  emailEnabled       Boolean   @default(false) // the master switch an admin flips
+  // Set only by a real 250 from the SMTP server on a test send. Saving the form never sets it.
+  emailConnected     Boolean   @default(false)
+  emailLastTestedAt  DateTime?
+  emailLastTestError String?   @db.Text
+
+  // ── Push ──
+  pushProvider         String    @default("FCM")
+  fcmProjectId         String?
+  fcmServiceAccount    String?   @db.Text // the service-account JSON, verbatim. NEVER returned.
+  // The Firebase WEB SDK config — the four values initializeApp() needs before getToken() can
+  // mint a browser token. None is secret: every Firebase web app ships them in its bundle.
+  // Returned to any signed-in browser by GET /api/notifications/push-config.
+  fcmWebApiKey         String?
+  fcmMessagingSenderId String? // the project NUMBER, e.g. "123456789012"
+  fcmWebAppId          String? // "1:123456789012:web:abcdef…"
+  fcmVapidKey          String? // web push key pair — PUBLIC half only; the private half is Firebase's
+  pushEnabled          Boolean   @default(false)
+  // Set only by messages:send returning a message name on a test push. Saving never sets it.
+  pushConnected        Boolean   @default(false)
+  pushLastTestedAt     DateTime?
+  pushLastTestError    String?   @db.Text
+
+  // Who last saved. Deliberately NOT a relation: this row must outlive any user, and a
+  // SetNull FK would need an index for a value nothing ever joins on. Nullable because the
+  // row may be created empty before anyone has saved.
+  updatedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("notification_config")
+}
+
+// Two values because FCM v1 takes a different config block per platform (`webpush` vs
+// `android`), and that is the ONLY thing the sender branches on. WEB = the PWA service
+// worker; ANDROID = the separate Expo app. Both are FCM tokens sent through one call.
+//
+// iOS is OUT OF SCOPE (owner, 2 Sep 2026). Adding it later is one value here plus one `apns`
+// block in the sender. Do not add it speculatively.
+enum PushPlatform {
+  WEB
+  ANDROID
+}
+
+// One row per registered device. `token` is the FCM registration token and is the natural
+// key: FCM reissues tokens, it never duplicates them, so re-registering the same device is an
+// upsert on `token`, not a second row. Browser tokens come from the Firebase SDK's
+// getToken({ vapidKey }); Expo tokens from getDevicePushTokenAsync() — a native FCM token,
+// NOT an Expo push token.
+//
+// Cascade: a device token is a credential for the user's screen. Deleting the user must not
+// leave a token that can still be pushed to.
+model PushDevice {
+  id         String       @id @default(cuid())
+  userId     String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token      String       @unique
+  platform   PushPlatform
+  userAgent  String? // browser UA or Expo device description; display and debugging only
+  lastSeenAt DateTime     @default(now())
+  createdAt  DateTime     @default(now())
+
+  @@index([userId])
+  @@map("push_devices")
+}
+
+// Global, admin-controlled: is this event allowed to send on each channel at all. One row per
+// event key; an ABSENT row means "use the code default" for that event, which is why the
+// column defaults here are not the whole story — see src/lib/notify/events.ts.
+//
+// Email defaults off and push defaults on because email is the scarce channel: a free Gmail
+// account sends ~500/day, and one event to 40 staff is 8% of that. Push is free.
+model NotificationEventSetting {
+  eventKey     String   @id
+  pushEnabled  Boolean  @default(true)
+  emailEnabled Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("notification_event_settings")
+}
+
+// Per-user opt-out. Written from the SESSION's userId, never from the request body —
+// accepting a body userId would let any user mute any other user. Gated on authentication
+// alone, not on any settings permission: a mechanic silences their own phone without holding
+// a settings grant, the same way Staff LMS `view` lets a learner record their own progress.
+//
+// No separate @@index([userId]): the composite unique is already a userId-leading btree.
+model NotificationPreference {
+  id       String  @id @default(cuid())
+  userId   String
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventKey String
+  push     Boolean @default(true)
+  email    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, eventKey])
+  @@map("notification_preferences")
+}
+
+enum NotificationChannel {
+  PUSH
+  EMAIL
+}
+
+enum NotificationStatus {
+  SENT
+  FAILED
+  SKIPPED
+}
+
+// The delivery log — one row per channel per recipient per event. Unlike WhatsApp, which is
+// fire-and-forget and only records intent, FCM and SMTP both return a real outcome, so this
+// records what actually happened.
+//
+// NOT to be confused with `NotificationLog` (table notification_logs) further down, which is
+// the SERVICE module's record of WhatsApp messages a human chose to send. Different table,
+// different audience, no collision — but the names are close, so each points at the other.
+//
+// Append-only and hard-delete. Nothing prunes it: there is no cron and none is being added
+// (owner, 2 Sep 2026 — accept the growth, ~200 bytes/row, ~8 MB/year at 40 staff x 20
+// events/day). No "clear older than N days" button exists yet.
+model NotificationOutbox {
+  id       String              @id @default(cuid())
+  eventKey String
+  channel  NotificationChannel
+  status   NotificationStatus
+
+  // Deliberately NOT a relation: a log must outlive the user it names, and a User FK would
+  // cascade on delete and quietly erase delivery history. Nullable, together with `target`,
+  // for exactly one case: a CHANNEL-level SKIPPED row ("FCM is not configured"), which is
+  // written once per event rather than once per recipient. A SENT or FAILED row always has both.
+  userId String?
+  // Masked at write time — "a***@gmail.com", or the last 6 characters of a device token. A
+  // full token is a credential (CLAUDE.md); six characters correlate with a PushDevice row
+  // and cannot be used to send.
+  target String?
+  // The record this was about: a productId, jobId, shipmentId or SyncLog id. Null only for a
+  // test send from the settings screen, which is about nothing.
+  refId  String?
+  error  String? @db.Text
+
+  createdAt DateTime @default(now())
+
+  @@index([eventKey, createdAt])
+  @@index([userId, createdAt])
+  @@map("notification_outbox")
 }
 
 model SyncLog {
-  id          String   @id @default(cuid())
-  syncType    String   // items, contacts, invoices, bills, all
-  status      String   // running, success, partial, failed
-  totalItems  Int      @default(0)
-  synced      Int      @default(0)
-  failed      Int      @default(0)
-  errors      String?  // JSON array of error messages
-  startedAt   DateTime @default(now())
+  id          String    @id @default(cuid())
+  syncType    String // items, contacts, invoices, bills, all
+  status      String // running, success, partial, failed
+  totalItems  Int       @default(0)
+  synced      Int       @default(0)
+  failed      Int       @default(0)
+  errors      String? // JSON array of error messages
+  startedAt   DateTime  @default(now())
   completedAt DateTime?
-  triggeredBy String?  // userId
+  triggeredBy String? // userId
 
   @@index([syncType])
   @@index([startedAt])
@@ -795,39 +1684,48 @@ model SyncLog {
 
 // ---- Customers & Receivables ----
 
+// The single customer record, shared by the inventory and service sides of the app.
+//
+// `phone` is required AND unique: one customer, one number. Required matters as much as
+// unique here — a nullable unique column still permits unlimited NULL rows in Postgres, so
+// the constraint alone would not actually prevent duplicate walk-in records.
 model Customer {
-  id            String         @id @default(cuid())
-  name          String
-  phone         String?
-  email         String?
-  address       String?
-  type          CustomerType   @default(WALK_IN)
-  isActive      Boolean        @default(true)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id        String       @id @default(cuid())
+  name      String
+  phone     String       @unique
+  whatsapp  String? // merged in from the service app's Customer
+  email     String?
+  address   String?
+  type      CustomerType @default(WALK_IN)
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
 
-  invoices      CustomerInvoice[]
-  payments      CustomerPayment[]
+  invoices CustomerInvoice[]
+  payments CustomerPayment[]
+
+  // Service side
+  serviceJobs    ServiceJob[]
+  serviceReviews Review[]
 
   @@index([name])
-  @@index([phone])
 }
 
 model CustomerInvoice {
-  id            String         @id @default(cuid())
-  customerId    String
-  customer      Customer       @relation(fields: [customerId], references: [id])
-  invoiceNo     String         @unique
-  invoiceDate   DateTime
-  dueDate       DateTime
-  amount        Float
-  paidAmount    Float          @default(0)
-  status        InvoiceStatus  @default(PENDING)
-  notes         String?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  id          String        @id @default(cuid())
+  customerId  String
+  customer    Customer      @relation(fields: [customerId], references: [id])
+  invoiceNo   String        @unique
+  invoiceDate DateTime
+  dueDate     DateTime
+  amount      Float
+  paidAmount  Float         @default(0)
+  status      InvoiceStatus @default(PENDING)
+  notes       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
-  payments      CustomerPayment[]
+  payments CustomerPayment[]
 
   @@index([customerId])
   @@index([status])
@@ -835,19 +1733,19 @@ model CustomerInvoice {
 }
 
 model CustomerPayment {
-  id            String           @id @default(cuid())
-  customerId    String
-  customer      Customer         @relation(fields: [customerId], references: [id])
-  invoiceId     String?
-  invoice       CustomerInvoice? @relation(fields: [invoiceId], references: [id])
-  amount        Float
-  paymentMode   PaymentMode
-  paymentDate   DateTime
-  referenceNo   String?
-  notes         String?
-  recordedById  String
-  recordedBy    User             @relation("CustomerPaymentRecordedBy", fields: [recordedById], references: [id])
-  createdAt     DateTime         @default(now())
+  id           String           @id @default(cuid())
+  customerId   String
+  customer     Customer         @relation(fields: [customerId], references: [id])
+  invoiceId    String?
+  invoice      CustomerInvoice? @relation(fields: [invoiceId], references: [id])
+  amount       Float
+  paymentMode  PaymentMode
+  paymentDate  DateTime
+  referenceNo  String?
+  notes        String?
+  recordedById String
+  recordedBy   User             @relation("CustomerPaymentRecordedBy", fields: [recordedById], references: [id])
+  createdAt    DateTime         @default(now())
 
   @@index([customerId])
   @@index([invoiceId])
@@ -857,31 +1755,31 @@ model CustomerPayment {
 // ---- Vendor Issues ----
 
 model VendorIssue {
-  id            String         @id @default(cuid())
-  issueSource   IssueSource    @default(VENDOR)
-  vendorId      String?
-  vendor        Vendor?        @relation(fields: [vendorId], references: [id])
-  clientName    String?
-  clientPhone   String?
-  issueNo       String         @unique // ISS-YYYYMM-NNNN
-  ticketNo      String?        // Brand's own ticket/reference number (e.g. eMotorad) — shown in the WhatsApp message
-  serviceLocation String?      // IN_STORE (cycle at store) | CUSTOMER (cycle with customer) — shown in the WhatsApp message
-  issueType     IssueType
-  description   String
-  status        IssueStatus    @default(OPEN)
-  priority      IssuePriority  @default(MEDIUM)
-  billId        String?
-  bill          VendorBill?    @relation(fields: [billId], references: [id])
+  id                  String            @id @default(cuid())
+  issueSource         IssueSource       @default(VENDOR)
+  vendorId            String?
+  vendor              Vendor?           @relation(fields: [vendorId], references: [id])
+  clientName          String?
+  clientPhone         String?
+  issueNo             String            @unique // ISS-YYYYMM-NNNN
+  ticketNo            String? // Brand's own ticket/reference number (e.g. eMotorad) — shown in the WhatsApp message
+  serviceLocation     String? // IN_STORE (cycle at store) | CUSTOMER (cycle with customer) — shown in the WhatsApp message
+  issueType           IssueType
+  description         String
+  status              IssueStatus       @default(OPEN)
+  priority            IssuePriority     @default(MEDIUM)
+  billId              String?
+  bill                VendorBill?       @relation(fields: [billId], references: [id])
   photoUrls           String[]
-  docLink             String?           // optional supporting document/spreadsheet link for the brand to verify
+  docLink             String? // optional supporting document/spreadsheet link for the brand to verify
   suggestedResolution String?
-  resolution    String?
-  resolvedAt    DateTime?
-  createdById   String
-  createdBy     User           @relation("IssueCreatedBy", fields: [createdById], references: [id])
-  notes         VendorIssueNote[]
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  resolution          String?
+  resolvedAt          DateTime?
+  createdById         String
+  createdBy           User              @relation("IssueCreatedBy", fields: [createdById], references: [id])
+  notes               VendorIssueNote[]
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
 
   @@index([vendorId])
   @@index([status])
@@ -924,11 +1822,11 @@ enum DeliveryStatus {
 }
 
 model Delivery {
-  id              String          @id @default(cuid())
-  invoiceNo       String          @unique
-  zohoInvoiceId   String?
-  invoiceDate     DateTime
-  invoiceAmount   Float
+  id            String   @id @default(cuid())
+  invoiceNo     String   @unique
+  zohoInvoiceId String?
+  invoiceDate   DateTime
+  invoiceAmount Float
 
   customerName    String
   customerPhone   String?
@@ -937,10 +1835,19 @@ model Delivery {
   customerArea    String?
   customerPincode String?
 
-  status          DeliveryStatus  @default(PENDING)
-  verifiedAt      DateTime?
-  verifiedById    String?
-  verifiedBy      User?           @relation("DeliveryVerifiedBy", fields: [verifiedById], references: [id])
+  // Which store SOLD this (O8). Stock deduction is store-scoped -- a delivery names a store,
+  // never a warehouse (owner, 4 Sep) -- and without this column P1b has nothing to deduct
+  // from but the primary store, which would take BCH stock for a BCC sale.
+  //
+  // Nullable because every existing row predates it, and Restrict because a store with sales
+  // history is not deletable. Populated by P1b from `Store.invoicePrefix` against `invoiceNo`.
+  storeId String?
+  store   Store?  @relation("DeliveryStore", fields: [storeId], references: [id], onDelete: Restrict)
+
+  status       DeliveryStatus @default(PENDING)
+  verifiedAt   DateTime?
+  verifiedById String?
+  verifiedBy   User?          @relation("DeliveryVerifiedBy", fields: [verifiedById], references: [id])
 
   scheduledDate   DateTime?
   dispatchedAt    DateTime?
@@ -948,73 +1855,78 @@ model Delivery {
   stockReservedAt DateTime?
 
   expectedReadyDate DateTime?
-  prebookNotes    String?
+  prebookNotes      String?
 
-  flagReason      String?
-  flaggedAt       DateTime?
-  flagResolvedAt  DateTime?
-  flagResolvedBy  String?
+  flagReason     String?
+  flaggedAt      DateTime?
+  flagResolvedAt DateTime?
+  flagResolvedBy String?
 
-  invoiceType     String?           // "SALES" | "SERVICE" — null = not yet tagged
-  salesPerson     String?
-  lineItems       Json?
-  notes           String?
-  deliveryNotes   String?
+  invoiceType   String? // "SALES" | "SERVICE" — null = not yet tagged
+  salesPerson   String?
+  lineItems     Json?
+  notes         String?
+  deliveryNotes String?
 
   // WhatsApp tracking
-  whatsAppScheduledSent   Boolean  @default(false)
-  whatsAppDispatchedSent  Boolean  @default(false)
-  whatsAppDeliveredSent   Boolean  @default(false)
-  freeAccessories         String?
+  whatsAppScheduledSent  Boolean @default(false)
+  whatsAppDispatchedSent Boolean @default(false)
+  whatsAppDeliveredSent  Boolean @default(false)
+  freeAccessories        String?
 
-  reversePickup           Boolean  @default(false)
+  reversePickup Boolean @default(false)
 
   // Outstation delivery
-  isOutstation            Boolean  @default(false)
-  courierName             String?
-  courierTrackingNo       String?
-  courierTrackingLink     String?
-  courierCost             Float?
-  vehicleNo               String?
+  isOutstation        Boolean @default(false)
+  courierName         String?
+  courierTrackingNo   String?
+  courierTrackingLink String?
+  courierCost         Float?
+  vehicleNo           String?
 
   // Customer self-fill
   selfFillToken       String?   @unique
   selfFillTokenExpiry DateTime?
   selfFillCompletedAt DateTime?
-  mapsLink            String?   // Google Maps location link shared by customer
+  mapsLink            String? // Google Maps location link shared by customer
 
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([status])
   @@index([invoiceDate])
   @@index([customerArea])
   @@index([scheduledDate])
+  // Earned today, before P1b adds a single `where: { storeId }`. `prisma.store.delete` at
+  // api/stores/[id]/route.ts:94 is a live call site, and a Restrict foreign key makes
+  // Postgres check this table on every one of those deletes -- unindexed, that is a
+  // sequential scan of every delivery ever recorded. Postgres does not index a referencing
+  // column for you. P1b's store-scoped reads then use the same index.
+  @@index([storeId])
 }
 
 model AlertConfig {
-  id              String   @id @default("singleton")
-  redFlagPhones   String?
-  googleReviewLink String?
-  whatsappTemplates Json?    // { scheduled, dispatched, delivered } message templates
-  rolePermissions Json?      // { ROLE: { feature: { view, edit, delete, approve } } }
-  updatedAt       DateTime @updatedAt
+  id                String   @id @default("singleton")
+  redFlagPhones     String?
+  googleReviewLink  String?
+  whatsappTemplates Json? // { scheduled, dispatched, delivered } message templates
+  updatedAt         DateTime @updatedAt
 }
 
 // ─── Zoho Pull Preview (approval gate) ───────────────────────
 
 model ZohoPullPreview {
-  id            String    @id @default(cuid())
-  pullId        String
-  entityType    String    // "contact", "item", "bill", "invoice"
-  action        String    @default("new")
-  zohoId        String
-  data          Json
-  localMatch    Json?
-  status        String    @default("PENDING") // PENDING, APPROVED, REJECTED
-  reviewedAt    DateTime?
-  reviewedById  String?
-  createdAt     DateTime  @default(now())
+  id           String    @id @default(cuid())
+  pullId       String
+  entityType   String // "contact", "item", "bill", "invoice"
+  action       String    @default("new")
+  zohoId       String
+  data         Json
+  localMatch   Json?
+  status       String    @default("PENDING") // PENDING, APPROVED, REJECTED
+  reviewedAt   DateTime?
+  reviewedById String?
+  createdAt    DateTime  @default(now())
 
   @@index([pullId])
   @@index([entityType])
@@ -1022,17 +1934,17 @@ model ZohoPullPreview {
 }
 
 model ZohoPullLog {
-  id              String    @id @default(cuid())
-  pullId          String    @unique
-  status          String    @default("PENDING_REVIEW") // PENDING_REVIEW, APPROVED, REJECTED, PARTIAL
-  contactsNew     Int       @default(0)
-  itemsNew        Int       @default(0)
-  billsNew        Int       @default(0)
-  invoicesNew     Int       @default(0)
-  errors          String?
-  apiCallsUsed    Int       @default(0)
-  createdAt       DateTime  @default(now())
-  approvedAt      DateTime?
+  id           String    @id @default(cuid())
+  pullId       String    @unique
+  status       String    @default("PENDING_REVIEW") // PENDING_REVIEW, APPROVED, REJECTED, PARTIAL
+  contactsNew  Int       @default(0)
+  itemsNew     Int       @default(0)
+  billsNew     Int       @default(0)
+  invoicesNew  Int       @default(0)
+  errors       String?
+  apiCallsUsed Int       @default(0)
+  createdAt    DateTime  @default(now())
+  approvedAt   DateTime?
 
   @@index([status])
   @@index([createdAt])
@@ -1041,46 +1953,46 @@ model ZohoPullLog {
 // ─── Second-Hand Cycles (Exchange inventory) ───────────────────────
 
 model SecondHandCycle {
-  id              String    @id @default(cuid())
-  sku             String    @unique  // Auto: SH-0001
-  name            String               // e.g., "Hero Sprint 26"
-  size            String?              // e.g., "26", "24", "20" (wheel size in inches)
-  condition       String               // EXCELLENT, GOOD, FAIR, SCRAP
-  status          String    @default("IN_STOCK") // IN_STOCK, SOLD
-  costPrice       Float               // Exchange price
-  sellingPrice    Float?              // Set by admin after service
-  photoUrl        String              // Primary image URL (thumbnail)
-  photoUrls       String[]            // All image URLs including primary
+  id           String   @id @default(cuid())
+  sku          String   @unique // Auto: SH-0001
+  name         String // e.g., "Hero Sprint 26"
+  size         String? // e.g., "26", "24", "20" (wheel size in inches)
+  condition    String // EXCELLENT, GOOD, FAIR, SCRAP
+  status       String   @default("IN_STOCK") // IN_STOCK, SOLD
+  costPrice    Float // Exchange price
+  sellingPrice Float? // Set by admin after service
+  photoUrl     String // Primary image URL (thumbnail)
+  photoUrls    String[] // All image URLs including primary
 
   // Source (who traded in)
-  customerName    String
-  customerPhone   String?
-  zohoInvoiceNo   String?             // New cycle sale invoice
-  zohoItemId      String?             // Zoho Inventory item_id after push
+  customerName  String
+  customerPhone String?
+  zohoInvoiceNo String? // New cycle sale invoice
+  zohoItemId    String? // Zoho Inventory item_id after push
 
   // Location
-  binId           String?
-  bin             Bin?      @relation("SecondHandBin", fields: [binId], references: [id])
+  binId String?
+  bin   Bin?    @relation("SecondHandBin", fields: [binId], references: [id])
 
   // Sale details
-  soldAt          DateTime?
-  soldToName      String?
-  soldToPhone     String?
-  soldInvoiceNo   String?
+  soldAt        DateTime?
+  soldToName    String?
+  soldToPhone   String?
+  soldInvoiceNo String?
 
-  notes           String?
-  isArchived      Boolean   @default(false)
+  notes      String?
+  isArchived Boolean @default(false)
 
   // Verification
-  isVerified      Boolean   @default(false)
-  verifiedById    String?
-  verifiedBy      User?     @relation("SecondHandVerifiedBy", fields: [verifiedById], references: [id])
-  verifiedAt      DateTime?
+  isVerified   Boolean   @default(false)
+  verifiedById String?
+  verifiedBy   User?     @relation("SecondHandVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedAt   DateTime?
 
-  createdById     String
-  createdBy       User      @relation("SecondHandCreatedBy", fields: [createdById], references: [id])
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  createdById String
+  createdBy   User     @relation("SecondHandCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@index([status])
   @@index([sku])
@@ -1090,34 +2002,131 @@ model SecondHandCycle {
 
 // ─── Transfer Orders (Multi-item bin transfers) ───────────────────────
 
+// IN_TRANSIT and RECEIVED are added HERE, in MIG-1a, and no code writes them until P14.
+//
+// That is not tidiness, it is a Postgres constraint: a value added by `ALTER TYPE … ADD
+// VALUE` cannot be USED inside the same transaction that added it (error 55P04), and Prisma
+// applies one migration folder as one transaction. So the value must land a folder before the
+// UPDATE that writes it -- which is exactly what MIG-2 does in P14.
+//
+// `tsc` will NOT catch a screen that meets an unknown status: there is no
+// `Record<TransferOrderStatus, …>` anywhere in src/ (status-colors.ts is Record<string,
+// string>). The compensating check is a grep, and P1 extends the two places that enumerate
+// the statuses by hand -- the union at transfers/page.tsx and its StatusFilter list.
 enum TransferOrderStatus {
   PENDING
   APPROVED
   REJECTED
   CANCELLED
+  IN_TRANSIT
+  RECEIVED
+}
+
+// Derived, never chosen by the user: both warehouses under one store = INTRA_STORE, different
+// stores = INTER_STORE. It decides which document the transfer requires.
+enum TransferType {
+  INTRA_STORE
+  INTER_STORE
+}
+
+// A movement between two GSTINs is a supply and needs a tax invoice; a movement inside one
+// registration is not, and a delivery challan covers it.
+enum TransferDocType {
+  DELIVERY_CHALLAN
+  TAX_INVOICE
+}
+
+/// Chosen on the form, not derived. Store to store carries a tax invoice; store to warehouse
+/// carries a delivery challan. The GSTIN is deliberately NOT consulted — a store's tax
+/// registration is master data, and the document that travels with a van is not.
+enum TransferMode {
+  STORE_TO_STORE
+  STORE_TO_WAREHOUSE
+  GODOWN_TO_FLOOR
 }
 
 model TransferOrder {
-  id            String              @id @default(cuid())
-  orderNo       String              @unique // Auto: TRF-YYYYMM-NNNN
-  status        TransferOrderStatus @default(PENDING)
-  notes         String?
+  id      String              @id @default(cuid())
+  orderNo String              @unique // Auto: TRF-YYYYMM-NNNN
+  status  TransferOrderStatus @default(PENDING)
+  notes   String?
 
   createdById   String
-  createdBy     User                @relation("TransferCreatedBy", fields: [createdById], references: [id])
+  createdBy     User      @relation("TransferCreatedBy", fields: [createdById], references: [id])
   reviewedById  String?
-  reviewedBy    User?               @relation("TransferReviewedBy", fields: [reviewedById], references: [id])
+  reviewedBy    User?     @relation("TransferReviewedBy", fields: [reviewedById], references: [id])
   reviewedAt    DateTime?
   rejectionNote String?
 
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+  // ─── The header lane (R10, written by P14) ────────────────────────────────────────────
+  //
+  // EVERY column below is nullable and unwritten in this migration. They exist a release
+  // ahead of the code that fills them (CLAUDE.md rule 7) because MIG-2 backfills them in P14
+  // and a backfill cannot target a column that does not exist yet.
+  //
+  // Today a transfer's lane lives per ITEM (TransferOrderItem.fromWarehouseId). That was
+  // workable while every item moved together, but an order is dispatched and received as one
+  // thing, so the lane belongs on the header. Restrict on both: a warehouse with transfer
+  // history is not deletable.
+  fromWarehouseId String?
+  fromWarehouse   Warehouse? @relation("TransferOrderFromWarehouse", fields: [fromWarehouseId], references: [id], onDelete: Restrict)
+  toWarehouseId   String?
+  toWarehouse     Warehouse? @relation("TransferOrderToWarehouse", fields: [toWarehouseId], references: [id], onDelete: Restrict)
 
-  items         TransferOrderItem[]
+  // Derived from the two lanes, stored so history stays readable after a warehouse moves
+  // store. `requiredDocType` NULL means "pre-policy" -- an order raised before P15 existed --
+  // and is never rendered as "no document needed".
+  // `transferType` is NO LONGER WRITTEN (9 Sep 2026): the mode below replaced the GSTIN
+  // derivation. Dropped a release later, per CLAUDE.md rule 7.
+  transferType    TransferType?
+  requiredDocType TransferDocType?
+
+  // The mode the person chose on /transfers/new. Null = raised before the mode existed.
+  // `fromStoreId`/`toStoreId` are a SNAPSHOT of what was picked — the store resolved to a
+  // warehouse (its floor) at create time, and re-pointing that floor later must not rewrite
+  // history. `toStoreId` is null in STORE_TO_WAREHOUSE. Restrict, like every other lane FK.
+  mode        TransferMode?
+  fromStoreId String?
+  fromStore   Store?        @relation("TransferOrderFromStore", fields: [fromStoreId], references: [id], onDelete: Restrict)
+  toStoreId   String?
+  toStore     Store?        @relation("TransferOrderToStore", fields: [toStoreId], references: [id], onDelete: Restrict)
+
+  // The document itself (P15).
+  docType          TransferDocType?
+  docNumber        String?
+  docDate          DateTime?
+  docUrl           String?
+  docUploadedById  String?
+  docUploadedAt    DateTime?
+  eWayBillNo       String?
+  consignmentValue Decimal?         @db.Decimal(12, 2)
+
+  // Dispatch: stock LEAVES here.
+  dispatchedById  String?
+  dispatchedAt    DateTime?
+  vehicleNo       String?
+  transporterName String?
+
+  // Receipt: stock ARRIVES here, and a shortfall is recorded per item.
+  receivedById String?
+  receivedAt   DateTime?
+  receiveNote  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items TransferOrderItem[]
+  units TransferOrderUnit[]
 
   @@index([status])
   @@index([createdById])
   @@index([createdAt])
+  // Both FK columns are indexed: Restrict makes every warehouse delete check this table, and
+  // P14 adds a `?toWarehouseId=` filter to the list route for the receiving clerk. No
+  // composite `[status, toWarehouseId]` -- the existing `[status]` index bitmap-ANDs with
+  // either of these, and a composite that no query has asked for yet is dead weight.
+  @@index([fromWarehouseId])
+  @@index([toWarehouseId])
 }
 
 model TransferOrderItem {
@@ -1132,23 +2141,30 @@ model TransferOrderItem {
   fromBin         Bin?          @relation("TransferFromBin", fields: [fromBinId], references: [id])
   toBinId         String?
   toBin           Bin?          @relation("TransferToBin", fields: [toBinId], references: [id])
-  fromLocation    StockLocation?
-  toLocation      StockLocation?
-  createdAt       DateTime      @default(now())
+  // Was fromLocation/toLocation: StockLocation?. Still nullable — bin mode leaves both
+  // unset — and still Restrict, so a warehouse with transfer history cannot be deleted.
+  fromWarehouseId String?
+  fromWarehouse   Warehouse?    @relation("TransferFromWarehouse", fields: [fromWarehouseId], references: [id], onDelete: Restrict)
+  toWarehouseId   String?
+  toWarehouse     Warehouse?    @relation("TransferToWarehouse", fields: [toWarehouseId], references: [id], onDelete: Restrict)
+
+  // Written on receipt (P14). NULL means "not received yet" -- distinct from 0, which means
+  // "received, and none of it arrived". A short receipt is a fact worth keeping, so the
+  // difference against `quantity` is the shortfall rather than an edit to `quantity`.
+  receivedQty Int?
+  // The cost this stock moves at, captured per line because a transfer between GSTINs is a
+  // supply and the tax invoice needs a value. Decimal, not Float: money.
+  unitCost    Decimal? @db.Decimal(12, 2)
+
+  createdAt DateTime @default(now())
 
   @@index([transferOrderId])
   @@index([productId])
+  @@index([fromWarehouseId])
+  @@index([toWarehouseId])
 }
 
 // ─── Inbound Tracking (Brand Deliveries & Pre-booking) ───────────────────────
-
-model BrandLeadTime {
-  id        String   @id @default(cuid())
-  brandId   String   @unique
-  brand     Brand    @relation(fields: [brandId], references: [id])
-  leadDays  Int      @default(7)
-  updatedAt DateTime @updatedAt
-}
 
 enum InboundShipmentStatus {
   IN_TRANSIT
@@ -1157,73 +2173,89 @@ enum InboundShipmentStatus {
 }
 
 model InboundShipment {
-  id                    String                @id @default(cuid())
-  shipmentNo            String                @unique // Auto: IB-YYYYMM-0001
-  brandId               String
-  brand                 Brand                 @relation(fields: [brandId], references: [id])
-  billNo                String                // Brand's invoice number (from image)
-  billImageUrl          String?               @db.Text // Base64 photo of paper bill (optional for Zoho bills)
-  billPdfUrl            String?               // Supabase Storage URL for uploaded PDF
-  billDate              DateTime
-  expectedDeliveryDate  DateTime
-  status                InboundShipmentStatus @default(IN_TRANSIT)
-  totalAmount           Float
-  totalItems            Int
-  approvedAt            DateTime?
-  approvedById          String?
-  approvedBy            User?                 @relation("InboundApprovedBy", fields: [approvedById], references: [id])
-  deliveredAt           DateTime?
-  deliveredById         String?
-  deliveredBy           User?                 @relation("InboundDeliveredBy", fields: [deliveredById], references: [id])
-  putawayAt             DateTime?
-  putawayById           String?
-  putawayBy             User?                 @relation("InboundPutawayBy", fields: [putawayById], references: [id])
-  notes                 String?
-  createdById           String
-  createdBy             User                  @relation("InboundCreatedBy", fields: [createdById], references: [id])
-  createdAt             DateTime              @default(now())
-  updatedAt             DateTime              @updatedAt
+  id                   String                @id @default(cuid())
+  shipmentNo           String                @unique // Auto: IB-YYYYMM-0001
+  brandId              String
+  brand                Brand                 @relation(fields: [brandId], references: [id])
+  billNo               String // Brand's invoice number (from image)
+  billImageUrl         String?               @db.Text // Base64 photo of paper bill (optional for Zoho bills)
+  billPdfUrl           String? // Supabase Storage URL for uploaded PDF
+  billDate             DateTime
+  expectedDeliveryDate DateTime
+  status               InboundShipmentStatus @default(IN_TRANSIT)
+  // Cycles / Spares / Accessories — the choice that decides how this shipment is received
+  // (R3). It lived in ONE phone's localStorage, so the shipment looked uncategorised to
+  // everybody else and lost its category when that browser cleared. It is a property of the
+  // shipment, so it belongs on the row.
+  //
+  // Nullable: every existing shipment predates it. Restrict, because a category that has
+  // received stock is history and must not be deletable out from under it.
+  categoryId           String?
+  category             Category?             @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  totalAmount          Float
+  totalItems           Int
+  approvedAt           DateTime?
+  approvedById         String?
+  approvedBy           User?                 @relation("InboundApprovedBy", fields: [approvedById], references: [id])
+  deliveredAt          DateTime?
+  deliveredById        String?
+  deliveredBy          User?                 @relation("InboundDeliveredBy", fields: [deliveredById], references: [id])
+  putawayAt            DateTime?
+  putawayById          String?
+  putawayBy            User?                 @relation("InboundPutawayBy", fields: [putawayById], references: [id])
+  notes                String?
+  createdById          String
+  createdBy            User                  @relation("InboundCreatedBy", fields: [createdById], references: [id])
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
 
-  vendorBillId          String?               @unique
-  vendorBill            VendorBill?           @relation(fields: [vendorBillId], references: [id])
-  zohoBillId            String?               // Zoho Books bill_id
+  vendorBillId String?     @unique
+  vendorBill   VendorBill? @relation(fields: [vendorBillId], references: [id])
+  zohoBillId   String? // Zoho Books bill_id
 
-  lineItems             InboundLineItem[]
-  preBookings           PreBooking[]
+  lineItems      InboundLineItem[]
+  preBookings    PreBooking[]
+  inventoryUnits InventoryUnit[]
 
   @@index([status])
   @@index([brandId])
   @@index([billNo])
   @@index([expectedDeliveryDate])
   @@index([createdAt])
+  // Justified by the Restrict FK, not by a `where` -- there are TWO live category deletes:
+  // api/categories/[id]/route.ts:124 and, worse, api/categories/[id]/merge/route.ts:66,
+  // which deletes inside a transaction. Postgres checks this table on both, and unindexed
+  // that is a sequential scan while the merge holds its locks. P7 then filters receiving by
+  // category on the same index.
+  @@index([categoryId])
 }
 
 model InboundLineItem {
-  id                     String            @id @default(cuid())
+  id                     String          @id @default(cuid())
   shipmentId             String
-  shipment               InboundShipment   @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
-  productName            String            // As read from bill image
-  productId              String?           // Matched to existing product
-  product                Product?          @relation(fields: [productId], references: [id])
+  shipment               InboundShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  productName            String // As read from bill image
+  productId              String? // Matched to existing product
+  product                Product?        @relation(fields: [productId], references: [id])
   sku                    String?
   quantity               Int
   rate                   Float
-  gstPercent             Float             @default(0)
-  gstAmount              Float             @default(0)
+  gstPercent             Float           @default(0)
+  gstAmount              Float           @default(0)
   amount                 Float
   hsn                    String?
-  isDelivered            Boolean           @default(false)
+  isDelivered            Boolean         @default(false)
   deliveredQty           Int?
   preBookedCustomerName  String?
   preBookedCustomerPhone String?
   preBookedInvoiceNo     String?
-  whatsAppSent           Boolean           @default(false)
+  whatsAppSent           Boolean         @default(false)
   notes                  String?
 
-  binId                  String?
-  bin                    Bin?              @relation(fields: [binId], references: [id])
+  binId String?
+  bin   Bin?    @relation(fields: [binId], references: [id])
 
-  preBooking             PreBooking?       @relation("PreBookingLineItem")
+  preBooking PreBooking? @relation("PreBookingLineItem")
 
   @@index([shipmentId])
   @@index([productId])
@@ -1240,100 +2272,100 @@ enum SettlementStatus {
 }
 
 model PosSession {
-  id                String    @id @default(cuid())
-  zakyaSessionId    String    @unique
-  sessionDate       DateTime
-  openedAt          DateTime
-  closedAt          DateTime?
-  registerName      String?
-  cashierName       String?
+  id             String    @id @default(cuid())
+  zakyaSessionId String    @unique
+  sessionDate    DateTime
+  openedAt       DateTime
+  closedAt       DateTime?
+  registerName   String?
+  cashierName    String?
 
   // Payment mode totals from POS
-  cashSales         Float     @default(0)
-  cardSales         Float     @default(0)
-  upiSales          Float     @default(0)
-  financeSales      Float     @default(0)  // Bajaj EMI etc.
-  totalSales        Float     @default(0)
+  cashSales    Float @default(0)
+  cardSales    Float @default(0)
+  upiSales     Float @default(0)
+  financeSales Float @default(0) // Bajaj EMI etc.
+  totalSales   Float @default(0)
 
   // Cash drawer
-  cashIn            Float     @default(0)  // Cash received (non-sales)
-  cashOut           Float     @default(0)  // Cash withdrawn from drawer
-  cashRefunds       Float     @default(0)
-  expectedCash      Float     @default(0)  // Expected cash at session end
-  countedCash       Float?                 // Actual cash counted at close
-  cashDiscrepancy   Float     @default(0)  // countedCash - expectedCash
+  cashIn          Float  @default(0) // Cash received (non-sales)
+  cashOut         Float  @default(0) // Cash withdrawn from drawer
+  cashRefunds     Float  @default(0)
+  expectedCash    Float  @default(0) // Expected cash at session end
+  countedCash     Float? // Actual cash counted at close
+  cashDiscrepancy Float  @default(0) // countedCash - expectedCash
 
   // Credit & other
-  creditSales       Float     @default(0)  // Credit sale / unpaid invoices
-  cashInHand        Float     @default(0)  // Opening + cash sales - cash out
-  cashDeposited     Float     @default(0)  // Amount deposited to bank
+  creditSales   Float @default(0) // Credit sale / unpaid invoices
+  cashInHand    Float @default(0) // Opening + cash sales - cash out
+  cashDeposited Float @default(0) // Amount deposited to bank
 
-  invoiceCount      Int       @default(0)
-  rawData           Json?     // Full Zakya session response
+  invoiceCount Int   @default(0)
+  rawData      Json? // Full Zakya session response
 
-  settlementId      String?
-  settlement        DailySettlement? @relation(fields: [settlementId], references: [id])
+  settlementId String?
+  settlement   DailySettlement? @relation(fields: [settlementId], references: [id])
 
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([sessionDate])
   @@index([settlementId])
 }
 
 model DailySettlement {
-  id                String            @id @default(cuid())
-  date              DateTime          @unique  // One settlement per day
-  status            SettlementStatus  @default(PENDING)
+  id     String           @id @default(cuid())
+  date   DateTime         @unique // One settlement per day
+  status SettlementStatus @default(PENDING)
 
   // Totals from POS sessions
-  totalCash         Float             @default(0)
-  totalCard         Float             @default(0)
-  totalUpi          Float             @default(0)
-  totalFinance      Float             @default(0)
-  totalCredit       Float             @default(0)  // Credit sales
-  grandTotal        Float             @default(0)
+  totalCash    Float @default(0)
+  totalCard    Float @default(0)
+  totalUpi     Float @default(0)
+  totalFinance Float @default(0)
+  totalCredit  Float @default(0) // Credit sales
+  grandTotal   Float @default(0)
 
   // Cash verification
-  cashCounted       Float?            // Physical cash count by staff
-  cashVariance      Float?            // cashCounted - totalCash
-  cashVerifiedAt    DateTime?
-  cashVerifiedById  String?
-  cashVerifiedBy    User?             @relation("SettlementCashVerifier", fields: [cashVerifiedById], references: [id])
+  cashCounted      Float? // Physical cash count by staff
+  cashVariance     Float? // cashCounted - totalCash
+  cashVerifiedAt   DateTime?
+  cashVerifiedById String?
+  cashVerifiedBy   User?     @relation("SettlementCashVerifier", fields: [cashVerifiedById], references: [id])
 
   // Cash drawer — manual daily entry
-  cashIn            Float             @default(0)  // Cash received into drawer
-  cashOut           Float             @default(0)  // Cash taken out (must be linked to expense)
-  cashOutReason     String?           // Reason for cash out
+  cashIn        Float   @default(0) // Cash received into drawer
+  cashOut       Float   @default(0) // Cash taken out (must be linked to expense)
+  cashOutReason String? // Reason for cash out
 
   // Bank matching
-  matchedAmount     Float             @default(0)
-  unmatchedAmount   Float             @default(0)
-  notes             String?
+  matchedAmount   Float   @default(0)
+  unmatchedAmount Float   @default(0)
+  notes           String?
 
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  sessions          PosSession[]
-  matches           SettlementMatch[]
+  sessions PosSession[]
+  matches  SettlementMatch[]
 
   @@index([status])
   @@index([date])
 }
 
 model SettlementMatch {
-  id                String          @id @default(cuid())
-  settlementId      String
-  settlement        DailySettlement @relation(fields: [settlementId], references: [id])
-  paymentMode       String          // CARD, UPI, FINANCE, CASH_DEPOSIT
-  expectedAmount    Float           // From POS
-  bankTxnId         String?
-  bankTxn           BankTransaction? @relation(fields: [bankTxnId], references: [id])
-  matchedAmount     Float           @default(0)
-  variance          Float           @default(0)
-  isMatched         Boolean         @default(false)
-  notes             String?
-  createdAt         DateTime        @default(now())
+  id             String           @id @default(cuid())
+  settlementId   String
+  settlement     DailySettlement  @relation(fields: [settlementId], references: [id])
+  paymentMode    String // CARD, UPI, FINANCE, CASH_DEPOSIT
+  expectedAmount Float // From POS
+  bankTxnId      String?
+  bankTxn        BankTransaction? @relation(fields: [bankTxnId], references: [id])
+  matchedAmount  Float            @default(0)
+  variance       Float            @default(0)
+  isMatched      Boolean          @default(false)
+  notes          String?
+  createdAt      DateTime         @default(now())
 
   @@index([settlementId])
   @@index([bankTxnId])
@@ -1347,25 +2379,25 @@ enum PreBookingStatus {
 }
 
 model PreBooking {
-  id                    String            @id @default(cuid())
-  customerName          String
-  customerPhone         String?
-  zohoInvoiceNo         String
-  productName           String            // What cycle they booked
-  brandId               String?
-  brand                 Brand?            @relation(fields: [brandId], references: [id])
-  status                PreBookingStatus  @default(WAITING)
-  matchedShipmentId     String?
-  matchedShipment       InboundShipment?  @relation(fields: [matchedShipmentId], references: [id])
-  matchedLineItemId     String?           @unique
-  matchedLineItem       InboundLineItem?  @relation("PreBookingLineItem", fields: [matchedLineItemId], references: [id])
-  salesPerson           String?
-  expectedDate          DateTime?
-  fulfilledAt           DateTime?
-  createdById           String
-  createdBy             User              @relation("PreBookingCreatedBy", fields: [createdById], references: [id])
-  createdAt             DateTime          @default(now())
-  updatedAt             DateTime          @updatedAt
+  id                String           @id @default(cuid())
+  customerName      String
+  customerPhone     String?
+  zohoInvoiceNo     String
+  productName       String // What cycle they booked
+  brandId           String?
+  brand             Brand?           @relation(fields: [brandId], references: [id])
+  status            PreBookingStatus @default(WAITING)
+  matchedShipmentId String?
+  matchedShipment   InboundShipment? @relation(fields: [matchedShipmentId], references: [id])
+  matchedLineItemId String?          @unique
+  matchedLineItem   InboundLineItem? @relation("PreBookingLineItem", fields: [matchedLineItemId], references: [id])
+  salesPerson       String?
+  expectedDate      DateTime?
+  fulfilledAt       DateTime?
+  createdById       String
+  createdBy         User             @relation("PreBookingCreatedBy", fields: [createdById], references: [id])
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 
   @@index([status])
   @@index([brandId])
@@ -1385,16 +2417,38 @@ model StoreUpdate {
   @@index([createdAt])
 }
 
-model OpsActivityLog {
-  id        String   @id @default(cuid())
-  action    String
-  details   String   @db.Text
-  userId    String
-  user      User     @relation("OpsActivityLoggedBy", fields: [userId], references: [id])
-  createdAt DateTime @default(now())
+// The activity log (R11). REPLACED `OpsActivityLog`, which had two free-text columns
+// (`action`, `details`) and one writer -- api/ops-activity-logs/route.ts, deleted in this
+// same change. It held zero rows, which is the proof that dropping it loses nothing.
+//
+// The shape answers the question the owner actually asks: who changed what, from what to
+// what, and when. `fromValue`/`toValue` are named that way because `from` and `to` are SQL
+// keywords; a status move reads "PENDING -> APPROVED" without parsing `details`.
+//
+// `userId` is deliberately NOT a relation. A log outlives the user it names -- the same
+// policy as NotificationOutbox.userId and PurchaseOrderSend.sentById -- so `userName` is a
+// snapshot taken at write time and "by Ravi" needs no join and survives Ravi's deletion.
+//
+// The four indexes are the four ways it is read: the feed (createdAt), one person's history
+// (userId), one module's history (module), and one record's trail (entityType+entityId).
+model ActivityLog {
+  id         String   @id @default(cuid())
+  module     String // RBAC module keys: stock_audit | inbound | vendor_issues | zoho | categories | customers | purchase_orders | transfers
+  action     String // created | updated | status_changed | approved | rejected | received | delivered | issue_reported | pulled | imported | sent | dispatched | cancelled
+  entityType String // StockCount | InboundShipment | VendorIssue | Category | Customer | ZohoPull | PurchaseOrder | TransferOrder
+  entityId   String
+  entityRef  String? // SC-202609-0003, IB-202609-0001, PO-00042, TRF-202609-0007
+  fromValue  String?
+  toValue    String?
+  details    String?  @db.Text
+  userId     String
+  userName   String
+  createdAt  DateTime @default(now())
 
-  @@index([action])
   @@index([createdAt])
+  @@index([userId, createdAt])
+  @@index([module, createdAt])
+  @@index([entityType, entityId])
 }
 
 model AppSetting {
@@ -1403,23 +2457,22 @@ model AppSetting {
   updatedAt DateTime @updatedAt
 }
 
-model DailySnapshot {
-  id          String   @id @default("latest")
-  markdown    String   @db.Text
-  generatedAt DateTime @default(now())
-}
+// One row per document series: "PO", "SC-202609", "TRF-202609", "IB-202609", "ISS-202609".
+//
+// Deliberately NOT seeded by the migration. This table lands weeks before P7/P9/P14 switch
+// their allocators onto it, so any `INSERT … SELECT MAX(...)` written today would be stale by
+// the time the first caller arrives. `nextSequence()` in src/lib/sequence.ts seeds a missing
+// key from the caller's own numeric max on first use instead -- see that file.
+//
+// Mapped to lowercase `counter` because the allocator is one hand-written statement
+// (`INSERT INTO counter(key, current) … ON CONFLICT (key) DO UPDATE`) and an unquoted
+// identifier in Postgres folds to lowercase. Naming the model `Counter` and letting Prisma
+// create `"Counter"` would make that statement fail to find the table.
+model Counter {
+  key     String @id
+  current Int    @default(0)
 
-model AppProblem {
-  id          String   @id @default(cuid())
-  text        String   @db.Text
-  category    String   @default("general")
-  status      String   @default("open")
-  userId      String
-  user        User     @relation("ProblemReportedBy", fields: [userId], references: [id])
-  createdAt   DateTime @default(now())
-
-  @@index([status])
-  @@index([createdAt])
+  @@map("counter")
 }
 
 // ─── Brand Stock Upload + Smart Reorder ───────────
@@ -1438,22 +2491,47 @@ enum BrandStockMatchStatus {
   UNMATCHED
 }
 
+// What a row's fill colour MEANS, once a person has said so (R7).
+//
+// The app never interprets a colour. `BrandStockItem.rowColor` records the colour exceljs
+// read out of the .xlsx -- a stored property of the file, not a guess -- and the user labels
+// each distinct colour once per brand. UNKNOWN is the default and the honest answer for an
+// unlabelled colour or a sheet with no fills; it is never treated as AVAILABLE.
+enum BrandStockAvailability {
+  AVAILABLE
+  UNAVAILABLE
+  UNKNOWN
+}
+
 model BrandStockUpload {
-  id             String                  @id @default(cuid())
-  brandId        String
-  brand          Brand                   @relation("BrandStockUploads", fields: [brandId], references: [id])
-  fileName       String
-  fileType       String
-  status         BrandStockUploadStatus  @default(PROCESSING)
-  totalItems     Int                     @default(0)
-  matchedItems   Int                     @default(0)
-  unmatchedItems Int                     @default(0)
-  notes          String?
-  uploadedById   String
-  uploadedBy     User                    @relation("BrandStockUploadedBy", fields: [uploadedById], references: [id])
-  items          BrandStockItem[]
-  createdAt      DateTime                @default(now())
-  updatedAt      DateTime                @updatedAt
+  id                String                 @id @default(cuid())
+  brandId           String
+  brand             Brand                  @relation("BrandStockUploads", fields: [brandId], references: [id])
+  fileName          String
+  fileType          String
+  status            BrandStockUploadStatus @default(PROCESSING)
+  totalItems        Int                    @default(0)
+  matchedItems      Int                    @default(0)
+  unmatchedItems    Int                    @default(0)
+  notes             String?
+  // The colour -> meaning map the user confirmed for this upload, e.g.
+  // {"FFFF0000":"UNAVAILABLE","FF00B050":"AVAILABLE"}. Json because the key set is whatever
+  // colours that particular sheet happens to use — a table of two columns would be a row per
+  // colour per upload for data that is only ever read as a whole.
+  //
+  // Remembered per BRAND (the legend from that brand's last confirmed upload is offered as
+  // the default next time), which is why it lives on the upload rather than in a global
+  // setting: brands do not agree on what red means.
+  colorLegend       Json?
+  // Null until a person has actually confirmed the legend. Until then nothing on the sheet
+  // is treated as orderable — the difference between "no legend yet" and "a legend that
+  // says nothing is available".
+  legendConfirmedAt DateTime?
+  uploadedById      String
+  uploadedBy        User                   @relation("BrandStockUploadedBy", fields: [uploadedById], references: [id])
+  items             BrandStockItem[]
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
 
   @@index([brandId])
   @@index([status])
@@ -1461,26 +2539,33 @@ model BrandStockUpload {
 }
 
 model BrandStockItem {
-  id                String                @id @default(cuid())
+  id                String                 @id @default(cuid())
   uploadId          String
-  upload            BrandStockUpload      @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  upload            BrandStockUpload       @relation(fields: [uploadId], references: [id], onDelete: Cascade)
   rawSku            String?
   rawName           String
   rawCategory       String?
-  brandAvailableQty Int                   @default(0)
+  brandAvailableQty Int                    @default(0)
   brandPrice        Float?
   brandMrp          Float?
   rawSize           String?
-  matchStatus       BrandStockMatchStatus @default(UNMATCHED)
+  matchStatus       BrandStockMatchStatus  @default(UNMATCHED)
   matchConfidence   Float?
   productId         String?
-  product           Product?              @relation("BrandStockMatches", fields: [productId], references: [id])
+  product           Product?               @relation("BrandStockMatches", fields: [productId], references: [id])
   bchCurrentStock   Int?
   bchReorderLevel   Int?
   suggestedQty      Int?
   orderQty          Int?
-  selected          Boolean               @default(false)
-  createdAt         DateTime              @default(now())
+  selected          Boolean                @default(false)
+  // The colour exceljs read from this row's fill, verbatim -- "FFFF0000", or null when the
+  // cell had no fill. Stored raw so the legend can be re-labelled later without re-reading
+  // the file, and so a colour nobody has labelled is still visible as itself.
+  rowColor          String?
+  // What that colour means, resolved through the upload's legend. Defaults to UNKNOWN so an
+  // unlabelled sheet orders nothing by accident.
+  availability      BrandStockAvailability @default(UNKNOWN)
+  createdAt         DateTime               @default(now())
 
   @@index([uploadId])
   @@index([matchStatus])
@@ -1488,17 +2573,1337 @@ model BrandStockItem {
 }
 
 model BrandSkuMapping {
-  id         String   @id @default(cuid())
-  brandId    String
-  brand      Brand    @relation("BrandSkuMappings", fields: [brandId], references: [id])
-  brandSku   String?
-  brandName  String
-  productId  String
-  product    Product  @relation("BrandSkuMappingProducts", fields: [productId], references: [id])
-  createdAt  DateTime @default(now())
+  id        String   @id @default(cuid())
+  brandId   String
+  brand     Brand    @relation("BrandSkuMappings", fields: [brandId], references: [id])
+  brandSku  String?
+  brandName String
+  productId String
+  product   Product  @relation("BrandSkuMappingProducts", fields: [productId], references: [id])
+  createdAt DateTime @default(now())
 
   @@unique([brandId, brandName])
   @@index([brandId])
   @@index([productId])
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// SERVICE / WORKSHOP
+// Merged in from the standalone bch-service app.
+//
+// What did NOT come across:
+//   * its `User` model      — the inventory User is the single account table. Service staff
+//                             are ordinary users holding a SERVICE_* role.
+//   * its `UserRole` enum   — replaced by the `roles` table (see the RBAC block at the top).
+//   * its `Customer` model  — folded into the shared Customer above.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum JobStatus {
+  RECEIVED // bike dropped off
+  PARTS_NEEDED // waiting for parts, kept aside
+  READY // work done, ready for pickup
+  DELIVERED // collected and paid
+}
+
+enum JobType {
+  QFX // quick fix
+  PSVC // paid service
+  RSVC // repair & service
+  FSVC // free service
+  A50 // 50% assembly
+  A85 // 85% assembly
+  FULL // full fitting
+  SND // second-hand repair
+  WSH // wash
+  ECYC // e-cycle service
+}
+
+enum PaymentStatus {
+  UNPAID
+  CREDIT
+  PAID
+}
+
+model ServiceJob {
+  id           String    @id @default(cuid())
+  tokenNumber  String    @unique // BCH-0001, minted from TokenCounter
+  status       JobStatus @default(RECEIVED)
+  jobType      JobType
+  estimatedHrs Float     @default(1.0)
+
+  // Bike
+  bikeType  String
+  bikeColor String?
+  isEcycle  Boolean @default(false)
+  complaint String?
+
+  // Work
+  diagnosis   String?
+  partsNeeded String?
+  workDone    String?
+
+  // Timestamps drive TAT reporting
+  receivedAt  DateTime  @default(now())
+  promisedAt  DateTime?
+  partsAt     DateTime?
+  readyAt     DateTime?
+  deliveredAt DateTime?
+
+  holdReason String?
+  notes      String?
+
+  // Payment
+  paymentStatus PaymentStatus @default(UNPAID)
+  amount        Float?
+  zohoInvoiceId String?
+
+  // Nightly Zoho auto-deliver proposal, cleared on staff approval
+  deliveryMatchedInvoice String?
+  deliveryProposedAt     DateTime?
+  deliveryReviewedAt     DateTime?
+
+  photos      String[] @default([])
+  afterPhotos String[] @default([])
+
+  priority Int @default(0) // 0 normal, 1 urgent
+
+  customerId  String
+  customer    Customer @relation(fields: [customerId], references: [id])
+  mechanicId  String?
+  mechanic    User?    @relation("ServiceJobMechanic", fields: [mechanicId], references: [id])
+  createdById String
+  createdBy   User     @relation("ServiceJobCreatedBy", fields: [createdById], references: [id])
+  review      Review?
+
+  @@index([status])
+  @@index([mechanicId])
+  @@index([receivedAt])
+  @@index([customerId])
+  @@map("service_jobs")
+}
+
+model Review {
+  id           String   @id @default(cuid())
+  rating       Int // 1-5
+  comment      String?
+  googleReview Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  jobId      String     @unique
+  job        ServiceJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  customerId String
+  customer   Customer   @relation(fields: [customerId], references: [id])
+  mechanicId String
+  mechanic   User       @relation("ServiceReviewMechanic", fields: [mechanicId], references: [id])
+
+  @@index([mechanicId])
+  @@map("reviews")
+}
+
+model PriceItem {
+  id        String   @id @default(cuid())
+  name      String
+  category  String // SERVICE | PARTS
+  wheelSize String? // null = all sizes; "14","20","24","26","27.5","29","ECYCLE"
+  price     Float
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([category])
+  @@index([wheelSize])
+  @@map("price_items")
+}
+
+model AssemblyLog {
+  id           String   @id @default(cuid())
+  mechanicId   String
+  mechanic     User     @relation("AssemblyMechanic", fields: [mechanicId], references: [id])
+  assemblyType String // A50 | A85 | FULL
+  bikeModel    String?
+  notes        String?
+  photos       String[] @default([])
+  createdAt    DateTime @default(now())
+
+  @@index([mechanicId])
+  @@index([createdAt])
+  @@map("assembly_logs")
+}
+
+// Single-row counter minting sequential job tokens. Increments MUST run inside a transaction
+// with a row lock — tokenNumber is unique, so a concurrent read-then-write hands two jobs the
+// same token and the second insert fails in front of a customer at the counter.
+model TokenCounter {
+  id      String @id @default("default")
+  current Int    @default(0)
+
+  @@map("token_counter")
+}
+
+// Service-side audit trail. Kept as its own table rather than folded into the house activity
+// log (`ActivityLog`), per the merge decision to keep logs separate for now.
+model ServiceAuditLog {
+  id         String   @id @default(cuid())
+  jobId      String
+  action     String // STATUS_CHANGE, PHOTO_DELETE, JOB_DELETE, ...
+  fromStatus String?
+  toStatus   String?
+  details    String?
+  userId     String
+  userName   String
+  userRole   String // role name captured at the time of the action
+  createdAt  DateTime @default(now())
+
+  @@index([jobId])
+  @@index([createdAt])
+  @@map("service_audit_logs")
+}
+
+// The SERVICE module's record of WhatsApp messages a human chose to send about a job. NOT the
+// delivery log for push/email — that is `NotificationOutbox` (table notification_outbox) up
+// near the config tables. Same word, different thing; each comment points at the other.
+model NotificationLog {
+  id            String   @id @default(cuid())
+  jobId         String
+  tokenNumber   String
+  customerPhone String
+  customerName  String
+  messageType   String // INWARD | PARTS_NEEDED | READY | DELIVERED
+  sentById      String
+  sentByName    String
+  createdAt     DateTime @default(now())
+
+  @@index([jobId])
+  @@index([createdAt])
+  @@map("notification_logs")
+}
+
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// BRAND LEDGER RECONCILIATION
+// Merged in from the standalone `ledgers` workspace.
+//
+// The job: every brand promised discounts and credit notes. Did they actually credit them,
+// and what do we really owe?
+//
+//     Net payable = ledger due âˆ’ unrecorded payments âˆ’ promised discounts not yet credited
+//
+// THE ONE RULE THAT MAKES THIS WORK â€” two sides, stored separately:
+//
+//   BrandLedgerEntry            what the BRAND says, transcribed from their statement
+//   VendorBill/Payment/Credit   what BCH's own books say
+//   LedgerGap                   the difference worth chasing
+//
+// An import NEVER edits the brand's numbers and NEVER writes into BCH's books. If their
+// statement is wrong, that wrongness IS the finding â€” "correcting" it on import destroys the
+// evidence needed to prove it. And letting an import create a VendorBill would turn their
+// mistake into our accounting record â€” exactly the EMotorad two-folio problem, where invoices
+// were posted to Hub and payments to Centre, so neither folio alone was ever right.
+//
+// Attached to Vendor, not Brand: we pay the billing entity, and brand != entity. Raleigh is
+// billed via Naren International; EMotorad via Inkodop Technologies.
+// â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+enum LedgerEntryType {
+  OPENING
+  INVOICE
+  PAYMENT
+  CREDIT_NOTE
+  DEBIT_NOTE
+  DISCOUNT
+  ADJUSTMENT
+  NOTE // informational, direction 0, amount optional — the ledger app's "note" entry
+}
+
+// Which party the entry originates from â€” separates "their invoice" from "our payment".
+enum LedgerSide {
+  VENDOR
+  BCH
+}
+
+// How a statement row relates to BCH's own books.
+//
+// NEEDS_REVIEW deliberately does NOT mean "discrepancy": an unmatched row is ambiguous between
+// "they never posted our payment" and "we never recorded it". Only a human can tell which, so
+// the system surfaces and never concludes.
+enum LedgerMatchStatus {
+  UNMATCHED
+  MATCHED
+  NEEDS_REVIEW
+  THEY_MISSING // we paid or were credited; absent from their statement
+  WE_MISSING // on their statement; absent from our books
+  DISPUTED
+  IGNORED
+}
+
+enum LedgerEntrySource {
+  STATEMENT_PDF
+  STATEMENT_XLSX
+  STATEMENT_CSV
+  BCH_BOOKS // mirrored from VendorBill / VendorPayment / VendorCredit
+  MANUAL // escape hatch: real, but not yet recorded in Accounts
+}
+
+enum GapType {
+  DISCOUNT_PENDING
+  CREDIT_NOTE_PENDING
+  SHORT_CREDIT
+  DISPUTE
+  RECONCILIATION_DIFFERENCE
+  DOCUMENTATION_GAP
+  BALANCE_UNCONFIRMED
+  SCHEME_ENTITLEMENT
+  COMMITMENT_PENDING
+  OPERATIONAL_WARRANTY
+  INVOICE_DISCREPANCY
+  REIMBURSEMENT_PENDING
+}
+
+// How hard a claim can be pressed.
+//   FIRM        provable in writing
+//   LEVERAGE    use in negotiation, not provable
+//   VERIFY      needs a document before claiming
+//   CONDITIONAL only worth raising if contested
+enum GapTier {
+  FIRM
+  LEVERAGE
+  VERIFY
+  CONDITIONAL
+}
+
+enum GapStatus {
+  OPEN // not acknowledged by the brand
+  PROMISED // they agreed; credit note not yet issued
+  VERIFY // needs checking against a document or bank statement
+  RESOLVED
+  REJECTED
+}
+
+enum EvidenceKind {
+  SCREENSHOT
+  PDF
+  EMAIL
+  DOCUMENT
+}
+
+enum DiscountKind {
+  CASH // early payment: "2% within 15 days"
+  TRADE // off list price: "18% on alloy frames"
+  VOLUME
+  TRANSPORT_SUPPORT // "Rs 150 per cycle"
+  MARKETING
+  INCENTIVE // "Rs 1,200 per bike billed"
+  OTHER
+}
+
+// A brand's own statement rows, exactly as received. Never edited to match our books.
+model BrandLedgerEntry {
+  id       String  @id @default(cuid())
+  vendorId String
+  vendor   Vendor  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  brandId  String? // which brand the row concerns, when a vendor supplies several
+  brand    Brand?  @relation("BrandLedgerEntries", fields: [brandId], references: [id])
+
+  entryDate DateTime
+  type      LedgerEntryType
+  ref       String? // their voucher / invoice number
+  amount    Float
+
+  // +1 increases what BCH owes (invoice, debit note); -1 decreases (payment, CN, discount).
+  // Stored rather than derived from `type` because brands occasionally post a credit on a
+  // sales voucher, and the running balance depends on the sign rather than the label.
+  direction Int
+
+  side   LedgerSide
+  note   String?
+  source LedgerEntrySource @default(STATEMENT_CSV)
+
+  // Per-invoice discount audit â€” the "18% via DIS-90, group short 539" annotations.
+  auditStatus String? // ok | short | missing | era20 | info
+  auditNote   String?
+
+  // Reconciliation against BCH's books. All null and UNMATCHED until matched.
+  matchStatus LedgerMatchStatus @default(UNMATCHED)
+  billId      String?
+  bill        VendorBill?       @relation(fields: [billId], references: [id])
+  paymentId   String?
+  payment     VendorPayment?    @relation(fields: [paymentId], references: [id])
+  creditId    String?
+  credit      VendorCredit?     @relation(fields: [creditId], references: [id])
+  reviewedAt  DateTime?
+  reviewNote  String?
+
+  gapId String? // an annotated row can evidence a claim
+  gap   LedgerGap? @relation("GapEntries", fields: [gapId], references: [id])
+
+  statementId String?
+  statement   BrandStatement? @relation(fields: [statementId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([vendorId, entryDate])
+  @@index([vendorId, matchStatus])
+  @@index([statementId])
+  @@index([gapId])
+  @@map("brand_ledger_entries")
+}
+
+// Provenance for an import: which statement produced which rows, so a re-import is auditable
+// and a revised statement can supersede an older one.
+model BrandStatement {
+  id            String    @id @default(cuid())
+  vendorId      String
+  vendor        Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  statementDate DateTime
+  periodFrom    DateTime?
+  periodTo      DateTime?
+
+  // What THEY claim the closing balance is, against what summing their own rows produces.
+  // A mismatch means the statement does not add up â€” that is a finding, and it blocks the
+  // import until someone looks at it.
+  claimedClosing  Float?
+  computedClosing Float?
+  tiesOut         Boolean @default(false)
+
+  fileUrl    String? // the original PDF / XLSX in R2
+  fileName   String?
+  sourceKind LedgerEntrySource @default(STATEMENT_CSV)
+
+  // Recorded so an AI extraction can be re-checked against what was actually returned.
+  extractionModel String?
+  extractionNote  String?
+
+  importedById String
+  importedBy   User     @relation("StatementImportedBy", fields: [importedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  entries BrandLedgerEntry[]
+
+  @@index([vendorId, statementDate])
+  @@map("brand_statements")
+}
+
+// The claim register â€” the heart of the tool. One row per unresolved money claim.
+model LedgerGap {
+  id       String  @id @default(cuid())
+  vendorId String
+  vendor   Vendor  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  brandId  String?
+  brand    Brand?  @relation("BrandLedgerGaps", fields: [brandId], references: [id])
+
+  number Int // per-brand #1, #2 â€¦ preserved from the existing register
+  title  String
+
+  gapType GapType
+  tier    GapTier?
+  status  GapStatus @default(OPEN)
+
+  amount Float?
+
+  // Free text for amounts that are not a single number â€” "10,300 claimed / 9,900 itemised".
+  // The imprecision is the point; forcing it into a Float would invent certainty.
+  amountNote String?
+
+  promisedBy   String? // who at the brand
+  promisedOn   DateTime?
+  evidenceText String? // curated citation: chat dates, line refs, quotes
+  action       String? // next step
+  result       String? // what happened
+  resolvedAt   DateTime?
+
+  createdById String
+  createdBy   User     @relation("LedgerGapCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  evidence LedgerGapEvidence[]
+  entries  BrandLedgerEntry[]  @relation("GapEntries")
+  notes    LedgerGapNote[]
+
+  @@unique([vendorId, number])
+  @@index([vendorId, status])
+  @@index([status, gapType])
+  @@map("ledger_gaps")
+}
+
+model LedgerGapEvidence {
+  id            String       @id @default(cuid())
+  gapId         String
+  gap           LedgerGap    @relation(fields: [gapId], references: [id], onDelete: Cascade)
+  url           String // R2
+  kind          EvidenceKind
+  capturedOn    DateTime? // when the evidence event happened, not when it was uploaded
+  capturedLabel String? // the ledger app's free-text date ("2024-08 orders") when it is not a date
+  source        String? // "Mani WhatsApp chat (L1600)"
+  note          String? // what it proves
+  uploadedById  String?
+  uploadedBy    User?        @relation("GapEvidenceUploadedBy", fields: [uploadedById], references: [id])
+  createdAt     DateTime     @default(now())
+
+  @@index([gapId])
+  @@map("ledger_gap_evidence")
+}
+
+// Progress log on a claim â€” chases, replies, changes of position.
+model LedgerGapNote {
+  id        String    @id @default(cuid())
+  gapId     String
+  gap       LedgerGap @relation(fields: [gapId], references: [id], onDelete: Cascade)
+  body      String
+  authorId  String
+  author    User      @relation("LedgerGapNoteAuthor", fields: [authorId], references: [id])
+  createdAt DateTime  @default(now())
+
+  @@index([gapId])
+  @@map("ledger_gap_notes")
+}
+
+// What was actually agreed with a supplier â€” the missing half of the discount audit.
+//
+// Vendor.cdPercentage / cdTermsDays models only a CASH discount ("2% within 15 days"). It
+// cannot express "18% on alloy, 20% on steel, from July 2025, plus Rs 150/cycle transport" â€”
+// and that is what the Hornback and Lucifer disputes are actually about. With these rows the
+// app COMPUTES the expected discount per invoice instead of the shortfall being hand-typed.
+//
+// An empty agreedBy / evidenceUrl is itself the signal: the term is unproven. That is what
+// "Need: written 20% agreement to claim Dispute #1" is warning about, surfaced before the
+// negotiation rather than during it.
+model VendorDiscountTerm {
+  id       String  @id @default(cuid())
+  vendorId String
+  vendor   Vendor  @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  brandId  String?
+  brand    Brand?  @relation("BrandDiscountTerms", fields: [brandId], references: [id])
+
+  kind          DiscountKind
+  percentage    Float?
+  perUnitAmount Float? // "Rs 150 per cycle"
+  appliesTo     String? // "alloy frames", "steel frames", "kids bills"
+
+  // Terms change. Hornback's discount applies "only from July-2025"; Lucifer moved 20% -> 18%.
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+
+  // Cash discounts need a payment window; trade discounts do not.
+  withinDays Int?
+
+  agreedBy    String? // who promised it
+  agreedOn    DateTime?
+  isProven    Boolean   @default(false) // is there anything in writing?
+  evidenceUrl String?
+  notes       String?
+
+  createdById String
+  createdBy   User     @relation("DiscountTermCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([vendorId, kind])
+  @@index([vendorId, effectiveFrom])
+  @@map("vendor_discount_terms")
+}
+
+// Brand <-> Vendor, many-to-many. One distributor supplies several brands (Naren -> Raleigh
+// and Suncross), and a brand can arrive through more than one vendor. An explicit join rather
+// than an implicit m-n so the pairing can carry its own context.
+model BrandVendor {
+  id       String @id @default(cuid())
+  brandId  String
+  brand    Brand  @relation("BrandVendors", fields: [brandId], references: [id], onDelete: Cascade)
+  vendorId String
+  vendor   Vendor @relation("VendorBrands", fields: [vendorId], references: [id], onDelete: Cascade)
+
+  isPrimary Boolean  @default(false) // the usual billing route for this brand
+  note      String? // "distributor", "direct", "via Ludhiana"
+  createdAt DateTime @default(now())
+
+  @@unique([brandId, vendorId])
+  @@index([vendorId])
+  @@map("brand_vendors")
+}
+
+// ─── Vendor ledger screen (plan 0909-vendor-ledger-screens-and-ai-import) ────────────────
+// The per-vendor header of the ledger app's document: position paragraph, both balances with
+// their labels, the recoverable line, the deadline, the review date, and the ledger's own
+// opening. Typed columns, not Json — the header card, the "review due" chip and the Table
+// tab's gap anchor each read one field. One row per vendor, created by the JSON import or
+// the first edit.
+model VendorLedgerProfile {
+  vendorId String @id
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  code String // "CULT" — the prefix of CULT-3; set from the ledger app's map on import
+  sub  String? // "Aoki Mobility Pvt Ltd · POC Prashant"
+
+  position String? @db.Text
+  notes    String? @db.Text
+
+  theirBalAmount Float?
+  theirBalLabel  String?
+  ourBalAmount   Float?
+  ourBalLabel    String?
+  recovAmount    Float?
+  recovText      String?   @db.Text
+  deadlineLabel  String?
+  deadlineDate   DateTime?
+
+  // The BRAND's ledger opening — NOT Vendor.openingBalance, which is BCH's own book figure as
+  // of 1 Apr 2026. EMotorad's statement opens at 64,78,990 on 1 Apr 2025; the two differ.
+  ledgerOpeningAmount Float?
+  ledgerOpeningDate   DateTime?
+  ledgerCoverage      String?
+  ledgerMatchable     Boolean   @default(false)
+  ledgerNote          String?   @db.Text
+
+  updatedOn    DateTime? // the ledger app's `updated`
+  lastReviewed DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("vendor_ledger_profiles")
+}
+
+enum LedgerUploadKind {
+  STATEMENT
+  CHAT
+  SCREENSHOT
+  DOCUMENT
+}
+
+// A file uploaded on the ledger screen. The row outlives the object: deleting the file (R12)
+// nulls fileUrl and stamps deletedAt, so an AI run that read it keeps its provenance.
+model LedgerUpload {
+  id       String @id @default(cuid())
+  vendorId String
+  vendor   Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  kind        LedgerUploadKind
+  fileName    String
+  contentType String
+  sizeBytes   Int
+  fileUrl     String?
+  deletedAt   DateTime?
+
+  uploadedById String
+  uploadedBy   User     @relation("LedgerUploadedBy", fields: [uploadedById], references: [id])
+  createdAt    DateTime @default(now())
+
+  runs LedgerAiRun[]
+
+  @@index([vendorId, createdAt])
+  @@map("ledger_uploads")
+}
+
+enum LedgerAiTask {
+  STATEMENT_ROWS
+  CLAIMS_FROM_CHAT
+  CLAIMS_FROM_IMAGE
+}
+
+enum LedgerAiRunStatus {
+  RUNNING
+  DONE
+  FAILED
+  ACCEPTED
+  DISCARDED
+}
+
+// One AI pass over one upload. `reply` is the raw model output and `proposals` the validated
+// candidate rows — Json on purpose: provenance nobody queries by field. Rows reach the real
+// tables only when a person accepts them (acceptedAt), never on the model's say-so.
+model LedgerAiRun {
+  id       String       @id @default(cuid())
+  uploadId String
+  upload   LedgerUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  vendorId String
+  vendor   Vendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  task       LedgerAiTask
+  userPrompt String?      @db.Text // sanitised, capped — inserted into the prompt as data
+  provider   String?
+  model      String?
+  usageIn    Int?
+  usageOut   Int?
+  latencyMs  Int?
+  chunks     Int          @default(1) // chat runs: how many pieces the export was sent in
+
+  reply     Json?
+  proposals Json?
+  status    LedgerAiRunStatus @default(RUNNING)
+  error     String?           @db.Text
+
+  acceptedAt  DateTime?
+  statementId String? // the BrandStatement an accepted STATEMENT_ROWS run produced
+
+  createdById String
+  createdBy   User     @relation("LedgerAiRunCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@index([vendorId, createdAt])
+  @@index([uploadId])
+  @@map("ledger_ai_runs")
+}
+
+// ─── Store Analytics (merged from bch-store-analytics) ───────────────────────
+// Entrance footfall. A Python agent on the store laptop watches the door camera, counts line
+// crossings, and pushes anonymous events here over outbound HTTPS. The agent is NOT part of
+// this app and is not merged — inference stays on-premises. See docs/analytics-merge-plan.md
+// §8 for why: the camera is deliberately unreachable from the internet, raw video would be
+// ~43 GB/store/day upstream, and counting must survive a broadband outage.
+//
+// No image, frame or video ever reaches this database. Only counts.
+//
+// Spec IDs cited below (DAT-001, DAT-004, DAT-005) refer to docs/analytics/pilot/PRD-v1.md,
+// carried across with the code so the citations still resolve.
+
+enum CountDirection {
+  IN
+  OUT
+}
+
+// One confirmed crossing of the counting line at a store entrance.
+model CountEvent {
+  // NOT @default(cuid()). The agent supplies this UUID and it IS the idempotency key
+  // (DAT-001): the agent retries a batch until the server acks, so the same event arrives
+  // more than once by design, and the primary key is what collapses the retries into one row.
+  // Generating it here would turn every retry into another person walking through the door.
+  id String @id
+
+  // Was StockLocation. The COLUMN NAME is unchanged on purpose — footfall is counted at the
+  // shop door, so this always pointed at a store rather than a stock location, and renaming
+  // it would churn every ingest call site for nothing.
+  storeId    String
+  store      Store          @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  entranceId String         @default("main") // a store may grow a second door
+  direction  CountDirection
+
+  eventTs    DateTime // when the crossing happened, by the agent's clock
+  receivedTs DateTime @default(now()) // when the server accepted it — these diverge after an outage
+
+  // Store-local (Asia/Kolkata) calendar day, computed on ingest — DAT-004. Deliberately a
+  // DATE and not a DateTime: Vercel runs UTC, so deriving the day from a timestamp at read
+  // time puts every event after 18:30 UTC on the wrong business day.
+  businessDate DateTime @db.Date
+
+  count Int @default(1) // always 1 today; a group-counting adapter could emit more
+
+  // Provenance, so a suspicious count can be reviewed rather than argued about.
+  deviceId      String?
+  device        AnalyticsDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  adapter       String           @default("RTSP_CV") // RTSP_CV today; a dedicated door counter later
+  trackId       String?
+  confidence    Float?
+  agentVersion  String?
+  configVersion String?
+
+  // Free text rather than an enum: the pilot has only ever written "ok" and the taxonomy of
+  // quality flags is still open. Promote to an enum once the real values are known.
+  quality String @default("ok")
+
+  @@index([storeId, businessDate])
+  @@index([deviceId])
+  @@map("count_events")
+}
+
+// Agent liveness, kept as a SERIES and not one current value. Two reasons: the gap between
+// heartbeats is what raises the "counter offline" alert, and the count of distinct
+// heartbeat-minutes in a day is the denominator of data coverage (DAT-005).
+model AgentHeartbeat {
+  id String @id @default(cuid())
+
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  agentId String @default("edge-1")
+
+  deviceId String?
+  device   AnalyticsDevice? @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+
+  ts           DateTime @default(now())
+  businessDate DateTime @db.Date
+
+  queueDepth   Int? // events still waiting in the agent's local SQLite buffer
+  cameraOk     Boolean? // is the RTSP stream still producing frames
+  lastFrameTs  DateTime?
+  agentVersion String?
+
+  @@index([storeId, ts(sort: Desc)])
+  @@index([storeId, businessDate])
+  @@index([deviceId])
+  @@map("heartbeats")
+}
+
+// A counting device authorised to write events. Replaces the STORE_KEYS environment JSON the
+// pilot used, so a camera key can be rotated from an admin screen instead of a redeploy —
+// "access control is DATA, not code" (CLAUDE.md).
+model AnalyticsDevice {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  agentId String @default("edge-1")
+  label   String // "BCH front door laptop"
+
+  // sha-256 of the API key. The key itself is shown once at creation and never stored, so a
+  // database leak does not hand anyone the ability to forge footfall.
+  keyHash String @unique
+
+  isActive   Boolean   @default(true)
+  lastSeenAt DateTime? // updated on each heartbeat; drives the device list
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  countEvents CountEvent[]
+  heartbeats  AgentHeartbeat[]
+
+  @@unique([storeId, agentId]) // one agent per door per store
+  @@index([isActive])
+  @@map("analytics_devices")
+}
+
+// ─── Staff LMS (merged from bch-sales-training) ──────────────────────────────
+// Course modules, quizzes, product playbooks and team learning progress.
+// Plan: docs/plan/staff-lms-merge-plan.md
+//
+// NAMING — read before adding anything here.
+// Every model is `Lms*` and every table is `lms_*`. This is all-or-nothing: the source
+// app used bare names (`products`, `quizzes`, `videos`, `courses`), and `products` vs
+// this repo's `"Product"` are DISTINCT quoted identifiers in Postgres. One missed @@map
+// and `select * from products` in psql silently hits the wrong table with no error.
+//
+// `training_modules` was renamed to `lms_lessons` ON PURPOSE. "Module" already means a
+// permission area in this codebase (see Module, above). Without the rename,
+// `prisma.module.findMany()` meaning "lessons" returns permission rows — a query that
+// succeeds, looks plausible, and is wrong. In this block a lesson is a LESSON.
+//
+// AUTH — there is no LMS user. The source app's `users` table, its plaintext `pin` and
+// its unsigned `bch-session` cookie were deleted on merge; learners are ordinary `User`
+// rows reached through NextAuth + requireFeature("staff_lms…", action).
+
+model LmsProduct {
+  id               String   @id @default(cuid())
+  name             String
+  brand            String
+  // Riding style: MTB | Hybrid | Road | Kids | City | E-Cycle. NOT this repo's Category
+  // (a product class: Bicycles, Spare Parts, Accessories). Orthogonal taxonomies —
+  // neither substitutes for the other, which is why both of these stay plain strings.
+  category         String
+  // Display price on a learning card. Float like every other price column here; the
+  // source used Decimal, which JSON-serialises as a string and forced Number() casts.
+  price            Float?
+  imageUrl         String?  @map("image_url")
+  usps             String[] @default([])
+  features         String[] @default([])
+  talkingPoints    String[] @default([]) @map("talking_points")
+  targetCustomer   String?  @map("target_customer")
+  commonObjections Json     @default("[]") @map("common_objections")
+  buyerPsychology  Json     @default("{}") @map("buyer_psychology")
+  uniqueFact       String?  @map("unique_fact")
+  specs            Json     @default("{}")
+  competitors      Json     @default("[]") // deliberately names bikes BCH does NOT stock
+  reviews          Json     @default("{}")
+  sources          Json     @default("[]")
+  faqs             Json     @default("[]")
+  isActive         Boolean  @default(true) @map("is_active")
+
+  // Optional soft link to the stock SKU. NULL on every seeded row. Exists so a future
+  // "in stock / live price" badge on a learning card needs a migration, not a redesign.
+  // Named stockProductId, NOT productId: LmsVideo also carries a product link and that
+  // one points HERE. Two columns named productId meaning different tables is exactly the
+  // ambiguity this block exists to remove.
+  stockProductId String?  @map("stock_product_id")
+  stockProduct   Product? @relation("LmsProductSku", fields: [stockProductId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  videos LmsVideo[] @relation("LmsVideoProduct")
+
+  @@index([isActive])
+  @@index([brand])
+  @@index([category])
+  @@index([stockProductId])
+  @@map("lms_products")
+}
+
+// Win-a-client playbooks. Called "scenarios" in the source app; surfaced as Playbooks.
+model LmsScenario {
+  id          String   @id @default(cuid())
+  title       String
+  type        String
+  description String?
+  checklist   Json     @default("[]")
+  tips        String[] @default([])
+  difficulty  String   @default("beginner")
+  sortOrder   Int      @default(0) @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("lms_scenarios")
+}
+
+model LmsVideoCategory {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  videos LmsVideo[]
+
+  @@index([sortOrder])
+  @@map("lms_video_categories")
+}
+
+model LmsVideo {
+  id              String  @id @default(cuid())
+  title           String
+  description     String?
+  youtubeUrl      String  @map("youtube_url")
+  categoryId      String? @map("category_id")
+  durationMinutes Int?    @map("duration_minutes")
+  sortOrder       Int     @default(0) @map("sort_order")
+  isActive        Boolean @default(true) @map("is_active")
+
+  // Points at the LEARNING product (lms_products), not the stock SKU.
+  lmsProductId String? @map("lms_product_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  category   LmsVideoCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  lmsProduct LmsProduct?       @relation("LmsVideoProduct", fields: [lmsProductId], references: [id], onDelete: SetNull)
+
+  @@index([categoryId])
+  @@index([lmsProductId])
+  @@index([isActive, sortOrder])
+  @@map("lms_videos")
+}
+
+model LmsQuiz {
+  id           String   @id @default(cuid())
+  title        String
+  description  String?
+  type         String   @default("general")
+  difficulty   String   @default("beginner")
+  passingScore Int      @default(70) @map("passing_score")
+  xpReward     Int      @default(50) @map("xp_reward")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  questions LmsQuizQuestion[]
+  attempts  LmsQuizAttempt[]
+
+  @@index([isActive])
+  @@index([type])
+  @@map("lms_quizzes")
+}
+
+model LmsQuizQuestion {
+  id           String  @id @default(cuid())
+  quizId       String  @map("quiz_id")
+  question     String
+  options      Json
+  // NEVER include this in a learner payload — the quiz becomes beatable from devtools.
+  // Grading is server-side; the key is returned only under an `edit` grant.
+  correctIndex Int     @map("correct_index")
+  explanation  String?
+  sortOrder    Int     @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  quiz LmsQuiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  @@index([quizId, sortOrder])
+  @@map("lms_quiz_questions")
+}
+
+model LmsQuizAttempt {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  quizId String @map("quiz_id")
+
+  score       Int
+  total       Int
+  passed      Boolean
+  answers     Json     @default("[]")
+  xpEarned    Int      @default(0) @map("xp_earned")
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User    @relation("LmsQuizAttemptUser", fields: [userId], references: [id], onDelete: Cascade)
+  quiz LmsQuiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  // checkAchievements counts (userId, passed) on EVERY xp award — the hottest read here.
+  @@index([userId, passed])
+  @@index([quizId])
+  @@index([userId, completedAt])
+  @@map("lms_quiz_attempts")
+}
+
+model LmsAchievement {
+  id          String @id @default(cuid())
+  name        String
+  description String
+  icon        String
+
+  // "quiz_count" | "video_count" | "product_learned" | "streak" | "xp" …
+  // NOTE: `roleplay_count` is deliberately absent. AI roleplay is out of scope, so such a
+  // row could never be satisfied; the award switch logs a warning on an unknown type.
+  criteriaType  String @map("criteria_type")
+  criteriaValue Int    @map("criteria_value")
+  xpReward      Int    @default(100) @map("xp_reward")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  userAchievements LmsUserAchievement[]
+
+  @@index([criteriaType])
+  @@map("lms_achievements")
+}
+
+model LmsUserAchievement {
+  id            String   @id @default(cuid())
+  userId        String   @map("user_id")
+  achievementId String   @map("achievement_id")
+  earnedAt      DateTime @default(now()) @map("earned_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user        User           @relation("LmsUserAchievementUser", fields: [userId], references: [id], onDelete: Cascade)
+  achievement LmsAchievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, achievementId])
+  @@index([userId])
+  @@index([achievementId])
+  @@map("lms_user_achievements")
+}
+
+// One row per learner. Created lazily by ensureProgress() — a learner has no row until
+// their first action, and the source app's code silently dropped that first action.
+model LmsProgress {
+  id     String @id @default(cuid())
+  userId String @unique @map("user_id")
+
+  xp             Int      @default(0)
+  level          Int      @default(1)
+  streakDays     Int      @default(0) @map("streak_days")
+  longestStreak  Int      @default(0) @map("longest_streak")
+  lastActiveDate DateTime @default(now()) @map("last_active_date") @db.Date
+
+  videosWatched      String[] @default([]) @map("videos_watched")
+  scenariosCompleted String[] @default([]) @map("scenarios_completed")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation("LmsProgressUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([xp]) // Rank sort
+  @@map("lms_progress")
+}
+
+// Kept separate from the house activity log (`ActivityLog`) on purpose: different shape, and
+// the XP engine reads it back to count `product_learned` events.
+//
+// The only model in this block with no `updatedAt`, deliberately — it is append-only, and
+// `ActivityLog` omits it for the same reason. A row here is a fact about a moment; there is
+// nothing to update.
+model LmsActivityLog {
+  id           String   @id @default(cuid())
+  userId       String   @map("user_id")
+  activityType String   @map("activity_type")
+  details      Json     @default("{}")
+  xpEarned     Int      @default(0) @map("xp_earned")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation("LmsActivityLogUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  // The performance section full-scans both of these in the source app.
+  @@index([userId, createdAt])
+  @@index([activityType])
+  @@map("lms_activity_log")
+}
+
+model LmsAnnouncement {
+  id        String    @id @default(cuid())
+  title     String
+  content   String
+  priority  String    @default("normal")
+  isActive  Boolean   @default(true) @map("is_active")
+  expiresAt DateTime? @map("expires_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@index([isActive, createdAt])
+  @@index([expiresAt])
+  @@map("lms_announcements")
+}
+
+model LmsDailyTip {
+  id           String    @id @default(cuid())
+  content      String
+  category     String    @default("general")
+  scheduledFor DateTime? @map("scheduled_for") @db.Date
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@index([isActive, scheduledFor])
+  @@map("lms_daily_tips")
+}
+
+// Course > Level > Lesson > Question. A learner walks lessons in sortOrder; the next
+// lesson unlocks when the previous one is complete.
+model LmsCourse {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  levels LmsCourseLevel[]
+
+  @@index([isActive])
+  @@map("lms_courses")
+}
+
+model LmsCourseLevel {
+  id          String  @id @default(cuid())
+  courseId    String  @map("course_id")
+  title       String
+  description String?
+  sortOrder   Int     @default(0) @map("sort_order")
+  weekNumber  Int?    @map("week_number")
+  brandFocus  String? @map("brand_focus")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  course  LmsCourse   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  lessons LmsLesson[]
+
+  @@index([courseId, sortOrder])
+  @@map("lms_course_levels")
+}
+
+// A LESSON — one video + pointers + checklist + a short quiz. Was `TrainingModule` /
+// `training_modules` in the source app; renamed so "module" means one thing in this repo.
+model LmsLesson {
+  id          String  @id @default(cuid())
+  levelId     String  @map("level_id")
+  title       String
+  description String?
+  sortOrder   Int     @default(0) @map("sort_order")
+  youtubeUrl  String? @map("youtube_url")
+  keyPointers Json    @default("[]") @map("key_pointers")
+  checklist   Json    @default("[]")
+  xpReward    Int     @default(30) @map("xp_reward")
+  isActive    Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  level     LmsCourseLevel      @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  questions LmsLessonQuestion[]
+  progress  LmsLessonProgress[]
+
+  @@index([levelId, sortOrder])
+  @@index([isActive])
+  @@map("lms_lessons")
+}
+
+model LmsLessonQuestion {
+  id           String  @id @default(cuid())
+  lessonId     String  @map("lesson_id")
+  question     String
+  options      Json
+  // Same rule as LmsQuizQuestion.correctIndex — never in a learner payload.
+  correctIndex Int     @map("correct_index")
+  explanation  String?
+  sortOrder    Int     @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  lesson LmsLesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@index([lessonId, sortOrder])
+  @@map("lms_lesson_questions")
+}
+
+model LmsLessonProgress {
+  id       String @id @default(cuid())
+  userId   String @map("user_id")
+  lessonId String @map("lesson_id")
+
+  videoWatched  Boolean   @default(false) @map("video_watched")
+  checklistDone Json      @default("[]") @map("checklist_done")
+  quizScore     Int?      @map("quiz_score")
+  quizTotal     Int?      @map("quiz_total")
+  quizPassed    Boolean   @default(false) @map("quiz_passed")
+  completed     Boolean   @default(false)
+  xpEarned      Int       @default(0) @map("xp_earned")
+  completedAt   DateTime? @map("completed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user   User      @relation("LmsLessonProgressUser", fields: [userId], references: [id], onDelete: Cascade)
+  lesson LmsLesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonId])
+  @@index([userId, completed]) // unlock computation
+  @@index([lessonId])
+  @@map("lms_lesson_progress")
+}
+
+model LmsWeeklyTest {
+  id           String    @id @default(cuid())
+  title        String
+  weekNumber   Int       @map("week_number")
+  description  String?
+  passingScore Int       @default(70) @map("passing_score")
+  xpReward     Int       @default(100) @map("xp_reward")
+  scheduledFor DateTime? @map("scheduled_for") @db.Date
+  isActive     Boolean   @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  questions LmsWeeklyTestQuestion[]
+  attempts  LmsWeeklyTestAttempt[]
+
+  @@index([isActive, weekNumber])
+  @@index([scheduledFor])
+  @@map("lms_weekly_tests")
+}
+
+model LmsWeeklyTestQuestion {
+  id           String  @id @default(cuid())
+  testId       String  @map("test_id")
+  question     String
+  options      Json
+  // Same rule again — never in a learner payload.
+  correctIndex Int     @map("correct_index")
+  explanation  String?
+  sortOrder    Int     @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  test LmsWeeklyTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  @@index([testId, sortOrder])
+  @@map("lms_weekly_test_questions")
+}
+
+model LmsWeeklyTestAttempt {
+  id     String @id @default(cuid())
+  userId String @map("user_id")
+  testId String @map("test_id")
+
+  score       Int
+  total       Int
+  passed      Boolean
+  answers     Json     @default("[]")
+  xpEarned    Int      @default(0) @map("xp_earned")
+  completedAt DateTime @default(now()) @map("completed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User          @relation("LmsWeeklyTestAttemptUser", fields: [userId], references: [id], onDelete: Cascade)
+  test LmsWeeklyTest @relation(fields: [testId], references: [id], onDelete: Cascade)
+
+  @@index([userId, passed])
+  @@index([testId])
+  @@index([userId, completedAt])
+  @@map("lms_weekly_test_attempts")
+}
+
+// ─── Purchase-order import: a quotation, extracted and reviewed ─────────────────────────
+//
+// Plan 0909-po-ai-upload-and-brand-stock-removal, §5.2 (owner's answers, 9 Sep 2026).
+//
+// A PoExtraction is what one uploaded vendor file (PDF / image through AI, XLSX / CSV through
+// the column-sniffing parser) turned into, held ONLY while the review on /purchase-orders/new
+// is open — so a refresh or a 30–60 s AI call is not lost. The moment a purchase order is
+// created from it, or the person discards it, the extraction, its items and the stored file
+// are DELETED. Nothing from the upload outlives the PO; the PO's own lines are the record.
+// That is why there is no purchaseOrderId here and no mapping-memory table beside it.
+//
+// Money is Decimal(12,2) — database-architect.md:56-59 — not the Float the brand-stock tables
+// this replaces carried.
+
+model PoExtraction {
+  id           String   @id @default(cuid())
+  vendorId     String
+  vendor       Vendor   @relation("PoExtractionVendor", fields: [vendorId], references: [id])
+  fileName     String
+  fileType     String // "pdf" | "xlsx" | "csv" | "png" | "jpg" | "jpeg" | "webp"
+  /// The stored original, kept for the review and deleted with the row. Null when storage is
+  /// not configured — the extraction still works without it.
+  fileUrl      String?
+  source       String // "ai" | "excel" — which parser produced the rows
+  aiModel      String? // provider + model, for "why did it read it that way"
+  totalItems   Int      @default(0)
+  matchedItems Int      @default(0)
+  createdById  String
+  createdBy    User     @relation("PoExtractionCreatedBy", fields: [createdById], references: [id])
+  createdAt    DateTime @default(now())
+  /// "columns" while the person confirms which column is what; "review" once rows exist.
+  stage        String   @default("columns")
+  /// The AI's column proposal per sheet, then the confirmed one: [{ sheet, headerRow,
+  /// columns: [{ index, header, role }] }]. Kept so "Columns" can be reopened (plan §3.2).
+  columnRoles  Json?
+  /// The colour legend read from the sheet, [{ rgb, label }], null when it has none.
+  legend       Json?
+  /// The optional hint the person typed for the column step (capped, sanitised — plan §3.6).
+  hint         String?
+
+  items PoExtractionItem[]
+
+  @@index([createdById])
+  @@index([vendorId])
+}
+
+model PoExtractionItem {
+  id              String       @id @default(cuid())
+  extractionId    String
+  extraction      PoExtraction @relation(fields: [extractionId], references: [id], onDelete: Cascade)
+  rawName         String
+  rawSku          String?
+  rawCategory     String?
+  rawSize         String?
+  qty             Int?
+  price           Decimal?     @db.Decimal(12, 2)
+  mrp             Decimal?     @db.Decimal(12, 2)
+  /// The match, when there is one. SetNull on product delete (Prisma default for an optional
+  /// relation): a review row is short-lived, so losing a match is the right outcome, not a block.
+  productId       String?
+  product         Product?     @relation("PoExtractionItemProduct", fields: [productId], references: [id])
+  matchStatus     String       @default("UNMATCHED") // AUTO | FUZZY | MANUAL | UNMATCHED — no longer written (D2); dropped next release
+  matchConfidence Float? // no longer written (D2); dropped next release
+  selected        Boolean      @default(false)
+  orderQty        Int?
+  sortOrder       Int          @default(0)
+  /// Sheet-built rows (plan 0909-po-sheet-ai-extraction, §3.3). Only rawName and qty travel to
+  /// the PO line (D2); `columns` is what the review SHOWS, in the sheet's own column order.
+  sheetName       String?
+  rowIndex        Int?
+  rowColor        String? // "FF0000" — the item-name cell's fill; null when the cell has none
+  columns         Json? // [{ header, value }]
+
+  @@index([extractionId])
+  @@index([productId])
+}

@@ -1,15 +1,12 @@
-export type Role =
-  | "CEO"
-  | "ADMIN"
-  | "SUPERVISOR"
-  | "PURCHASE_MANAGER"
-  | "ACCOUNTS_MANAGER"
-  | "INWARDS_EXECUTIVE"
-  | "OUTWARDS_EXECUTIVE"
-  | "STORE_MANAGER"
-  | "SALES_MANAGER"
-  | "SERVICE_MANAGER"
-  | "CUSTOM";
+// Roles are rows in the `roles` table, not a fixed union — an admin can create new ones at
+// runtime, so no closed list of names can be correct. `roleKey` is a plain string used for
+// display and logging only; authorisation always resolves grants from the database
+// (src/lib/rbac.ts), never by comparing a role name.
+export interface UserRole {
+  id: string;
+  key: string;
+  name: string;
+}
 
 export type TransactionType = "INWARD" | "OUTWARD" | "TRANSFER" | "ADJUSTMENT";
 
@@ -21,14 +18,6 @@ export type ProductCondition =
   | "REFURBISHED_GOOD"
   | "REFURBISHED_FAIR"
   | "DAMAGED";
-
-export type ProductType =
-  | "BICYCLE"
-  | "SPARE_PART"
-  | "ACCESSORY"
-  | "BOX_PIECE"
-  | "WIP"
-  | "FINISHED_GOOD";
 
 export type SerialStatus =
   | "IN_STOCK"
@@ -44,7 +33,8 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: Role;
+  roleId: string;
+  role?: UserRole;
   accessCode: string;
   isActive: boolean;
 }
@@ -54,7 +44,6 @@ export interface Category {
   name: string;
   description?: string;
   parentId?: string;
-  movingLevel: string;
   reorderLevel: number;
 }
 
@@ -87,7 +76,6 @@ export interface Product {
   category?: Category;
   brandId: string;
   brand?: Brand;
-  type: ProductType;
   status: ProductStatus;
   condition: ProductCondition;
   costPrice: number;
@@ -100,7 +88,6 @@ export interface Product {
   maxStock: number;
   reorderLevel: number;
   reorderQty: number;
-  size?: string;
   color?: string;
   imageUrls: string[];
   tags: string[];
@@ -223,6 +210,14 @@ export interface Vendor {
   isActive: boolean;
   notes?: string;
   contacts?: VendorContact[];
+  /**
+   * The brands this vendor supplies, flattened from BrandVendor. Present on
+   * GET /api/vendors/[id] and on the ledger routes; absent on the list route.
+   *
+   * `isPrimary` means "the usual billing route for this brand" and is an invariant ACROSS
+   * vendors, not within one — see PUT /api/vendors/[id]/brands.
+   */
+  brands?: Array<{ id: string; name: string; isPrimary: boolean }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -446,3 +441,5 @@ export interface VendorIssue {
   createdById: string;
   createdAt: string;
 }
+
+export * from './lms';

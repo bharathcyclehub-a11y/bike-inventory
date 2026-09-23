@@ -3,9 +3,10 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse, paginatedResponse, parseSearchParams } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
-import { ZohoInventoryClient } from "@/lib/zoho-inventory";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { userCan } from "@/lib/rbac";
 import { z } from "zod";
+import { getInventory } from "@/lib/integrations";
 
 const createSchema = z.object({
   name: z.string().min(1, "Cycle name is required"),
@@ -23,8 +24,8 @@ const createSchema = z.object({
 // GET: List second-hand cycles
 export async function GET(req: NextRequest) {
   try {
-    const user = await requireAuth();
-    const isAdmin = user.role === "ADMIN" || user.role === "CEO";
+    const user = await requireFeature("second_hand", "view");
+    const isAdmin = await userCan(user.id, "cost_price", "view");
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status");
     const search = searchParams.get("search");
@@ -65,7 +66,7 @@ export async function GET(req: NextRequest) {
     ]);
 
     // Hide cost/price from non-admin
-    const data = isAdmin ? cycles : cycles.map(({ costPrice, sellingPrice, ...rest }) => rest);
+    const data = isAdmin ? cycles : cycles.map(({ costPrice: _costPrice, sellingPrice: _sellingPrice, ...rest }) => rest);
 
     return paginatedResponse(data, total, page, limit);
   } catch (error) {
@@ -77,7 +78,7 @@ export async function GET(req: NextRequest) {
 // POST: Create second-hand cycle
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "OUTWARDS_EXECUTIVE"]);
+    const user = await requireFeature("second_hand", "create");
     const body = await req.json();
     const data = createSchema.parse(body);
 
@@ -117,9 +118,8 @@ export async function POST(req: NextRequest) {
     // Push to Zoho Inventory (best effort — don't fail if Zoho is down)
     let zohoItemId: string | null = null;
     try {
-      const inventory = new ZohoInventoryClient();
-      const ready = await inventory.init();
-      if (ready) {
+      const inventory = await getInventory();
+      if (inventory) {
         const condLabel = data.condition.charAt(0) + data.condition.slice(1).toLowerCase();
         const result = await inventory.createItem({
           name: `SH | ${data.name} - ${condLabel}`,

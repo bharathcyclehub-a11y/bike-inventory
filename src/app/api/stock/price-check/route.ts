@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
 
 interface PriceCheckItem {
   productId: string;
@@ -22,7 +22,7 @@ interface PriceCheckItem {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN"]);
+    await requireFeature("stock", "view");
 
     const { searchParams } = new URL(req.url);
     const mismatchOnly = searchParams.get("mismatchOnly") === "true";
@@ -115,6 +115,9 @@ export async function GET(req: NextRequest) {
       const poItemPrices = new Map<string, number>();
       if (bill.purchaseOrder?.items) {
         for (const item of bill.purchaseOrder.items) {
+          // A line raised from the vendor's sheet has no product (plan 0909, D2) and so no
+          // catalogue price to compare against.
+          if (!item.productId) continue;
           poItemPrices.set(item.productId, item.unitPrice);
         }
       }

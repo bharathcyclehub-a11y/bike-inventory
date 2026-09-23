@@ -3,15 +3,40 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { userCan } from "@/lib/rbac";
+import { getWarehouseQtyMap, getStoreQtyMap } from "@/lib/stock-location";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("stock-counts:items");
+
+/**
+ * The system quantity for these products WITHIN this audit's scope (R2, §5.1).
+ *
+ * Both callers below used to compare against `Product.currentStock`, the GLOBAL total across
+ * every store. For a warehouse-scoped audit that made every line look stale the moment any
+ * other warehouse moved, and "Refresh" then overwrote `systemQty` with a number the counter
+ * could not possibly see — manufacturing a variance on every product.
+ *
+ * `currentStock` survives as the fallback for exactly one case: a legacy audit with neither
+ * FK set, whose scope is genuinely unknown.
+ */
+async function scopedQtyMap(
+  scope: { storeId: string | null; warehouseId: string | null },
+  productIds: string[]
+): Promise<Map<string, number> | null> {
+  if (scope.warehouseId) return getWarehouseQtyMap(productIds, scope.warehouseId);
+  if (scope.storeId) return getStoreQtyMap(productIds, scope.storeId);
+  return null; // legacy audit — the caller falls back to currentStock
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"]);
+    const user = await requireFeature("stock_audit", "view");
     const { id } = await params;
 
     // Clerks/Mechanic can only access their assigned stock counts
-    if (["INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"].includes(user.role)) {
+    if (!(await userCan(user.id, "stock_audit", "approve"))) {
       const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
       if (!sc) return errorResponse("Stock count not found", 404);
       if (sc.assignedToId !== user.id) return errorResponse("You can only access stock counts assigned to you", 403);
@@ -63,19 +88,33 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       include: {
         product: {
           select: {
-            name: true, sku: true, currentStock: true, type: true, size: true,
+            name: true, sku: true, currentStock: true,
             category: { select: { name: true } },
             brand: { select: { name: true } },
             bin: { select: { code: true, location: true } },
           },
         },
       },
-      orderBy: { product: { name: "asc" } },
+      orderBy: searchParams.get("sort") === "name" 
+        ? { product: { name: "asc" } }
+        : [{ systemQty: "desc" }, { product: { name: "asc" } }],
       ...(searchParams.get("limit") ? { take: parseInt(searchParams.get("limit")!) } : { take: 500 }),
     });
 
-    // Calculate stale count — items where systemQty differs from current product stock
-    const staleCount = items.filter((i) => i.systemQty !== i.product.currentStock).length;
+    // Stale = systemQty differs from what is in the SCOPE now, not from the global total.
+    const scope = await prisma.stockCount.findUnique({
+      where: { id },
+      select: { storeId: true, warehouseId: true },
+    });
+    const liveQty = scope ? await scopedQtyMap(scope, items.map((i) => i.productId)) : null;
+    // `liveQty` rides on every line (plan §3 C2): the review table shows a "Now" column when
+    // stock moved between raising the audit and approving it, so a stale snapshot is visible
+    // before anything is applied. Same map that decides `staleCount` — computed once.
+    const withLive = items.map((i) => ({
+      ...i,
+      liveQty: liveQty ? (liveQty.get(i.productId) ?? 0) : i.product.currentStock,
+    }));
+    const staleCount = withLive.filter((i) => i.systemQty !== i.liveQty).length;
 
     // Count totals for tabs
     const allCounts = await prisma.stockCountItem.groupBy({
@@ -89,7 +128,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const totalCount = allCounts[0]?._count || 0;
 
     return successResponse({
-      items,
+      items: withLive,
       staleCount,
       totalCount,
       countedCount,
@@ -97,23 +136,40 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    log.error("items fetch failed", { message: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch items", 500);
   }
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"]);
+    const user = await requireFeature("stock_audit", "edit");
     const { id } = await params;
 
-    // ADMIN cannot save counts — only approve/reject
-    if (user.role === "ADMIN") return errorResponse("Admin can only approve or reject stock counts", 403);
-
-    // Clerks/Mechanic can only edit their assigned stock counts
-    if (["INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"].includes(user.role)) {
-      const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
-      if (!sc) return errorResponse("Stock count not found", 404);
-      if (sc.assignedToId !== user.id) return errorResponse("You can only edit stock counts assigned to you", 403);
+    // Saving counts belongs to the ASSIGNEE, whoever they are (R2).
+    //
+    // The line that used to sit here — "if you hold approve, you cannot save counts" —
+    // blocked an approve-holder from counting an audit assigned to them, which is how an
+    // owner who assigned an audit to themselves found a screen where nothing worked. Holding
+    // `approve` is not a disqualification; the only thing it must not let you do is sign off
+    // your own count, and that is enforced on the status transition in [id]/route.ts.
+    const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true, status: true } });
+    if (!sc) return errorResponse("Stock count not found", 404);
+    if (sc.assignedToId !== user.id) {
+      return errorResponse(
+        "Only the person this audit is assigned to can start, count or complete it",
+        403
+      );
+    }
+    // Counts are written while counting, and only then. This had no status check, so a
+    // line could be rewritten under a COMPLETED or APPROVED audit — after the approver had
+    // looked at it, or after stock had been corrected from it (plan §2.4 D6).
+    if (sc.status !== "IN_PROGRESS") {
+      log.warn("count write refused by status", { stockCountId: id, status: sc.status, userId: user.id });
+      return errorResponse(
+        `This audit is ${sc.status.toLowerCase().replace(/_/g, " ")}; counts can only be saved while it is in progress`,
+        409
+      );
     }
     const body = await req.json();
 
@@ -149,6 +205,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     return successResponse({ updated: results.length });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    log.error("items update failed", { message: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed to update items", 400);
   }
 }
@@ -156,32 +213,41 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 // PATCH — Refresh systemQty from current product stock
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"]);
+    const user = await requireFeature("stock_audit", "edit");
     const { id } = await params;
 
     // Clerks/Mechanic can only refresh their assigned stock counts
-    if (["INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"].includes(user.role)) {
+    if (!(await userCan(user.id, "stock_audit", "approve"))) {
       const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
       if (!sc) return errorResponse("Stock count not found", 404);
       if (sc.assignedToId !== user.id) return errorResponse("You can only access stock counts assigned to you", 403);
     }
+
+    const scope = await prisma.stockCount.findUnique({
+      where: { id },
+      select: { storeId: true, warehouseId: true },
+    });
+    if (!scope) return errorResponse("Stock count not found", 404);
 
     const items = await prisma.stockCountItem.findMany({
       where: { stockCountId: id },
       include: { product: { select: { currentStock: true } } },
     });
 
+    // Refresh to the SCOPED quantity. This wrote the global `currentStock` before, so on a
+    // warehouse audit Refresh replaced a correct systemQty with the sum across every store.
+    const liveQty = await scopedQtyMap(scope, items.map((i) => i.productId));
+
     let refreshed = 0;
     await prisma.$transaction(async (tx) => {
       for (const item of items) {
-        if (item.systemQty !== item.product.currentStock) {
-          const newVariance = item.countedQty !== null
-            ? item.countedQty - item.product.currentStock
-            : null;
+        const live = liveQty ? (liveQty.get(item.productId) ?? 0) : item.product.currentStock;
+        if (item.systemQty !== live) {
+          const newVariance = item.countedQty !== null ? item.countedQty - live : null;
           await tx.stockCountItem.update({
             where: { id: item.id },
             data: {
-              systemQty: item.product.currentStock,
+              systemQty: live,
               variance: newVariance,
             },
           });
@@ -193,6 +259,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return successResponse({ refreshed });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    log.error("systemQty refresh failed", { message: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed to refresh", 400);
   }
 }

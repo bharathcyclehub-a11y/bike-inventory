@@ -1,14 +1,21 @@
 export const dynamic = "force-dynamic";
 
-import { NextRequest } from "next/server";
+export const runtime = "nodejs";
+// nodejs, explicitly: this route reaches SMTP (a raw socket on 587) and the FCM JWT signer
+// (node crypto) through notify(). Neither works on the edge runtime, and the failure there
+// is not self-explanatory. Node is the default today; this stops a later change from
+// silently breaking sends. See the notifications plan, Part C and D.1.
+import { NextRequest, after } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse, paginatedResponse, parseSearchParams } from "@/lib/api-utils";
 import { outwardSchema } from "@/lib/validations";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { maybeNotifyBelowReorder, type ReorderCrossing } from "@/lib/notify/stock";
+import { deductFromStore } from "@/lib/stock-location";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "OUTWARDS_EXECUTIVE"]);
+    await requireFeature("deliveries", "view");
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const dateFrom = searchParams.get("dateFrom");
     const dateTo = searchParams.get("dateTo");
@@ -27,7 +34,7 @@ export async function GET(req: NextRequest) {
       prisma.inventoryTransaction.findMany({
         where,
         include: {
-          product: { select: { name: true, sku: true, size: true, brand: { select: { name: true } } } },
+          product: { select: { name: true, sku: true, brand: { select: { name: true } } } },
           user: { select: { name: true } },
         },
         orderBy: { createdAt: "desc" },
@@ -46,9 +53,13 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN"]);
+    const user = await requireFeature("deliveries", "create");
     const body = await req.json();
     const data = outwardSchema.parse(body);
+
+    // §F.0: filled INSIDE the transaction, sent AFTER it commits. notify() does SMTP/FCM I/O
+    // that would blow the transaction's 5-second budget and roll the stock write back.
+    const crossings: ReorderCrossing[] = [];
 
     const result = await prisma.$transaction(async (tx) => {
       // Read product inside transaction to prevent race conditions
@@ -66,11 +77,26 @@ export async function POST(req: NextRequest) {
       const previousStock = product.currentStock;
       const newStock = previousStock - data.quantity;
 
-      // Update product stock
-      await tx.product.update({
-        where: { id: data.productId },
-        data: { currentStock: newStock },
-      });
+      // WHICH STORE this leaves (R12). This route has never had a location field of any
+      // kind, so an unspecified store means the primary one: active, lowest sortOrder — the
+      // same ordering every picker uses.
+      const storeId =
+        data.storeId ??
+        (
+          await tx.store.findFirst({
+            where: { isActive: true },
+            orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+            select: { id: true },
+          })
+        )?.id;
+      if (!storeId) throw new Error("No active store is configured to take stock out of.");
+
+      // THE FIX (R12). Was `tx.product.update({ data: { currentStock: newStock } })`, which
+      // moved the cache and left StockLevel alone — so the next receipt, applied audit or
+      // transfer recomputed the total from a ledger that never saw this outward and put the
+      // units back.
+      await deductFromStore(tx, data.productId, storeId, data.quantity, product.name);
+      crossings.push({ productId: data.productId, previousStock, newStock }); // collect only (§F.0)
 
       // Build notes with bin info
       const binNote = body.binId ? `[Bin: ${body.binId}]` : "";
@@ -112,6 +138,10 @@ export async function POST(req: NextRequest) {
 
       return transaction;
     });
+
+    // §F.0: the transaction has committed. after() runs this once the response has gone out, so
+    // the sale is not slowed by SMTP/FCM, and nothing is sent if the transaction threw above.
+    after(() => maybeNotifyBelowReorder(crossings));
 
     return successResponse(result, 201);
   } catch (error) {

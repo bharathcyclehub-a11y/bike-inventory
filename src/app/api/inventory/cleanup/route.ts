@@ -4,13 +4,14 @@ export const maxDuration = 60;
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { deductAnywhere, addAnywhere } from "@/lib/stock-location";
 
 // DELETE — remove all Zoho-imported transactions + optionally reverse stock
 // Query param: ?reverse=true (default) reverses stock, ?reverse=false keeps stock
 export async function DELETE(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN"]);
+    await requireFeature("stock", "delete");
 
     const reverseStock = req.nextUrl.searchParams.get("reverse") !== "false";
     let stockReversals = 0;
@@ -24,13 +25,19 @@ export async function DELETE(req: NextRequest) {
         select: { id: true, productId: true, quantity: true, type: true },
       });
 
-      // Reverse stock for each verified transaction
-      for (const tx of verifiedTransactions) {
-        const delta = tx.type === "INWARD" ? -tx.quantity : tx.quantity;
-        await prisma.product.update({
-          where: { id: tx.productId },
-          data: { currentStock: { increment: delta } },
-        });
+      // THE FIX (R12). Was `currentStock: { increment: delta }`, which moved the cache and
+      // left StockLevel alone — so the next recompute rebuilt the total from a ledger that
+      // never saw the reversal and put everything back.
+      //
+      // Reversing an INWARD takes units out; reversing an OUTWARD puts them back. Neither
+      // records the warehouse it touched, so both go through the "anywhere" helpers — see
+      // their notes in stock-location.ts.
+      for (const txn of verifiedTransactions) {
+        if (txn.type === "INWARD") {
+          await deductAnywhere(prisma, txn.productId, txn.quantity);
+        } else {
+          await addAnywhere(prisma, txn.productId, txn.quantity);
+        }
         stockReversals++;
       }
     }
@@ -68,7 +75,7 @@ export async function DELETE(req: NextRequest) {
 // GET — preview what would be deleted (dry run)
 export async function GET() {
   try {
-    await requireAuth(["ADMIN"]);
+    await requireFeature("stock", "view");
 
     const zohoTransactions = await prisma.inventoryTransaction.count({
       where: { notes: { contains: "[ZOHO]" } },

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { ArrowLeft, TrendingUp, TrendingDown, Truck, Package } from "lucide-react";
+import { ArrowLeft, TrendingUp, TrendingDown, Package } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { SkeletonList } from "@/components/ui/skeleton";
 
@@ -33,7 +33,6 @@ function fmt(amount: number) {
 const TABS = [
   { key: "category", label: "By Category" },
   { key: "brand", label: "By Brand" },
-  { key: "type", label: "By Type" },
 ];
 
 export default function StockValuePage() {

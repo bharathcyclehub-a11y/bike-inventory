@@ -2,10 +2,9 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
-import { ZohoClient } from "@/lib/zoho";
-import { ZakyaClient } from "@/lib/zakya";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { getBooks, getZakya } from "@/lib/integrations";
 
 /*
  * Lightweight invoice search — single Zoho API call, no pull pipeline.
@@ -14,7 +13,10 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
  */
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE"]);
+    // zoho.fetch, not deliveries.fetch (Option B, R1). Four screens used to gate one server
+    // permission through four different module actions, so a role could hold the button and
+    // not the route, or the route and not the button. zoho.* is the single truth now.
+    await requireFeature("zoho", "fetch");
     const { query } = (await req.json()) as { query: string };
 
     if (!query || query.trim().length < 3) {
@@ -23,13 +25,16 @@ export async function POST(req: NextRequest) {
 
     const searchTerm = query.trim();
 
-    // Try Zakya POS first, fallback to Books
-    const zakya = new ZakyaClient();
-    const posReady = await zakya.init();
-    const zoho = new ZohoClient();
-    const booksReady = await zoho.init();
+    // Try Zakya POS first, fallback to Books. Fetched in parallel: independent answers,
+    // and both are request-scoped so nothing is initialised twice.
+    //
+    // The branches below test the CLIENTS, not a pair of `ready` booleans. A boolean cannot
+    // narrow a nullable object for TypeScript, so `if (booksReady) zoho.listInvoices(...)`
+    // would need a non-null assertion at every call — testing the object itself makes the
+    // compiler do that work instead.
+    const [zakya, zoho] = await Promise.all([getZakya(), getBooks()]);
 
-    if (!posReady && !booksReady) {
+    if (!zakya && !zoho) {
       return errorResponse("No Zoho source connected", 400);
     }
 
@@ -41,7 +46,7 @@ export async function POST(req: NextRequest) {
     // For phone search, we use customer_phone parameter
     const isPhone = /^\d{10,}$/.test(searchTerm);
 
-    if (booksReady) {
+    if (zoho) {
       source = "books";
       if (isPhone) {
         // Search by phone — use contact search first, then get invoices
@@ -61,7 +66,7 @@ export async function POST(req: NextRequest) {
         const data = await zoho.listInvoices(1, undefined, undefined, searchTerm);
         invoices = data.invoices || [];
       }
-    } else if (posReady) {
+    } else if (zakya) {
       source = "pos";
       // Zakya doesn't support search_text, so fetch recent and filter
       const today = new Date().toISOString().slice(0, 10);
@@ -75,10 +80,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Filter out void invoices and BCC (Bharath Cycle Centre) invoices
-    invoices = invoices.filter((inv: { status: string; invoice_number: string }) =>
-      inv.status !== "void" && !inv.invoice_number.startsWith("BCC/")
-    );
+    // Void only. The `!inv.invoice_number.startsWith("BCC/")` that used to sit here is GONE
+    // (O8, owner 4 Sep) — the last of three routes hardcoding a store NAME to decide what to
+    // hide. Searching for a Bharath Cycle Centre invoice returned "not found", which is how a
+    // whole store with its own GSTIN stayed invisible. Its invoices are searchable and
+    // importable now, tagged with their store from Store.invoicePrefix.
+    invoices = invoices.filter((inv: { status: string }) => inv.status !== "void");
 
     // Check which are already imported
     const invoiceNumbers = invoices.map((inv: { invoice_number: string }) => inv.invoice_number);

@@ -1,5 +1,5 @@
 {
-  "name": "bike-inventory",
+  "name": "bch_management",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -8,24 +8,30 @@
     "start": "next start",
     "lint": "eslint",
     "db:generate": "prisma generate",
-    "db:push": "prisma db push",
-    "db:migrate": "prisma migrate dev",
+    "db:migrate": "node scripts/db/assert-localhost.mjs && prisma migrate dev",
     "db:seed": "prisma db seed",
-    "db:studio": "prisma studio"
+    "db:seed:rbac": "ts-node --project prisma/tsconfig.json prisma/seed-rbac.ts",
+    "db:seed:stores": "ts-node --project prisma/tsconfig.json prisma/seed-stores.ts",
+    "db:wipe:products": "ts-node --project prisma/tsconfig.json prisma/wipe-products.ts",
+    "import:products": "ts-node --project scripts/tsconfig.json scripts/import-products.ts",
+    "db:studio": "prisma studio",
+    "db:import": "node scripts/db/import-catalog-and-vendors.mjs",
+    "db:restore:integrations": "node scripts/db/restore-integrations.mjs",
+    "db:push:integrations": "node scripts/db/push-integrations.mjs",
+    "db:snapshot": "node scripts/db/snapshot.mjs",
+    "db:migrate:status": "prisma migrate status"
   },
   "prisma": {
-    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+    "seed": "ts-node --project prisma/tsconfig.json prisma/seed.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
     "@auth/prisma-adapter": "^2.11.1",
-    "@capacitor/android": "^8.3.1",
-    "@capacitor/cli": "^8.3.1",
-    "@capacitor/core": "^8.3.1",
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^2.21.0",
     "@hookform/resolvers": "^5.2.2",
     "@prisma/client": "^6.19.3",
     "@supabase/supabase-js": "^2.104.0",
+    "@types/nodemailer": "^8.0.1",
     "aws4fetch": "^1.0.20",
     "bcryptjs": "^3.0.3",
     "bwip-js": "^4.9.0",
@@ -33,6 +39,8 @@
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "dotenv": "^17.4.2",
+    "fflate": "^0.8.3",
+    "firebase": "^12.18.0",
     "html5-qrcode": "^2.3.8",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
@@ -40,12 +48,15 @@
     "next": "16.2.3",
     "next-auth": "^4.24.13",
     "next-pwa": "^5.6.0",
+    "nodemailer": "^7.0.13",
+    "openai": "^7.10.0",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "react-hook-form": "^7.72.1",
     "tailwind-merge": "^3.5.0",
     "xlsx": "^0.18.5",
-    "zod": "^4.3.6"
+    "zod": "^4.3.6",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

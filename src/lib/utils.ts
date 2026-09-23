@@ -1,6 +1,5 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { useState, useEffect } from "react";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -20,6 +19,20 @@ export function formatTime(dateStr: string): string {
   const d = new Date(dateStr);
   if (isNaN(d.getTime())) return "";
   return d.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Date AND time, en-IN: "9 Sep 2026, 02:15 pm". Empty for null, undefined or an unparseable value. */
+export function formatDateTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return "";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -110,13 +123,57 @@ export function fuzzySearchFields(query: string, fields: (string | null | undefi
   return words.every((word) => fields.some((f) => fuzzyMatch(word, f)));
 }
 
-export function useDebounce<T>(value: T, delay = 300): T {
-  const [debouncedValue, setDebouncedValue] = useState(value);
 
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedValue(value), delay);
-    return () => clearTimeout(timer);
-  }, [value, delay]);
+/**
+ * Message from an unknown caught value.
+ *
+ * Under `strict`, TypeScript types a catch binding as `unknown`, so `e.message` does not
+ * compile — which is why the pattern here had been `catch (e: any)`. That annotation
+ * silenced the compiler rather than answering the question, and a thrown string or object
+ * would have produced `undefined` in the UI.
+ *
+ *     } catch (e) {
+ *       setError(`Network error: ${errorMessage(e)}`);
+ *     }
+ */
+export function errorMessage(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "string") return e;
+  return String(e);
+}
 
-  return debouncedValue;
+
+
+export function extractYoutubeId(url: string): string | null {
+  const match = url.match(
+    /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/
+  );
+  return match ? match[1] : null;
+}
+
+export function formatXp(xp: number): string {
+  if (xp >= 1000) return `${(xp / 1000).toFixed(1)}k`;
+  return xp.toString();
+}
+
+export function getScenarioIcon(type: string): string {
+  const icons: Record<string, string> = {
+    'walk-in': 'door-open',
+    'phone': 'phone',
+    'repeat': 'refresh-cw',
+    'festival': 'party-popper',
+    'parent': 'baby',
+    'comparison': 'scale',
+    'service-upsell': 'wrench',
+  };
+  return icons[type] || 'clipboard';
+}
+
+export function getDifficultyColor(difficulty: string): string {
+  switch (difficulty) {
+    case 'beginner': return 'text-green-600 bg-green-50';
+    case 'intermediate': return 'text-yellow-600 bg-yellow-50';
+    case 'advanced': return 'text-red-600 bg-red-50';
+    default: return 'text-gray-600 bg-gray-50';
+  }
 }

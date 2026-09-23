@@ -3,18 +3,48 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { userCan } from "@/lib/rbac";
+import { validateReorderVendor } from "@/lib/vendors/validate";
+import { isBinTrackingEnabled } from "@/lib/settings/bin-tracking";
+import { isAssemblyLevel } from "@/lib/assembly-level";
+import { createLogger } from "@/lib/logger";
 
-// POST — bulk update products (brand, status)
+// This route rewrites a field on up to 500 products in one statement and left no record that
+// it had run. It is the fix-up tool for imported rows — the one place a person corrects 151
+// products at once — so "which 500 rows changed, and to what" is exactly the question that
+// gets asked afterwards.
+const log = createLogger("products:bulk");
+
+// POST — bulk update products (category, brand, bin, status, reorder vendor)
+//
+// GUARD CHANGED IN P8: `stock.create` -> `stock.edit`. This route does not create anything;
+// it rewrites a column on rows that already exist, which is an edit. The practical reason is
+// that it is the only screen that can assign reorder vendors brand by brand — filter /stock by
+// brand, select all, set vendor — and a role holding `stock.edit` for the reorder sheet must
+// not meet a 403 on the one screen that makes that data exist in bulk.
+//
+// `reorderVendorId` additionally requires `reorder.edit`, because that column is written by
+// two other routes behind exactly that permission (api/products/[id]/reorder,
+// api/reorder/update-levels). Requiring it only when the field is PRESENT means the four
+// original bulk actions keep working on the grants roles already hold.
+//
+// `assemblyLevel` (plan 1509-assembly-queue…, E2) follows the same rule for the same reason:
+// the column is written by `api/products/[id]/assembly-level` and by the Assign modal
+// (`api/assembly/tasks`), both behind `assembly.approve`, so it is demanded here whenever the
+// field is present. null is a real request — "clear the level on these rows".
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
+    const user = await requireFeature("stock", "edit");
     const body = await req.json();
-    const { productIds, brandId, status, categoryId } = body as {
+    const { productIds, brandId, status, categoryId, binId, reorderVendorId, assemblyLevel } = body as {
       productIds: string[];
       brandId?: string;
       status?: "ACTIVE" | "INACTIVE";
       categoryId?: string;
+      binId?: string;
+      reorderVendorId?: string | null;
+      assemblyLevel?: string | null;
     };
 
     if (!productIds || productIds.length === 0) {
@@ -23,35 +53,110 @@ export async function POST(req: NextRequest) {
     if (productIds.length > 500) {
       return errorResponse("Maximum 500 products per batch", 400);
     }
-    if (!brandId && !status && !categoryId) {
-      return errorResponse("Nothing to update — provide brandId, status, or categoryId", 400);
+    // `reorderVendorId` is checked with `undefined`, not truthiness: null is a real request
+    // here — "clear the reorder vendor on these 40 products" — and a truthy test would answer
+    // it with "Nothing to update".
+    if (
+      !brandId && !status && !categoryId && !binId &&
+      reorderVendorId === undefined && assemblyLevel === undefined
+    ) {
+      return errorResponse(
+        "Nothing to update — provide brandId, categoryId, binId, status, reorderVendorId, or assemblyLevel",
+        400
+      );
     }
 
-    // Validate brand exists if provided
+    if (assemblyLevel !== undefined) {
+      if (!(await userCan(user.id, "assembly", "approve"))) {
+        return errorResponse("You do not have permission to set the assembly level", 403);
+      }
+      if (assemblyLevel !== null && !isAssemblyLevel(assemblyLevel)) {
+        return errorResponse("Choose 50%, 85% or 100% as the assembly level", 400);
+      }
+    }
+
+    if (reorderVendorId !== undefined) {
+      if (!(await userCan(user.id, "reorder", "edit"))) {
+        return errorResponse("You do not have permission to set the reorder vendor", 403);
+      }
+      const vendorError = await validateReorderVendor(reorderVendorId);
+      if (vendorError) return errorResponse(vendorError, 400);
+    }
+
+    // Validate brand exists AND is active if provided. An inactive brand is not a destination
+    // (plan 0809-brand-category-inactive): the picker no longer offers one, and a stale screen
+    // must not re-file a batch of products under a retired row.
     if (brandId) {
-      const brand = await prisma.brand.findUnique({ where: { id: brandId } });
+      const brand = await prisma.brand.findUnique({
+        where: { id: brandId },
+        select: { id: true, name: true, isActive: true },
+      });
       if (!brand) return errorResponse("Brand not found", 404);
+      if (!brand.isActive) return errorResponse(`${brand.name} is inactive. Activate it on /more/brands first.`, 400);
     }
 
-    // Validate category exists if provided
+    // Same for the category.
     if (categoryId) {
-      const cat = await prisma.category.findUnique({ where: { id: categoryId } });
+      const cat = await prisma.category.findUnique({
+        where: { id: categoryId },
+        select: { id: true, name: true, isActive: true },
+      });
       if (!cat) return errorResponse("Category not found", 404);
+      if (!cat.isActive) return errorResponse(`${cat.name} is inactive. Activate it on /categories first.`, 400);
+    }
+
+    // Bins are the one detail no import can ever supply — a bin is a physical shelf in this
+    // warehouse and Zoho has never heard of one. Walking a freshly imported batch to a shelf
+    // in a single action is the whole reason this field is here.
+    //
+    // Refused outright while bin tracking is dormant, rather than quietly accepted: with
+    // BIN_TRACKING_ENABLED false the rest of the app works on warehouses and hides every bin
+    // control, so a binId written now would be invisible in the UI that is supposed to show
+    // it. Better a 400 that names the reason than a silent write nobody can see or undo.
+    if (binId) {
+      const binTrackingEnabled = await isBinTrackingEnabled();
+      if (!binTrackingEnabled) {
+        return errorResponse("Bin tracking is disabled — bins cannot be assigned", 400);
+      }
+      const bin = await prisma.bin.findUnique({ where: { id: binId } });
+      if (!bin) return errorResponse("Bin not found", 404);
     }
 
     const updateData: Record<string, unknown> = {};
     if (brandId) updateData.brandId = brandId;
     if (status) updateData.status = status;
     if (categoryId) updateData.categoryId = categoryId;
+    if (binId) updateData.binId = binId;
+    // Assigned when PRESENT rather than when truthy, so null clears it.
+    if (reorderVendorId !== undefined) updateData.reorderVendorId = reorderVendorId || null;
+    // Present-not-truthy again: null clears the level, so the next Assign asks.
+    if (assemblyLevel !== undefined) updateData.assemblyLevel = assemblyLevel;
 
     const result = await prisma.product.updateMany({
       where: { id: { in: productIds } },
       data: updateData,
     });
 
+    // Identifiers and counts, never the rows themselves. `fields` says WHAT changed without
+    // repeating the ids, which are already in the request the caller can correlate by.
+    log.info("bulk update applied", {
+      requestedBy: user.id,
+      requested: productIds.length,
+      updated: result.count,
+      fields: Object.keys(updateData),
+      brandId,
+      categoryId,
+      binId,
+      status,
+      reorderVendorId,
+      assemblyLevel,
+    });
+
     return successResponse({ updated: result.count });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
-    return errorResponse(error instanceof Error ? error.message : "Bulk update failed", 500);
+    const message = error instanceof Error ? error.message : "Bulk update failed";
+    log.error("bulk update failed", { message });
+    return errorResponse(message, 500);
   }
 }

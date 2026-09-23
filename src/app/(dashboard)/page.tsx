@@ -5,8 +5,8 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import {
   Package, ArrowDownCircle, ArrowUpCircle, AlertTriangle,
-  IndianRupee, Brain, Truck, Clock, CheckCircle2, Flag,
-  Users, ShieldAlert, ChevronRight, Circle, Share2, Loader2,
+  IndianRupee, Truck, Clock, CheckCircle2, Flag,
+  Users, ShieldAlert, ChevronRight, Share2, Loader2,
 } from "lucide-react";
 import { DashboardCard } from "@/components/dashboard-card";
 import { TransactionItem } from "@/components/transaction-item";
@@ -14,21 +14,15 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonDashboard } from "@/components/ui/skeleton";
 import { formatINR, formatTime } from "@/lib/utils";
-import type { Role } from "@/types";
+import { getStatusLabel } from "@/lib/status-colors";
+import { usePermissions } from "@/lib/use-permissions";
+import { MyStockAudits } from "./_components/my-stock-audits";
+import { MyAssemblyTasks } from "./_components/my-assembly-tasks";
+// "Today" on this screen is the STORE's today, not the browser's UTC one. toISOString() names
+// yesterday for every one of these six calls between midnight and 05:30 IST, which is when the
+// morning shift is already working.
+import { getTodayIST } from "@/lib/services/timezone";
 
-const ROLE_LABELS: Record<string, string> = {
-  CEO: "Owner",
-  ADMIN: "Administrator",
-  SUPERVISOR: "Supervisor",
-  PURCHASE_MANAGER: "Purchase Manager",
-  ACCOUNTS_MANAGER: "Accounts Manager",
-  INWARDS_EXECUTIVE: "Inwards Executive",
-  OUTWARDS_EXECUTIVE: "Outwards Executive",
-  STORE_MANAGER: "Store Manager",
-  SALES_MANAGER: "Sales Manager",
-  SERVICE_MANAGER: "Service Manager",
-  CUSTOM: "Team Member",
-};
 
 interface CEOData {
   // Revenue & Finance
@@ -44,12 +38,10 @@ interface CEOData {
   openVendorIssues: number;
   // Lists
   overdueBillsList: Array<{ id: string; billNo: string; amount: number; paidAmount: number; dueDate: string; vendor: { name: string } }>;
-  insights: Array<{ type: string; title: string; severity: string; value: number }>;
   // Inbound
   inboundInTransit: number;
   inboundArrivingThisWeek: number;
   // Health
-  people: Array<{ name: string; role: string; pending: number; overdue24h: number; overdue48h: number; overdue72h: number }>;
   todaySummary: { inwardsVerified: number; inwardsPending: number; deliveriesClosed: number; deliveriesPending: number; expensesRecorded: number; posWithoutTracking: number };
   criticalAlerts: Array<{ type: string; message: string; owner: string; count: number }>;
 }
@@ -62,7 +54,7 @@ function ShareDailyReport() {
   const handleShare = async () => {
     setSharing(true);
     try {
-      const today = new Date().toISOString().split("T")[0];
+      const today = getTodayIST();
       const res = await fetch(`/api/activity?date=${today}`);
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
@@ -84,9 +76,15 @@ function ShareDailyReport() {
       for (const a of activities) {
         catCounts[a.category] = (catCounts[a.category] || 0) + 1;
       }
-      const catEmoji: Record<string, string> = { DELIVERY: "🚚", STOCK: "📦", INBOUND: "📥", TRANSFER: "🔄", EXPENSE: "💰", PAYMENT: "💳", PO: "📝" };
+      // The last four arrived with the ActivityLog source (P5). Without them the report still
+      // printed the line, but as a bullet and the raw key — "• MASTER_DATA: 3".
+      const catEmoji: Record<string, string> = {
+        DELIVERY: "🚚", STOCK: "📦", INBOUND: "📥", TRANSFER: "🔄", EXPENSE: "💰", PAYMENT: "💳", PO: "📝",
+        AUDIT: "📋", ISSUE: "⚠️", ZOHO: "🔄", MASTER_DATA: "🏷️",
+      };
+      const catLabel: Record<string, string> = { MASTER_DATA: "MASTER DATA" };
       for (const [cat, count] of Object.entries(catCounts)) {
-        msg += `${catEmoji[cat] || "•"} ${cat}: ${count}\n`;
+        msg += `${catEmoji[cat] || "•"} ${catLabel[cat] || cat}: ${count}\n`;
       }
 
       // Per-user summary
@@ -139,12 +137,19 @@ function InwardsEODReport() {
   const handleShare = async () => {
     setSharing(true);
     try {
-      const today = new Date().toISOString().split("T")[0];
+      const today = getTodayIST();
       const dateStr = new Date().toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 
       const [inwardsRes, transfersRes, inboundRes] = await Promise.all([
         fetch(`/api/inventory/inwards?dateFrom=${today}&limit=100&mine=true`).then(r => r.json()),
-        fetch(`/api/transfers?dateFrom=${today}&limit=100`).then(r => r.json()),
+        // /api/transfer-orders, not the legacy /api/transfers, which P13 deletes.
+        //
+        // This repoint fixes three bugs at once. The old route IGNORED dateFrom entirely — it
+        // only ever read `status` — so "Transfers: N today" was really the last 100 transfer
+        // ledger rows of all time. It also had no transferNo and no status column (status was
+        // a substring inside `notes`), so the detail lines below fell back to an id fragment
+        // and printed "PENDING" for every row regardless of the truth.
+        fetch(`/api/transfer-orders?dateFrom=${today}&limit=100`).then(r => r.json()),
         fetch(`/api/inventory/inwards?dateFrom=${today}&limit=100`).then(r => r.json()),
       ]);
 
@@ -179,8 +184,15 @@ function InwardsEODReport() {
       if (transfers.length > 0) {
         msg += `*Transfer Details:*\n`;
         for (const t of transfers.slice(0, 10)) {
-          const no = t.transferNo || t.id?.slice(0, 8);
-          const status = t.status || "PENDING";
+          // Real columns now: orderNo is TRF-YYYYMM-NNNN and status is the enum. The old
+          // `|| "PENDING"` fallback is gone deliberately — it was not a fallback, it was the
+          // only value that ever printed.
+          //
+          // getStatusLabel, not the raw enum. This string is pasted into WhatsApp and read by
+          // a person, and P14 introduced IN_TRANSIT — which would have arrived in the owner’s
+          // evening summary as "TRF-202609-0001: IN_TRANSIT", underscore and all.
+          const no = t.orderNo || t.id?.slice(0, 8);
+          const status = getStatusLabel(t.status);
           msg += `• ${no}: ${status}\n`;
         }
         if (transfers.length > 10) msg += `... +${transfers.length - 10} more\n`;
@@ -226,12 +238,12 @@ function AdminDashboard() {
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    const today = new Date().toISOString().split("T")[0];
+    const today = getTodayIST();
     const safeFetch = (url: string) => fetch(url).then((r) => r.ok ? r.json() : { success: false }).catch(() => ({ success: false }));
 
     Promise.all([
       safeFetch("/api/accounts/summary"),
-      safeFetch("/api/ai/dashboard-insights"),
+      safeFetch("/api/dashboard/stats"),
       safeFetch(`/api/inventory/inwards?dateFrom=${today}&limit=1`),
       safeFetch(`/api/inventory/outwards?dateFrom=${today}&limit=1`),
       safeFetch("/api/health/summary"),
@@ -257,8 +269,6 @@ function AdminDashboard() {
           inboundInTransit: inboundRes.success ? (inboundRes.data?.inTransit?.items || 0) : 0,
           inboundArrivingThisWeek: inboundRes.success ? (inboundRes.data?.arrivingThisWeek?.items || 0) : 0,
           overdueBillsList: acct?.overdueBillsList || [],
-          insights: insightData.filter((i: { type: string }) => i.type !== "stock_value" && i.type !== "reorder"),
-          people: healthRes.success ? (healthRes.data?.people || []) : [],
           todaySummary: healthRes.success ? (healthRes.data?.today || {}) : {},
           criticalAlerts: healthRes.success ? (healthRes.data?.criticalAlerts || []) : [],
         });
@@ -340,9 +350,11 @@ function AdminDashboard() {
         </Link>
       </div>
 
-      {/* Operations + Service Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-3">
-        <Link href="/reorder" className="focus-ring rounded-xl">
+      {/* Operations + Service Row — three tiles since the AI Insights tile was removed with
+          the /ai page. grid-cols-3 rather than the old 2/4 split, which now left a hole at
+          both breakpoints. Matches the other three-tile grids in this file. */}
+      <div className="grid grid-cols-3 gap-2 mt-3">
+        <Link href="/purchase-orders?tab=reorder" className="focus-ring rounded-xl">
           <Card className={`min-h-[44px] ${data.lowStockCount > 0 ? "border-red-200" : ""}`}>
             <CardContent className="p-2.5 text-center">
               <AlertTriangle className="h-4 w-4 text-red-500 mx-auto mb-0.5" />
@@ -366,15 +378,6 @@ function AdminDashboard() {
               <ShieldAlert className="h-4 w-4 text-red-500 mx-auto mb-0.5" />
               <p className="text-xl font-bold text-slate-900 tabular-nums leading-none">{data.openVendorIssues}</p>
               <p className="text-[11px] font-medium text-slate-500 mt-1">Ops Issues</p>
-            </CardContent>
-          </Card>
-        </Link>
-        <Link href="/ai" className="focus-ring rounded-xl">
-          <Card className="min-h-[44px]">
-            <CardContent className="p-2.5 text-center">
-              <Brain className="h-4 w-4 text-purple-500 mx-auto mb-0.5" />
-              <p className="text-xl font-bold text-slate-900 tabular-nums leading-none">{data.insights.length}</p>
-              <p className="text-[11px] font-medium text-slate-500 mt-1">AI Insights</p>
             </CardContent>
           </Card>
         </Link>
@@ -402,71 +405,9 @@ function AdminDashboard() {
         <ShareDailyReport />
       </div>
 
-      {/* Smart Insights */}
-      {data.insights.length > 0 && (
-        <Card className="mt-4">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-1.5">
-              <Brain className="h-4 w-4 text-purple-600" />
-              Smart Insights
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {data.insights.slice(0, 4).map((item) => (
-              <div key={item.type} className="flex items-center gap-2">
-                <Badge variant={item.severity === "danger" ? "danger" : item.severity === "warning" ? "warning" : item.severity === "success" ? "success" : "info"} className="text-[10px] shrink-0">
-                  {item.severity === "danger" ? "!" : item.severity === "warning" ? "~" : "i"}
-                </Badge>
-                <p className="text-xs text-slate-700">{item.title}</p>
-              </div>
-            ))}
-            <Link href="/ai" className="text-xs text-blue-600 font-medium block pt-1 focus-ring rounded">View all insights</Link>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Critical Alerts moved to top of dashboard */}
 
-      {/* Team Health — Per-person accountability */}
-      {data.people.length > 0 && (
-        <Card className="mt-4">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-1.5">
-              <Users className="h-4 w-4 text-slate-600" />
-              Team Health
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {data.people.map((person) => (
-              <div key={person.name} className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
-                <div>
-                  <p className="text-sm font-medium text-slate-900">{person.name}</p>
-                  <p className="text-[11px] text-slate-500">{person.role}</p>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {person.overdue72h > 0 && (
-                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-200 text-red-900 tabular-nums animate-pulse">
-                      {person.overdue72h} 72h+
-                    </span>
-                  )}
-                  {person.overdue48h > person.overdue72h && (
-                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-red-100 text-red-800 tabular-nums">
-                      {person.overdue48h - person.overdue72h} 48h+
-                    </span>
-                  )}
-                  {person.overdue24h > person.overdue48h && (
-                    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-yellow-100 text-yellow-800 tabular-nums">
-                      {person.overdue24h - person.overdue48h} 24h+
-                    </span>
-                  )}
-                  <span className="text-sm font-bold text-slate-700 tabular-nums">{person.pending}</span>
-                  <span className="text-[11px] text-slate-400">pending</span>
-                </div>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+
 
       {/* Today's Summary */}
       {data.todaySummary && (
@@ -547,7 +488,7 @@ function SupervisorDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const today = new Date().toISOString().split("T")[0];
+    const today = getTodayIST();
     const safeFetch = (url: string) => fetch(url).then((r) => r.ok ? r.json() : { success: false }).catch(() => ({ success: false }));
 
     Promise.all([
@@ -690,7 +631,7 @@ function ClerkDashboard({ type }: { type: "inward" | "outward" }) {
   const [shareOpen, setShareOpen] = useState(false);
 
   useEffect(() => {
-    const today = new Date().toISOString().split("T")[0];
+    const today = getTodayIST();
     const endpoint = type === "inward" ? "/api/inventory/inwards" : "/api/inventory/outwards";
     Promise.all([
       fetch(`${endpoint}?dateFrom=${today}&limit=50&mine=true`).then(r => r.json()),
@@ -920,11 +861,11 @@ function PurchaseManagerDashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const today = new Date().toISOString().split("T")[0];
+    const today = getTodayIST();
     const safeFetch = (url: string) => fetch(url).then((r) => r.ok ? r.json() : { success: false }).catch(() => ({ success: false }));
     Promise.all([
       safeFetch("/api/products?limit=1&status=ACTIVE"),
-      safeFetch("/api/ai/dashboard-insights"),
+      safeFetch("/api/dashboard/stats"),
       safeFetch(`/api/inventory/inwards?dateFrom=${today}&limit=1`),
     ]).then(([prodRes, insightsRes, inwardsRes]) => {
       const insightData = insightsRes.success ? insightsRes.data : [];
@@ -947,7 +888,7 @@ function PurchaseManagerDashboard() {
     <>
     {/* What needs me now — Low Stock first */}
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      <Link href="/reorder" className="focus-ring rounded-xl"><DashboardCard label="Low Stock" value={stats.lowStock} icon={AlertTriangle} color="bg-red-100 text-red-600" /></Link>
+      <Link href="/purchase-orders?tab=reorder" className="focus-ring rounded-xl"><DashboardCard label="Low Stock" value={stats.lowStock} icon={AlertTriangle} color="bg-red-100 text-red-600" /></Link>
       <DashboardCard label="Total Products" value={stats.totalProducts} icon={Package} color="bg-blue-100 text-blue-700" />
       <DashboardCard label="Inwards Today" value={stats.todayInwards} icon={ArrowDownCircle} color="bg-blue-100 text-blue-600" />
       <Link href="/purchase-orders" className="focus-ring rounded-xl"><DashboardCard label="Pending POs" value="—" icon={Package} color="bg-orange-100 text-orange-600" /></Link>
@@ -1005,8 +946,20 @@ function AccountsManagerDashboard() {
 
 export default function DashboardPage() {
   const { data: session } = useSession();
-  const role = ((session?.user as { role?: string })?.role || "INWARDS_EXECUTIVE") as Role;
+  const { role, can, loading } = usePermissions();
   const userName = session?.user?.name || "User";
+
+  // Which dashboard to show is decided by what the user can actually DO, not by their role's
+  // name. A role created in the UI tomorrow gets a sensible dashboard automatically; the old
+  // name-matching switch would have rendered a blank page for it.
+  function pickDashboard() {
+    if (can("team", "view") && can("reports", "view")) return <AdminDashboard />;
+    if (can("stock_audit", "approve") || can("transfers", "approve")) return <SupervisorDashboard />;
+    if (can("purchase_orders", "view")) return <PurchaseManagerDashboard />;
+    if (can("bills", "view") || can("expenses", "view")) return <AccountsManagerDashboard />;
+    if (can("deliveries", "view")) return <OutwardsClerkDashboard />;
+    return <ClerkDashboard type="inward" />;
+  }
 
   return (
     <div>
@@ -1015,21 +968,14 @@ export default function DashboardPage() {
         <p className="text-sm text-slate-500 tabular-nums">
           {new Date().toLocaleDateString("en-IN", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
         </p>
-        <p className="text-xs font-medium text-slate-400 mt-0.5">{ROLE_LABELS[role] || "Team Member"}</p>
+        <p className="text-xs font-medium text-slate-400 mt-0.5">{role?.name || "Team Member"}</p>
       </div>
 
-      {/* Morning SOP Nudge — shows for all roles */}
-      {role === "CEO" && <AdminDashboard />}
-      {role === "ADMIN" && <AdminDashboard />}
-      {role === "SUPERVISOR" && <SupervisorDashboard />}
-      {role === "PURCHASE_MANAGER" && <PurchaseManagerDashboard />}
-      {role === "ACCOUNTS_MANAGER" && <AccountsManagerDashboard />}
-      {role === "INWARDS_EXECUTIVE" && <ClerkDashboard type="inward" />}
-      {role === "OUTWARDS_EXECUTIVE" && <OutwardsClerkDashboard />}
-      {role === "STORE_MANAGER" && <SupervisorDashboard />}
-      {role === "SALES_MANAGER" && <OutwardsClerkDashboard />}
-      {role === "SERVICE_MANAGER" && <ClerkDashboard type="inward" />}
-      {role === "CUSTOM" && <ClerkDashboard type="inward" />}
+      {/* Above the role dashboard: audits and assembly builds assigned to you */}
+      {!loading && can("stock_audit", "view") && <MyStockAudits />}
+      {!loading && can("assembly", "view") && <MyAssemblyTasks />}
+
+      {!loading && pickDashboard()}
     </div>
   );
 }

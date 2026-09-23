@@ -4,12 +4,84 @@ export const maxDuration = 60; // Approve step now fetches bill details from Zoh
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { createLogger } from "@/lib/logger";
+import { PLACEHOLDER_CATEGORY } from "@/lib/import-placeholders";
+// Type-only. The clients themselves are still loaded through a dynamic import inside the
+// handler, so importing the type here adds nothing to the module graph at runtime.
+import type { BooksClient } from "@/lib/integrations";
+import {
+  storeIdForInvoice,
+  deliveryFieldsFromInvoiceDetail,
+  type DeliveryFieldsFromInvoice,
+} from "@/lib/deliveries/zoho-invoice";
+import { logActivity } from "@/lib/activity-log";
+import { nextSequence } from "@/lib/sequence";
+import { ibSeedSql } from "@/lib/inbound/sequence";
+
+// This route had no logger at all — a 499-line import handler whose only record of what it
+// did was the response body, which a 504 never delivers.
+const log = createLogger("zoho:approve");
+
+/**
+ * Where a product goes when the bill's vendor name is not a brand we know (§6).
+ *
+ * NOT `PLACEHOLDER_BRAND` ("Imported"): that spelling belongs to the deleted Zoho item
+ * import and nothing writes it any more. `Unbranded` is the spelling the catalog import
+ * used for the 8,175 rows already in the table, and it is the one the plan seeds. Both are
+ * in `PLACEHOLDER_BRAND_NAMES`, so `isPlaceholderBrand` and the "Needs details" filter treat
+ * them alike either way — this picks the one a person will actually recognise on /stock.
+ */
+const FALLBACK_BRAND_NAME = "Unbranded";
+
+/** The brand fields this route needs: the id for the FKs, the name for messages, leadDays
+ *  for the shipment's expected delivery date. */
+const BRAND_SELECT = { id: true, name: true, leadDays: true, isActive: true } as const;
+type ResolvedBrand = { id: string; name: string; leadDays: number; isActive: boolean };
+
+/**
+ * Read the placeholder brand row, creating it ONCE if it is genuinely absent.
+ *
+ * This is the one brand write left in this file, and it is deliberate: a placeholder is not
+ * taxonomy. It exists because `Product.brandId` is non-null, so an import that cannot name a
+ * brand still has to write one. Everything else here resolves.
+ */
+async function resolvePlaceholderBrand(billNo: string): Promise<ResolvedBrand> {
+  const existing = await prisma.brand.findFirst({
+    where: { name: { equals: FALLBACK_BRAND_NAME, mode: "insensitive" } },
+    select: BRAND_SELECT,
+  });
+  if (existing) return existing;
+
+  log.warn("placeholder brand row absent — creating it once", { billNo, brand: FALLBACK_BRAND_NAME });
+  try {
+    return await prisma.brand.create({ data: { name: FALLBACK_BRAND_NAME }, select: BRAND_SELECT });
+  } catch (e) {
+    // `Brand.name` is unique, so the likely cause is a concurrent approve that won the race.
+    // Re-read before giving up — a lost race must not fail somebody's bill.
+    log.warn("placeholder brand create failed — re-reading", {
+      billNo,
+      error: e instanceof Error ? e.message : String(e),
+    });
+    const raced = await prisma.brand.findFirst({
+      where: { name: { equals: FALLBACK_BRAND_NAME, mode: "insensitive" } },
+      select: BRAND_SELECT,
+    });
+    if (raced) return raced;
+    log.error("placeholder brand could not be resolved or created", { billNo });
+    throw new Error(
+      `Brand "${FALLBACK_BRAND_NAME}" is missing and could not be created — run \`npm run db:seed\` and approve this pull again`
+    );
+  }
+}
 
 // POST — approve or reject a pull
 export async function POST(req: NextRequest) {
+  // Wall-clock for the finish log. This route dies at maxDuration = 60 under load, so how
+  // long a successful run took is the number that says how close to the cliff it is.
+  const startedAt = Date.now();
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "ACCOUNTS_MANAGER", "PURCHASE_MANAGER"]);
+    const user = await requireFeature("zoho", "approve");
     const body = await req.json();
     const { pullId, action, entityType, previewIds, source } = body as {
       pullId: string; action: "approve" | "reject"; entityType?: string; previewIds?: string[]; source?: string;
@@ -61,99 +133,50 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── APPROVE: write to real tables ───
-    const results = { contacts: 0, items: 0, bills: 0, invoices: 0, errors: [] as string[] };
+    // `contacts` and `items` are always 0 — those two branches were deleted with the Zoho
+    // item import. The keys stay because four screens read this response shape, and a 0 is
+    // the honest answer rather than a missing field they would have to guard against.
+    //
+    // Products ARE still created here, by the BILL branch, when a bill line names a SKU the
+    // catalog does not have. That is deliberate and was decided explicitly: an inbound
+    // shipment must be able to receive something the catalog has not met yet.
+    // `skipped` is new: an already-imported record is a normal outcome, not an error and not a
+    // silent nothing. Before this a re-import reported "0 imported" with no explanation.
+    // `notices` is NOT a second error list (§6.1). It carries the things the import DID that
+    // a person should know about — a product auto-created, a brand or category that did not
+    // match and was filed under a placeholder. They used to be pushed into `errors`, where a
+    // successful import read as a failed one and, worse, left the pull stuck at PARTIAL.
+    // `errors` keeps its meaning exactly: the record did not import.
+    const results = { contacts: 0, items: 0, bills: 0, invoices: 0, skipped: 0, errors: [] as string[], notices: [] as string[] };
 
-    // Mirror Zoho categories — use exact category_name from Zoho, fallback to "Uncategorized"
-    const categoryCache: Record<string, string> = {};
-    async function resolveCategory(zohoCategoryName?: string): Promise<string> {
-      const catName = (zohoCategoryName || "").trim() || "Uncategorized";
-      if (!categoryCache[catName]) {
-        let cat = await prisma.category.findFirst({ where: { name: catName } });
-        if (!cat) cat = await prisma.category.create({ data: { name: catName, description: `Zoho category: ${catName}` } });
-        categoryCache[catName] = cat.id;
-      }
-      return categoryCache[catName];
-    }
-    let defaultBrand = await prisma.brand.findFirst({ where: { name: "Imported" } });
-    if (!defaultBrand) {
-      defaultBrand = await prisma.brand.create({ data: { name: "Imported" } });
-    }
+    // Every store, for invoice-prefix attribution (O8). Two rows; loaded once, not per record.
+    const stores = await prisma.store.findMany({
+      select: { id: true, invoicePrefix: true },
+    });
 
-    const adminUser = await prisma.user.findFirst({ where: { role: "ADMIN" } });
+    // Imported records are attributed to a system-role account when one exists, so the audit
+    // trail doesn't credit whoever happened to click Approve.
+    const adminUser = await prisma.user.findFirst({
+      where: { role: { isSystem: true }, isActive: true },
+      orderBy: { createdAt: "asc" },
+    });
     const systemUserId = adminUser?.id || user.id;
 
     for (const preview of previews) {
       const d = preview.data as Record<string, unknown>;
       try {
-        if (preview.entityType === "contact") {
-          const code = String(d.name || "")
-            .replace(/[^a-zA-Z0-9]/g, "")
-            .substring(0, 6)
-            .toUpperCase() + String(Date.now()).slice(-4);
-
-          await prisma.vendor.create({
-            data: {
-              name: String(d.name),
-              code,
-              gstin: String(d.gstin || "") || null,
-              email: String(d.email || "") || null,
-              phone: String(d.phone || "") || null,
-              city: String(d.city || "") || null,
-              state: String(d.state || "") || null,
-            },
-          });
-          results.contacts++;
-        } else if (preview.entityType === "item") {
-          const sku = (String(d.sku || "") || `ZOHO-${String(Date.now()).slice(-6)}`).substring(0, 50);
-
-          // Double-check dedup
-          const exists = await prisma.product.findFirst({ where: { sku } });
-          if (exists) continue;
-
-          // Resolve brand from Zoho data (free — comes from list API)
-          let itemBrandId = defaultBrand.id;
-          const zohoBrand = String(d.brand || "").trim();
-          if (zohoBrand) {
-            let brand = await prisma.brand.findFirst({ where: { name: { equals: zohoBrand, mode: "insensitive" } } });
-            if (!brand) {
-              brand = await prisma.brand.create({ data: { name: zohoBrand } });
-            }
-            itemBrandId = brand.id;
-          }
-
-          // Auto-classify product type from name
-          const pName = String(d.name).toLowerCase();
-          const autoType = /\bcycl|bicycl|bike\b/.test(pName) ? "BICYCLE"
-            : /\btube|tyre|tire|brake|chain|spoke|pedal|gear|rim|handle|seat|mudguard|bell|lock|pump|light|carrier|stand|fork|derailleur|shifter|cassette|crank\b/.test(pName) ? "SPARE_PART"
-            : "ACCESSORY";
-
-          const itemCategoryId = await resolveCategory(String(d.categoryName || ""));
-
-          await prisma.product.create({
-            data: {
-              sku,
-              name: String(d.name),
-              categoryId: itemCategoryId,
-              brandId: itemBrandId,
-              type: autoType,
-              costPrice: Number(d.costPrice || 0),
-              sellingPrice: Number(d.sellingPrice || 0),
-              mrp: Number(d.sellingPrice || 0),
-              gstRate: Number(d.gstRate || 18),
-              hsnCode: String(d.hsnCode || ""),
-              currentStock: 0, // App manages its own stock
-              zohoItemId: preview.zohoId || null,
-            },
-          });
-          results.items++;
-        } else if (preview.entityType === "bill") {
+        if (preview.entityType === "bill") {
           // Fetch line items from Zoho if not in preview data
           let lineItems = (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];
           if (lineItems.length === 0 && preview.zohoId) {
             try {
-              const { ZohoClient } = await import("@/lib/zoho");
-              const zoho = new ZohoClient();
-              if (await zoho.init()) {
+              // getBooks(), not `new BooksClient()` + init(). This sits INSIDE the
+              // per-preview loop, so the old form paid one IntegrationConfig read — and a
+              // token refresh whenever the token was near expiry — for every bill in the
+              // batch. getBooks is request-scoped, so the whole approve now pays once.
+              const { getBooks } = await import("@/lib/integrations");
+              const zoho = await getBooks();
+              if (zoho) {
                 const detail = await zoho.getBill(preview.zohoId);
                 lineItems = (detail.bill?.line_items || []).map((li) => ({
                   name: li.name, sku: li.sku || "", quantity: li.quantity, rate: li.rate, itemTotal: li.item_total, item_id: li.item_id,
@@ -184,13 +207,15 @@ export async function POST(req: NextRequest) {
             select: { id: true, shipmentNo: true },
           });
           if (existsShipment) {
-            results.errors.push(`${d.billNumber}: already has shipment ${existsShipment.shipmentNo}`);
+            // Not an error — a re-fetched window whose bills are already in is normal.
+            results.skipped++;
+            log.debug("bill already has a shipment", { billNo: String(d.billNumber), shipmentNo: existsShipment.shipmentNo });
             await prisma.zohoPullPreview.update({ where: { id: preview.id }, data: { status: "APPROVED", reviewedAt: new Date(), reviewedById: user.id } });
             continue;
           }
 
           // Reuse existing VendorBill if it exists (e.g. from accounting import), or create new
-          let existingVB = await prisma.vendorBill.findFirst({ where: { billNo: String(d.billNumber) } });
+          const existingVB = await prisma.vendorBill.findFirst({ where: { billNo: String(d.billNumber) } });
 
           const total = Number(d.total || 0);
           const balance = Number(d.balance || 0);
@@ -200,24 +225,80 @@ export async function POST(req: NextRequest) {
           // create products or touch the stock chain, so the whole loop is skipped for them.
           const matchedProducts: Array<{ li: typeof lineItems[0]; product: { id: string; currentStock: number } }> = [];
 
+          // The brand for this bill — for its new products AND, further down, for the
+          // InboundShipment header. Declared out here because the shipment code sits outside
+          // the non-accounting block below; there used to be a SECOND find-or-create there,
+          // so one bill had two chances to invent the same brand. Stays null on the
+          // accounting path, which returns before the shipment is ever built.
+          let itemBrand: ResolvedBrand | null = null;
+
           if (source !== "accounting") {
-          // Resolve brand for new products (use vendor name as brand)
+          // ─── Brand: RESOLVE, never invent (§6) ────────────────────────────────────────
+          // This used to `brand.create` the bill's vendor name on every miss, which is how
+          // the brand list filled up with distributor names. A vendor is not a brand. On a
+          // miss the product is filed under the placeholder and the operator is told which
+          // vendor it was, so they can create the real brand on /more/brands and fix it.
           const billVendorName = String(d.vendorName).trim();
-          let itemBrand = await prisma.brand.findFirst({ where: { name: { equals: billVendorName, mode: "insensitive" } } });
-          if (!itemBrand) itemBrand = await prisma.brand.create({ data: { name: billVendorName } });
+          itemBrand = await prisma.brand.findFirst({
+            where: { name: { equals: billVendorName, mode: "insensitive" } },
+            select: BRAND_SELECT,
+          });
+          if (itemBrand) {
+            log.info("brand resolved from vendor name", {
+              billNo: String(d.billNumber), brandId: itemBrand.id,
+            });
+            // An inactive match is still the brand (identity is identity); the product is
+            // filed under it and the person is told, rather than the import inventing a
+            // second row or silently un-retiring this one.
+            if (!itemBrand.isActive) {
+              log.warn("resolved brand is inactive", { billNo: String(d.billNumber), brandId: itemBrand.id });
+              results.notices.push(
+                `Brand "${itemBrand.name}" is inactive — product filed under it; re-activate on /more/brands`
+              );
+            }
+          } else {
+            itemBrand = await resolvePlaceholderBrand(String(d.billNumber));
+            log.warn("vendor name matches no brand — filing under placeholder", {
+              billNo: String(d.billNumber), vendorName: billVendorName, brandId: itemBrand.id,
+            });
+            results.notices.push(`Brand "${billVendorName}" not found — product filed under ${FALLBACK_BRAND_NAME}`);
+          }
 
-          // Default category fallback
-          let defaultCategory = await prisma.category.findFirst({ where: { name: "Uncategorized" } });
-          if (!defaultCategory) defaultCategory = await prisma.category.create({ data: { name: "Uncategorized", description: "Auto-created from bill import" } });
+          // Default category fallback — the shared placeholder name. READ ONLY (§6): the
+          // row is seeded, and an import is not the thing that should be creating taxonomy.
+          // If it is genuinely gone, this bill fails with an instruction rather than
+          // quietly re-creating a row somebody may have deliberately renamed.
+          const defaultCategory = await prisma.category.findFirst({
+            where: { name: { equals: PLACEHOLDER_CATEGORY, mode: "insensitive" } },
+            select: { id: true, name: true },
+          });
+          if (!defaultCategory) {
+            log.error("placeholder category row missing", {
+              billNo: String(d.billNumber), category: PLACEHOLDER_CATEGORY,
+            });
+            throw new Error(
+              `Category "${PLACEHOLDER_CATEGORY}" is missing — run \`npm run db:seed\` and approve this pull again`
+            );
+          }
 
-          // Init Zoho client for fetching item details (category, HSN, etc.)
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let zohoForItems: any = null;
+          // The client for fetching item details (category, HSN, tax). Same shared,
+          // request-scoped client as the getBill call above — asking twice in one request
+          // returns the same instance, so this costs nothing after the first bill.
+          //
+          // `any` is gone with it: getBooks() returns a typed BooksClient | null, and the
+          // eslint-disable that suppressed the complaint is no longer needed.
+          let zohoForItems: BooksClient | null = null;
           try {
-            const { ZohoClient: ZC } = await import("@/lib/zoho");
-            const z = new ZC();
-            if (await z.init()) zohoForItems = z;
-          } catch { /* best effort */ }
+            const { getBooks } = await import("@/lib/integrations");
+            zohoForItems = await getBooks();
+          } catch (e) {
+            // Best effort — a missing item detail costs category and HSN, not the import.
+            // But a swallowed error with no log is a bug, so say what was lost.
+            log.warn("item detail client unavailable; importing without category/HSN", {
+              pullId,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
 
           for (let liIdx = 0; liIdx < lineItems.length; liIdx++) {
             const li = lineItems[liIdx];
@@ -240,6 +321,10 @@ export async function POST(req: NextRequest) {
             if (!product) {
               // Fetch item details from Zoho for category, HSN, tax
               let zohoCategoryName = "";
+              // Zoho's own `category_id`. The Category row now carries it (`zohoCategoryId`,
+              // migration 20260908090622), so the item's category can be resolved by a
+              // stable handle instead of by a string that either side may have renamed.
+              let zohoCategoryId = "";
               let zohoHsn = "";
               let zohoTax = 18;
               if (zohoForItems && zohoItemId) {
@@ -247,17 +332,59 @@ export async function POST(req: NextRequest) {
                   const detail = await zohoForItems.getItem(zohoItemId);
                   const item = detail.item || {};
                   zohoCategoryName = String(item.category_name || "").trim();
+                  zohoCategoryId = String(item.category_id || "").trim();
                   zohoHsn = String(item.hsn_or_sac || "").trim();
                   zohoTax = Number(item.tax_percentage || 18);
-                } catch { /* best effort */ }
+                } catch (e) {
+                  // Best effort — this costs category, HSN and tax, not the import. But it
+                  // was a bare `catch {}`, so the loss left no trace anywhere.
+                  log.warn("item detail fetch failed; category/HSN unknown", {
+                    billNo: String(d.billNumber),
+                    zohoItemId,
+                    error: e instanceof Error ? e.message : String(e),
+                  });
+                }
               }
 
-              // Resolve category from Zoho or fallback
-              let productCategory = defaultCategory;
-              if (zohoCategoryName) {
-                let cat = await prisma.category.findFirst({ where: { name: zohoCategoryName } });
-                if (!cat) cat = await prisma.category.create({ data: { name: zohoCategoryName, description: `From Zoho: ${zohoCategoryName}` } });
-                productCategory = cat;
+              // ─── Category: RESOLVE, never invent (§6) ───────────────────────────────
+              // By Zoho's id first, then by name CASE-INSENSITIVELY, else the placeholder.
+              // The old code did a case-SENSITIVE findFirst on a `@unique` name and created
+              // on a miss: Zoho answering "Tyres" against a row named "tyres" therefore threw
+              // a unique-constraint error that failed the whole bill, not just the line.
+              let productCategory: { id: string; name: string } = defaultCategory;
+              if (zohoCategoryId || zohoCategoryName) {
+                const cat =
+                  (zohoCategoryId
+                    ? await prisma.category.findFirst({
+                        where: { zohoCategoryId },
+                        select: { id: true, name: true, isActive: true },
+                      })
+                    : null) ??
+                  (zohoCategoryName
+                    ? await prisma.category.findFirst({
+                        where: { name: { equals: zohoCategoryName, mode: "insensitive" } },
+                        select: { id: true, name: true, isActive: true },
+                      })
+                    : null);
+                if (cat) {
+                  productCategory = cat;
+                  log.info("category resolved", {
+                    billNo: String(d.billNumber), zohoItemId, categoryId: cat.id,
+                  });
+                  // Same rule as the brand above: an inactive match is used and reported.
+                  if (!cat.isActive) {
+                    results.notices.push(
+                      `Bill ${d.billNumber}: category "${cat.name}" is inactive — "${li.name}" filed under it; re-activate on /categories`
+                    );
+                  }
+                } else {
+                  log.warn("zoho category matches no row — using placeholder", {
+                    billNo: String(d.billNumber), zohoItemId, zohoCategoryId, zohoCategoryName,
+                  });
+                  results.notices.push(
+                    `Bill ${d.billNumber}: category "${zohoCategoryName || zohoCategoryId}" not found — "${li.name}" filed under ${defaultCategory.name}`
+                  );
+                }
               }
 
               // Generate unique SKU — check for conflicts
@@ -291,7 +418,12 @@ export async function POST(req: NextRequest) {
                 },
                 select: { id: true, currentStock: true },
               });
-              results.errors.push(`Bill ${d.billNumber}: auto-created "${li.name}" (${sku}) in ${productCategory.name}`);
+              // A NOTICE, not an error (§6.1): this line succeeded. Reporting it as a failure
+              // is what made a clean import look broken and held the pull at PARTIAL.
+              log.info("product auto-created from bill line", {
+                billNo: String(d.billNumber), productId: product.id, sku, categoryId: productCategory.id,
+              });
+              results.notices.push(`Bill ${d.billNumber}: auto-created "${li.name}" (${sku}) in ${productCategory.name}`);
             }
             matchedProducts.push({ li, product });
           }
@@ -327,32 +459,39 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
-          // Resolve brand from vendor name (find or create)
-          const vendorName = String(d.vendorName).trim();
-          let shipmentBrand = await prisma.brand.findFirst({ where: { name: { equals: vendorName, mode: "insensitive" } } });
-          if (!shipmentBrand) {
-            shipmentBrand = await prisma.brand.create({ data: { name: vendorName } });
+          // The shipment header's brand is the brand already resolved for this bill (§6).
+          // A second find-or-create used to sit right here — the same vendor name, looked up
+          // again and created again, so closing only the first path would have left the
+          // second one inventing brands on its own. `InboundShipment.brandId` is non-null
+          // (schema.prisma:1819) and the resolved-or-placeholder brand satisfies it.
+          //
+          // `itemBrand` is set by the non-accounting block above, and the accounting path
+          // already returned at the `continue` a few lines up, so it is non-null here. The
+          // check is type narrowing; if it ever fires, the bill fails loudly instead of
+          // writing a shipment against a brand nobody chose.
+          if (!itemBrand) {
+            log.error("brand unresolved at shipment create", { billNo: String(d.billNumber) });
+            throw new Error(`Bill ${d.billNumber}: brand was not resolved — shipment not created`);
           }
-          const shipmentBrandId = shipmentBrand.id;
+          const shipmentBrandId = itemBrand.id;
 
-          // Look up brand lead time for expected delivery date
-          const brandLeadTime = await prisma.brandLeadTime.findUnique({ where: { brandId: shipmentBrandId } });
-          const leadDays = brandLeadTime?.leadDays || 7;
+          // Lead time comes off the brand row already fetched above — it used to be a
+          // separate BrandLeadTime lookup, i.e. a whole extra round trip INSIDE the
+          // per-record import loop for a value that was already in memory.
+          const leadDays = itemBrand.leadDays || 7;
           const expectedDeliveryDate = new Date(billDate);
           expectedDeliveryDate.setDate(expectedDeliveryDate.getDate() + leadDays);
 
-          // Generate shipment number: IB-YYYYMM-0001
+          // Shipment number: IB-YYYYMM-0001, allocated atomically (§4 Counter).
+          //
+          // This is the worse of the two IB- allocators it replaces: a read-then-write
+          // running INSIDE a loop that imports a whole batch within one 60-second function.
+          // Every bill in the batch re-read "the last shipment number", so two concurrent
+          // imports — or one import racing a manual create on /inbound — collided on a
+          // unique column. Both allocators switch in the same change.
           const now = new Date();
           const prefix = `IB-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-          const lastShipment = await prisma.inboundShipment.findFirst({
-            where: { shipmentNo: { startsWith: prefix } },
-            orderBy: { shipmentNo: "desc" },
-            select: { shipmentNo: true },
-          });
-          const seq = lastShipment
-            ? parseInt(lastShipment.shipmentNo.split("-").pop() || "0") + 1
-            : 1;
-          const shipmentNo = `${prefix}-${String(seq).padStart(4, "0")}`;
+          const shipmentNo = `${prefix}-${await nextSequence(prisma, prefix, 4, ibSeedSql(prefix))}`;
 
           const totalAmount = matchedProducts.reduce((s, { li }) => s + (li.itemTotal || li.rate * li.quantity), 0);
 
@@ -416,47 +555,86 @@ export async function POST(req: NextRequest) {
 
           results.bills++;
         } else if (preview.entityType === "invoice") {
-          let lineItems = (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];
-          let salesPerson = String(d.salesPerson || "");
+          const invoiceNo = String(d.invoiceNumber);
 
-          // Fetch invoice detail from Zoho for line items + salesperson
-          if ((lineItems.length === 0 || !salesPerson) && preview.zohoId) {
+          // DEDUP FIRST, and it is no longer silent.
+          //
+          // This used to be a bare `continue` AFTER the detail fetch, which had three
+          // consequences: a wasted Zoho round trip per duplicate, `results.invoices` never
+          // incremented so re-imports were under-reported as "0 imported", and — worst — the
+          // `continue` skipped the `preview.update` below, so the preview stayed PENDING
+          // FOREVER and the pull could never leave PARTIAL.
+          const exists = await prisma.delivery.findFirst({ where: { invoiceNo } });
+          if (exists) {
+            results.skipped++;
+            log.debug("invoice already imported", { invoiceNo, deliveryId: exists.id });
+            await prisma.zohoPullPreview.update({
+              where: { id: preview.id },
+              data: { status: "APPROVED", reviewedAt: new Date(), reviewedById: user.id },
+            });
+            continue;
+          }
+
+          let fields: DeliveryFieldsFromInvoice | null = null;
+
+          // ALWAYS fetch the detail, and ask the SAME provider that found it.
+          //
+          // Only `getBooks()` was tried before, so on a Zakya-only setup the detail call
+          // returned nothing and every imported delivery arrived with no line items, no
+          // address, no area and no pincode — the dispatch clerk had nothing to route by.
+          // `provider` is written into the preview by trigger-pull (named `provider`, not
+          // `source`, because this route already has a `source` body field meaning something
+          // else entirely).
+          if (preview.zohoId) {
             try {
-              const { ZohoClient } = await import("@/lib/zoho");
-              const zoho = new ZohoClient();
-              if (await zoho.init()) {
+              const { getBooks, getZakya } = await import("@/lib/integrations");
+              const provider = String(d.provider || "");
+              const zoho =
+                provider === "pos"
+                  ? (await getZakya()) ?? (await getBooks())
+                  : provider === "books"
+                    ? (await getBooks()) ?? (await getZakya())
+                    : (await getZakya()) ?? (await getBooks());
+              if (zoho) {
                 const detail = await zoho.getInvoice(preview.zohoId);
-                const inv = detail.invoice;
-                if (inv) {
-                  if (lineItems.length === 0 && inv.line_items?.length) {
-                    lineItems = inv.line_items.map((li) => ({
-                      name: li.name, sku: li.sku || "", quantity: li.quantity, rate: li.rate, itemTotal: li.item_total,
-                    }));
-                  }
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  if (!salesPerson) salesPerson = (inv as any).salesperson_name || "";
-                }
+                if (detail.invoice) fields = deliveryFieldsFromInvoiceDetail(detail.invoice);
+              } else {
+                results.errors.push(`Invoice ${invoiceNo}: no Zoho client to fetch details`);
               }
             } catch (e) {
-              results.errors.push(`Invoice ${d.invoiceNumber}: failed to fetch details — ${e instanceof Error ? e.message : "Unknown"}`);
+              results.errors.push(`Invoice ${invoiceNo}: failed to fetch details — ${e instanceof Error ? e.message : "Unknown"}`);
             }
           }
 
-          // Dedup
-          const exists = await prisma.delivery.findFirst({ where: { invoiceNo: String(d.invoiceNumber) } });
-          if (exists) continue;
+          // WHICH STORE sold it (O8). Resolved at pull time and stored on the preview; the
+          // prefix rule is re-applied here as a fallback so a preview written before the
+          // stores had prefixes still lands on the right store when they are filled in.
+          const storeId =
+            (d.storeId ? String(d.storeId) : null) ?? storeIdForInvoice(invoiceNo, stores);
 
+          const previewLineItems =
+            (d.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number; itemTotal: number }>) || [];
+
+          // The detail supplies the rich fields; the PREVIEW wins on the four it already knows
+          // authoritatively, because those came from the listing this import is approving.
           await prisma.delivery.create({
             data: {
-              invoiceNo: String(d.invoiceNumber),
+              ...(fields ?? {}),
+              invoiceNo,
               zohoInvoiceId: preview.zohoId,
               invoiceDate: new Date(String(d.date)),
               invoiceAmount: Number(d.total || 0),
               customerName: String(d.customerName),
-              customerPhone: String(d.phone || "") || null,
-              salesPerson: salesPerson || null,
+              customerPhone: fields?.customerPhone ?? (String(d.phone || "") || null),
+              salesPerson: fields?.salesPerson || String(d.salesPerson || "") || null,
+              storeId,
               status: "PENDING",
-              lineItems: lineItems.length > 0 ? lineItems : undefined,
+              lineItems:
+                fields && fields.lineItems.length > 0
+                  ? fields.lineItems
+                  : previewLineItems.length > 0
+                    ? previewLineItems
+                    : undefined,
             },
           });
           results.invoices++;
@@ -480,6 +658,32 @@ export async function POST(req: NextRequest) {
       data: { status: newStatus, approvedAt: remainingPending === 0 ? new Date() : undefined },
     });
 
+    // The one durable record of what an approve actually did. Identifiers and counts only —
+    // never the records themselves. This matters most in the case where the response never
+    // arrives: if the function is killed at maxDuration the client sees a 504 with no body,
+    // and without this line there is no way afterwards to tell what got in before the kill.
+    log.info("approve finished", {
+      pullId,
+      requestedBy: user.id,
+      entityType: entityType || "all",
+      contacts: results.contacts,
+      items: results.items,
+      bills: results.bills,
+      invoices: results.invoices,
+      skipped: results.skipped,
+      errors: results.errors.length,
+      notices: results.notices.length,
+      remainingPending,
+      status: newStatus,
+      ms: Date.now() - startedAt,
+    });
+
+    await logActivity(prisma, {
+      module: "zoho", action: "imported", entityType: "ZohoPull", entityId: pullId, entityRef: pullId,
+      details: `${results.invoices} deliveries, ${results.bills} shipments, ${results.skipped} skipped`,
+      userId: user.id, userName: user.name,
+    });
+
     return successResponse({
       action: "approved",
       entityType: entityType || "all",
@@ -488,6 +692,8 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
-    return errorResponse(error instanceof Error ? error.message : "Approval failed", 500);
+    const message = error instanceof Error ? error.message : "Approval failed";
+    log.error("approve failed", { message });
+    return errorResponse(message, 500);
   }
 }

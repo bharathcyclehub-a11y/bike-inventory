@@ -4,7 +4,7 @@ import { useState, useEffect, use } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Phone, CheckCircle2, Calendar, Truck, MapPin, RotateCcw, Save, Trash2, ShieldCheck, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Phone, CheckCircle2, Calendar, MapPin, Save, Trash2, ShieldCheck, AlertTriangle, Sparkles, Info } from "lucide-react";
 import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,12 +12,23 @@ import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { usePermissions } from "@/lib/use-permissions";
-import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, DEFAULT_STOCK_LOCATION, stockLocationLabel, type StockLocation } from "@/lib/inventory-config";
+import { useBinTracking } from "@/hooks/use-bin-tracking";
+import { useWarehouses } from "@/hooks/use-sites";
+import { apiTry } from "@/lib/api-client";
+import { createLogger } from "@/lib/logger";
+import { formatDateTime } from "@/lib/utils";
+
+const log = createLogger("inbound:detail");
 
 interface LineItem {
   id: string;
   productName: string;
-  product: { name: string; sku: string } | null;
+  product: {
+    name: string;
+    sku: string;
+    brand?: { id: string; name: string } | null;
+    category?: { id: string; name: string } | null;
+  } | null;
   sku: string | null;
   quantity: number;
   rate: number;
@@ -60,6 +71,7 @@ interface Shipment {
   createdBy: { name: string };
   deliveredBy: { name: string } | null;
   putawayBy: { name: string } | null;
+  putawayAt: string | null;
   createdAt: string;
   lineItems: LineItem[];
   preBookings: { id: string; customerName: string; customerPhone: string | null; status: string; productName: string }[];
@@ -71,19 +83,23 @@ function formatINR(n: number) {
   return new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(n);
 }
 
+// Date only — for Bill Date and Expected Delivery, which are dates, not moments. The moments
+// (created, approved, delivered, putaway) go through `formatDateTime` from @/lib/utils.
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
 export default function InboundDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const { warehouses } = useWarehouses();
   const { id } = use(params);
   const router = useRouter();
   const { data: session } = useSession();
-  const role = (session?.user as { role?: string })?.role || "";
-  const { canEdit: canEditCheck, canApprove: canApproveCheck } = usePermissions(role);
-  const isAdmin = role === "ADMIN" || role === "CEO";
+  const { canEdit: canEditCheck, canApprove: canApproveCheck, canView } = usePermissions();
+  // Line rate / amount / total are MONEY, so cost_price — not "is this person an admin".
+  const isAdmin = canView("cost_price");
   const canDeliver = canEditCheck("inbound");
   const canApprove = canApproveCheck("inbound");
+  const { isBinTrackingEnabled: BIN_TRACKING_ENABLED } = useBinTracking();
 
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [bins, setBins] = useState<Bin[]>([]);
@@ -99,6 +115,9 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   const [issueNotes, setIssueNotes] = useState("");
   const [issueQty, setIssueQty] = useState(0);
   const [issueSaving, setIssueSaving] = useState(false);
+  // The issue modal gets its OWN error. The page-level actionError rendered BEHIND the open
+  // modal, so a failed report looked like the button doing nothing at all.
+  const [issueError, setIssueError] = useState("");
   const [confirmation, setConfirmation] = useState<{
     type: "success" | "warning" | "error" | "info";
     title: string;
@@ -106,74 +125,101 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
     items?: Array<{ label: string; value: string }>;
     details?: string;
   } | null>(null);
-  const [showRevertConfirm, setShowRevertConfirm] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Which line is mid-receive, so only THAT row shows a spinner rather than the whole page
+  // freezing — receiving is now one tap per line and several happen in quick succession.
+  const [receivingLineId, setReceivingLineId] = useState<string | null>(null);
+  // The line awaiting confirmation. Receiving adds stock, so it asks first.
+  const [confirmReceive, setConfirmReceive] = useState<LineItem | null>(null);
 
-  // Per-item bin selections: lineItemId → array of binIds (one per unit)
-  const [binSelections, setBinSelections] = useState<Record<string, string[]>>({});
+  // Per-LINE bin selection: lineItemId → binId. One bin per line (plan
+  // 1509-assembly-queue-single-bin-and-product-assembly-level, D2) — it used to be one bin per
+  // unit, but the server only ever honoured the first, so a split line put everything there.
+  const [binSelections, setBinSelections] = useState<Record<string, string>>({});
+  // Putaway matched rule metadata per line item: lineItemId → { suggestedBin, matchedRule }
+  const [putawayItems, setPutawayItems] = useState<
+    Record<string, { suggestedBin?: Bin | null; matchedRule?: { type: string; label: string } | null }>
+  >({});
   // Location mode (bins dormant): where this shipment's stock is received
-  const [receiveLocation, setReceiveLocation] = useState<StockLocation>(DEFAULT_STOCK_LOCATION);
-  const [shipmentType, setShipmentType] = useState<"BICYCLE" | "SPARE_PART" | "ACCESSORY" | "MIXED" | null>(null);
+  // Was DEFAULT_STOCK_LOCATION. There is no default warehouse any more — the API rejects a
+  // missing one with a 400 rather than guessing, because putting stock in the wrong building
+  // reports nothing anywhere. Set to the first warehouse once the list loads, so a normal
+  // receive still carries one without the user having to think about it.
+  const [receiveLocation, setReceiveLocation] = useState<string>("");
 
+  // Pre-select the first GODOWN once the list arrives, so a normal receive carries one
+  // without the user choosing: goods arrive at the back, not on the shop floor (plan
+  // 0909-stock-store-and-warehouse-scoping, D5). The list is already in picker order, so the
+  // first godown is the primary store's. Falls back to the first warehouse of any kind when
+  // no godown exists. Only when nothing is selected — never clobber a deliberate choice.
   useEffect(() => {
-    const saved = typeof window !== "undefined" ? localStorage.getItem(`inbound-shiptype-${id}`) : null;
-    if (saved) setShipmentType(saved as "BICYCLE" | "SPARE_PART" | "ACCESSORY" | "MIXED");
-
-    Promise.all([
-      fetch(`/api/inbound/${id}`).then((r) => r.json()),
-      fetch("/api/bins").then((r) => r.json()),
-    ])
-      .then(([shipRes, binRes]) => {
-        if (shipRes.success) setShipment(shipRes.data);
-        if (binRes.success) setBins(binRes.data || []);
-      })
-      .catch((e) => { setActionError(e instanceof Error ? e.message : "Failed to load shipment"); })
-      .finally(() => setLoading(false));
-  }, [id]);
+    if (receiveLocation || warehouses.length === 0) return;
+    const godown = warehouses.find((w) => w.kind === "GODOWN") ?? warehouses[0];
+    setReceiveLocation(godown.id);
+  }, [warehouses, receiveLocation]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [shipRes, binRes, putawayRes] = await Promise.all([
+        apiTry<Shipment>(`/api/inbound/${id}`),
+        apiTry<Bin[]>("/api/bins"),
+        apiTry<{ items: Array<{ id: string; suggestedBin?: Bin | null; matchedRule?: { type: string; label: string } | null }> }>(`/api/inbound/${id}/putaway`),
+      ]);
+      if (cancelled) return;
+      if (shipRes.error) {
+        log.error("could not load shipment", { shipmentId: id, message: shipRes.error });
+        setActionError(shipRes.error);
+      } else if (shipRes.data) {
+        setShipment(shipRes.data);
+      }
+      if (binRes.data) setBins(binRes.data);
+      if (putawayRes.data?.items) {
+        const initialBins: Record<string, string> = {};
+        const suggestionsMap: Record<string, { suggestedBin?: Bin | null; matchedRule?: { type: string; label: string } | null }> = {};
+        for (const it of putawayRes.data.items) {
+          suggestionsMap[it.id] = {
+            suggestedBin: it.suggestedBin,
+            matchedRule: it.matchedRule,
+          };
+          // The home-bin rule's suggestion is the line's pre-selected bin.
+          if (it.suggestedBin?.id) initialBins[it.id] = it.suggestedBin.id;
+        }
+        setPutawayItems(suggestionsMap);
+        setBinSelections((prev) => ({ ...initialBins, ...prev }));
+      }
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [id, BIN_TRACKING_ENABLED]);
 
   const refreshShipment = async () => {
-    const detail = await fetch(`/api/inbound/${id}`).then((r) => r.json());
-    if (detail.success) setShipment(detail.data);
-  };
-
-  const handleTypeSelect = (type: "BICYCLE" | "SPARE_PART" | "ACCESSORY" | "MIXED") => {
-    setShipmentType(type);
-    if (typeof window !== "undefined") {
-      localStorage.setItem(`inbound-shiptype-${id}`, type);
+    const { data, error } = await apiTry<Shipment>(`/api/inbound/${id}`);
+    if (error) {
+      log.error("could not refresh shipment", { shipmentId: id, message: error });
+      setActionError(error);
+    } else if (data) {
+      setShipment(data);
     }
   };
 
-  // Set bin for a specific unit of a line item
-  const setBinForUnit = (lineItemId: string, unitIndex: number, binId: string, totalQty: number) => {
-    setBinSelections((prev) => {
-      const current = prev[lineItemId] || new Array(totalQty).fill("");
-      const updated = [...current];
-      // Ensure array is the right length
-      while (updated.length < totalQty) updated.push("");
-      updated[unitIndex] = binId;
-      return { ...prev, [lineItemId]: updated };
-    });
+
+
+  // The whole line goes into this one bin (D2).
+  const setBinForLine = (lineItemId: string, binId: string) => {
+    setBinSelections((prev) => ({ ...prev, [lineItemId]: binId }));
   };
 
-  // Set all units of a line item to the same bin
-  const setBinForAll = (lineItemId: string, binId: string, totalQty: number) => {
-    setBinSelections((prev) => ({
-      ...prev,
-      [lineItemId]: new Array(totalQty).fill(binId),
-    }));
-  };
-
-  // Get bin selections as grouped allocations [{binId, qty}]
-  const getBinAllocations = (lineItemId: string): Array<{ binId: string; qty: number }> => {
-    const selections = binSelections[lineItemId] || [];
-    const groups: Record<string, number> = {};
-    for (const binId of selections) {
-      if (binId) groups[binId] = (groups[binId] || 0) + 1;
-    }
-    return Object.entries(groups).map(([binId, qty]) => ({ binId, qty }));
-  };
-
-  const isApproved = !!shipment?.approvedAt || isAdmin;
+  // The `|| isAdmin` bypass is DELETED, not mapped to a permission (plan §8 Q3).
+  //
+  // It let an admin see the receive controls on a shipment NOBODY had approved, so stock
+  // entered inventory with approvedAt and approvedBy still null and the record showed no
+  // authoriser. It saved exactly one click — and that click IS the audit record.
+  //
+  // The API never implemented the bypass either, and now it actively refuses: the receive
+  // branch of PUT /api/inbound/[id] returns 403 when `approvedAt` is null. That gate is new —
+  // the per-line route previously had NO approval check at all, so this button being hidden
+  // was the only thing standing between an unapproved shipment and inventory.
+  const isApproved = !!shipment?.approvedAt;
 
   const handleApprove = async () => {
     setApproveLoading(true);
@@ -185,56 +231,37 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
     finally { setApproveLoading(false); }
   };
 
-  const handleMarkDelivered = async (status: string) => {
-    const undeliveredItems = shipment?.lineItems.filter((li) => !li.isDelivered) || [];
-    if (BIN_TRACKING_ENABLED && status === "DELIVERED") {
-      for (const li of undeliveredItems) {
-        const selections = binSelections[li.id] || [];
-        const allFilled = selections.length === li.quantity && selections.every((b) => b);
-        if (!allFilled) {
-          setConfirmation({
-            type: "error",
-            title: "Bin Assignment Required",
-            referenceId: shipment?.shipmentNo || "",
-            items: [
-              { label: "Product", value: li.productName },
-              { label: "Units", value: `${li.quantity}` },
-            ],
-            details: "Please assign a bin to all units before marking delivered.",
-          });
-          return;
-        }
+  // ONE line at a time. Mark All / Partial / Undo are gone: the shipment finishes itself
+  // when the last outstanding line is received, and the old buttons wrote a STATUS directly
+  // (via api/inbound/[id]/status, now deleted) without touching the lines they claimed to
+  // cover — so a shipment could read DELIVERED with every line still unreceived.
+  const handleReceiveLine = async (li: LineItem) => {
+    if (!receiveLocation) { setActionError("Choose where the stock is going first"); return; }
+    setReceivingLineId(li.id);
+    setActionError("");
+    const { data, error } = await apiTry<{ updated: boolean; alreadyReceived: boolean; shipmentDelivered: boolean }>(
+      `/api/inbound/${id}`,
+      {
+        method: "PUT",
+        json: { lineItemId: li.id, deliveredQty: li.quantity, warehouseId: receiveLocation },
+        timeoutMs: 30_000,
+      }
+    );
+    if (error) {
+      log.error("receive line failed", { shipmentId: id, lineItemId: li.id, message: error });
+      setActionError(error);
+    } else {
+      await refreshShipment();
+      // The server tells us whether THAT receipt was the one that finished the shipment, so
+      // the confirmation cannot fire twice when two people receive the last two lines.
+      if (data?.shipmentDelivered) {
+        setSuccessMsg({ shipmentNo: shipment?.shipmentNo || "", deliveredCount: shipment?.lineItems.length || 0 });
       }
     }
-
-    setActionLoading(true);
-    try {
-      const binAssignments = undeliveredItems
-        .filter((li) => binSelections[li.id]?.some((b) => b))
-        .map((li) => ({
-          lineItemId: li.id,
-          binAllocations: getBinAllocations(li.id),
-        }));
-
-      const res = await fetch(`/api/inbound/${id}/status`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(BIN_TRACKING_ENABLED ? { status, binAssignments } : { status, location: receiveLocation }),
-      }).then((r) => r.json());
-      if (res.success) {
-        setActionError("");
-        setBinSelections({});
-        await refreshShipment();
-        if (status === "DELIVERED") {
-          const totalDelivered = shipment?.lineItems.length || 0;
-          setSuccessMsg({ shipmentNo: shipment?.shipmentNo || "", deliveredCount: totalDelivered });
-        }
-      } else {
-        setActionError(res.error || "Delivery failed");
-      }
-    } catch (e) { setActionError(e instanceof Error ? e.message : "Delivery failed"); }
-    finally { setActionLoading(false); }
+    setReceivingLineId(null);
+    setConfirmReceive(null);
   };
+
 
   const handleWhatsApp = async (li: LineItem) => {
     if (!li.preBookedCustomerPhone) return;
@@ -251,112 +278,91 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
   };
 
   const handleMarkItemDelivered = async (li: LineItem) => {
-    if (BIN_TRACKING_ENABLED) {
-      const selections = binSelections[li.id] || [];
-      const allFilled = selections.length === li.quantity && selections.every((b) => b);
-      if (!allFilled) {
-        setConfirmation({
-          type: "error",
-          title: "Bin Assignment Required",
-          referenceId: shipment?.shipmentNo || "",
-          items: [
-            { label: "Product", value: li.productName },
-            { label: "Units", value: `${li.quantity}` },
-          ],
-          details: `Please select a bin for all ${li.quantity} unit(s) before marking delivered.`,
-        });
-        return;
-      }
+    const binId = binSelections[li.id] || "";
+    if (BIN_TRACKING_ENABLED && !binId) {
+      setConfirmation({
+        type: "error",
+        title: "Bin Assignment Required",
+        referenceId: shipment?.shipmentNo || "",
+        items: [
+          { label: "Product", value: li.productName },
+          { label: "Units", value: `${li.quantity}` },
+        ],
+        details: "Select the bin this line goes into before marking it delivered.",
+      });
+      return;
     }
     setItemLoading(li.id);
-    try {
-      const binAllocations = getBinAllocations(li.id);
-      const res = await fetch(`/api/inbound/${id}`, {
+    // `warehouseId` on BOTH branches — the route's schema requires it. With a bin, the server
+    // records the stock in the bin's own warehouse (D2), so a Floor bin is not booked into
+    // the default godown.
+    const { error } = await apiTry<{ updated: boolean; alreadyReceived: boolean; shipmentDelivered: boolean }>(
+      `/api/inbound/${id}`,
+      {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          BIN_TRACKING_ENABLED
-            ? { lineItemId: li.id, deliveredQty: li.quantity, binAllocations }
-            : { lineItemId: li.id, deliveredQty: li.quantity, location: receiveLocation }
-        ),
-      }).then((r) => r.json());
-      if (res.success) {
-        setActionError("");
-        setBinSelections((prev) => { const n = { ...prev }; delete n[li.id]; return n; });
-        await refreshShipment();
-        setConfirmation({
-          type: "success",
-          title: BIN_TRACKING_ENABLED ? "Item Received & Binned" : "Item Received",
-          referenceId: shipment?.shipmentNo || "",
-          items: [
-            { label: "Product", value: li.productName },
-            { label: "Quantity", value: `${li.quantity} units` },
-            BIN_TRACKING_ENABLED
-              ? { label: "Bin", value: bins.find(b => b.id === (binSelections[li.id]?.[0]))?.code || "Assigned" }
-              : { label: "Location", value: stockLocationLabel(receiveLocation) },
-          ],
-          details: `Bill: ${shipment?.billNo}`,
-        });
-      } else {
-        setActionError(res.error || `Failed to mark "${li.productName}" as delivered`);
+        json: BIN_TRACKING_ENABLED
+          ? { lineItemId: li.id, deliveredQty: li.quantity, warehouseId: receiveLocation, binId }
+          : { lineItemId: li.id, deliveredQty: li.quantity, warehouseId: receiveLocation },
+        timeoutMs: 30_000,
       }
-    } catch (e) { setActionError(e instanceof Error ? e.message : "Mark delivered failed"); }
-    finally { setItemLoading(null); }
+    );
+    if (error) {
+      log.error("mark delivered failed", { shipmentId: id, lineItemId: li.id, binId: binId || null, message: error });
+      setActionError(error);
+    } else {
+      setActionError("");
+      setBinSelections((prev) => { const n = { ...prev }; delete n[li.id]; return n; });
+      await refreshShipment();
+      setConfirmation({
+        type: "success",
+        title: BIN_TRACKING_ENABLED ? "Item Received & Binned" : "Item Received",
+        referenceId: shipment?.shipmentNo || "",
+        items: [
+          { label: "Product", value: li.productName },
+          { label: "Quantity", value: `${li.quantity} units` },
+          BIN_TRACKING_ENABLED
+            ? { label: "Bin", value: bins.find((b) => b.id === binId)?.code || "Assigned" }
+            : { label: "Location", value: warehouses.find((w) => w.id === receiveLocation)?.name ?? "—" },
+        ],
+        details: `Bill: ${shipment?.billNo}`,
+      });
+    }
+    setItemLoading(null);
   };
 
   const handlePutaway = async () => {
     const items = Object.entries(binSelections)
-      .filter(([lineItemId]) => {
+      .filter(([lineItemId, binId]) => {
         const li = shipment?.lineItems.find((l) => l.id === lineItemId);
-        return li?.isDelivered && !li.binId;
+        return Boolean(binId) && li?.isDelivered && !li.binId;
       })
-      .map(([lineItemId]) => ({
-        lineItemId,
-        binId: (binSelections[lineItemId] || [])[0] || "",
-      }))
-      .filter((i) => i.binId);
+      .map(([lineItemId, binId]) => ({ lineItemId, binId }));
 
     if (items.length === 0) return;
     setPutawayLoading(true);
-    try {
-      const res = await fetch(`/api/inbound/${id}/putaway`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items }),
-      }).then((r) => r.json());
-      if (res.success) {
-        setActionError("");
-        setBinSelections({});
-        await refreshShipment();
-      } else {
-        setActionError(res.error || "Putaway failed");
-      }
-    } catch (e) { setActionError(e instanceof Error ? e.message : "Putaway failed"); }
-    finally { setPutawayLoading(false); }
+    const { error } = await apiTry<{ updated: number; round: number }>(`/api/inbound/${id}/putaway`, {
+      method: "POST",
+      json: { items },
+    });
+    if (error) {
+      log.error("putaway failed", { shipmentId: id, lines: items.length, message: error });
+      setActionError(error);
+    } else {
+      setActionError("");
+      setBinSelections({});
+      await refreshShipment();
+    }
+    setPutawayLoading(false);
   };
 
-  const handleRevert = async () => {
-    setShowRevertConfirm(false);
-    setActionLoading(true);
-    try {
-      const res = await fetch(`/api/inbound/${id}/status`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "IN_TRANSIT" }),
-      }).then((r) => r.json());
-      if (res.success) {
-        await refreshShipment();
-      } else {
-        setConfirmation({
-          type: "error",
-          title: "Cannot Revert",
-          referenceId: shipment?.shipmentNo || "",
-          details: res.error || "Cannot revert shipment",
-        });
-      }
-    } catch (e) { setActionError(e instanceof Error ? e.message : "Revert failed"); }
-    finally { setActionLoading(false); }
-  };
+  // `handleRevert` is GONE with the Undo button and api/inbound/[id]/status.
+  //
+  // It set the shipment back to IN_TRANSIT without touching a single line item or removing
+  // any stock, so "Undo" undid the label and left the received quantities in inventory —
+  // the shipment then read as unreceived while its stock was already on the shelves. With
+  // receiving per line there is nothing coherent for it to undo: a line that is in the
+  // building is in the building, and a mistaken receipt is a stock correction (Report Issue
+  // or a warehouse audit), not a status flip.
 
   const handleDelete = async () => {
     setShowDeleteConfirm(false);
@@ -377,103 +383,81 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
     finally { setActionLoading(false); }
   };
 
+  // Reports to the NEW inbound-scoped route, which fixes all three reasons this never worked:
+  //   * it was gated on vendor_issues.create, which no seeded role held -> 403;
+  //   * a shipment with no Zoho bill sent no vendorId -> 400;
+  //   * the description was assembled here, so the two callers could drift.
+  // The route resolves the vendor itself (bill -> brand name -> create) and builds the
+  // description, so this sends only what the goods desk actually knows.
   const handleReportIssue = async () => {
     if (!issueModal || !shipment) return;
     setIssueSaving(true);
-    try {
-      const description = `[INBOUND] ${issueModal.lineItem.productName} — ${issueType === "SHORTAGE" ? `Short by ${issueQty} units` : issueType === "DAMAGE" ? `${issueQty} unit(s) damaged` : issueType === "WRONG_ITEM" ? `Wrong item received` : `Quality issue`}${issueNotes ? ` — ${issueNotes}` : ""} | Bill: ${shipment.billNo} | Shipment: ${shipment.shipmentNo}`;
-
-      const res = await fetch("/api/vendor-issues", {
+    setIssueError("");
+    const { data, error } = await apiTry<{ id: string; issueNo: string }>(
+      `/api/inbound/${id}/issues`,
+      {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          vendorId: shipment.vendorBill?.vendorId || undefined,
+        json: {
+          lineItemId: issueModal.lineItem.id,
           issueType,
-          description,
-          priority: issueType === "SHORTAGE" || issueType === "DAMAGE" ? "HIGH" : "MEDIUM",
-          billId: shipment.vendorBillId || undefined,
-        }),
-      }).then((r) => r.json());
-
-      if (res.success) {
-        setIssueNotes("");
-        setIssueQty(0);
-        setActionError("");
-        setConfirmation({
-          type: "warning",
-          title: "Issue Reported",
-          referenceId: res.data.issueNo,
-          items: [
-            { label: "Product", value: issueModal.lineItem.productName },
-            { label: "Issue Type", value: issueType },
-            { label: "Shipment", value: shipment?.shipmentNo || "" },
-          ],
-          details: "Sravan (Finance Head) will be notified",
-        });
-        setIssueModal(null);
-      } else {
-        setActionError(res.error || "Failed to report issue");
+          issueQty: issueQty || undefined,
+          notes: issueNotes || undefined,
+        },
       }
-    } catch (e) { setActionError(e instanceof Error ? e.message : "Failed to report issue"); }
-    finally { setIssueSaving(false); }
+    );
+    if (error) {
+      log.error("report issue failed", { shipmentId: id, lineItemId: issueModal.lineItem.id, message: error });
+      // INSIDE the modal. It used to set the page-level actionError, which rendered behind
+      // the open modal — the user saw the form sit there having apparently done nothing.
+      setIssueError(error);
+    } else if (data) {
+      setIssueNotes("");
+      setIssueQty(0);
+      setActionError("");
+      setIssueModal(null);
+      setConfirmation({
+        type: "warning",
+        title: "Issue Reported",
+        referenceId: data.issueNo,
+        items: [
+          { label: "Product", value: issueModal.lineItem.productName },
+          { label: "Issue Type", value: issueType },
+          { label: "Shipment", value: shipment.shipmentNo },
+        ],
+        // Was "Sravan (Finance Head) will be notified" — nothing notifies anyone. Saying so
+        // meant the reporter walked away expecting a follow-up that was never coming.
+        details: "Visible on Vendor Issues",
+      });
+    }
+    setIssueSaving(false);
   };
 
-  // Render bin selectors for a line item (one per unit)
+  // ONE bin selector per line (D2). The per-unit selectors let a line be split across bins,
+  // which the server never honoured beyond the first.
   const renderBinSelectors = (li: LineItem, variant: "default" | "amber" = "default") => {
-    const qty = li.quantity;
-    const selections = binSelections[li.id] || [];
     const borderClass = variant === "amber" ? "border-amber-200" : "border-slate-200";
     const bgClass = variant === "amber" ? "bg-amber-50" : "bg-white";
 
-    if (qty === 1) {
+    if (bins.length === 0) {
       return (
-        <select
-          value={selections[0] || ""}
-          onChange={(e) => setBinForUnit(li.id, 0, e.target.value, qty)}
-          className={`mt-2 w-full text-xs border ${borderClass} rounded-lg px-2 py-1.5 ${bgClass} text-slate-700`}
-        >
-          <option value="">Select bin *</option>
-          {bins.map((b) => (
-            <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
-          ))}
-        </select>
+        <div className="mt-2 p-2 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+          No warehouse bins configured yet. Create a bin in Warehouse Bins to assign items.
+        </div>
       );
     }
 
-    // Multiple units — show "Apply to all" + per-unit selectors
-    const allSame = selections.length > 0 && selections.every((b) => b && b === selections[0]);
     return (
-      <div className="mt-2 space-y-1.5">
-        {/* Apply to all shortcut */}
-        <div className="flex items-center gap-2">
-          <select
-            value={allSame ? selections[0] : ""}
-            onChange={(e) => { if (e.target.value) setBinForAll(li.id, e.target.value, qty); }}
-            className={`flex-1 text-xs border ${borderClass} rounded-lg px-2 py-1.5 ${bgClass} text-slate-700`}
-          >
-            <option value="">Apply same bin to all {qty} units</option>
-            {bins.map((b) => (
-              <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
-            ))}
-          </select>
-        </div>
-        {/* Per-unit selectors */}
-        {Array.from({ length: qty }).map((_, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <span className="text-xs text-slate-400 w-10 shrink-0">#{i + 1}</span>
-            <select
-              value={selections[i] || ""}
-              onChange={(e) => setBinForUnit(li.id, i, e.target.value, qty)}
-              className={`flex-1 text-xs border ${borderClass} rounded-lg px-2 py-1.5 ${bgClass} text-slate-700`}
-            >
-              <option value="">Select bin *</option>
-              {bins.map((b) => (
-                <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>
-              ))}
-            </select>
-          </div>
+      <select
+        value={binSelections[li.id] || ""}
+        onChange={(e) => setBinForLine(li.id, e.target.value)}
+        aria-label={`Bin for ${li.productName}`}
+        className={`mt-2 w-full min-h-[44px] text-xs border ${borderClass} rounded-lg px-2 py-1.5 ${bgClass} text-slate-700`}
+      >
+        <option value="">{li.quantity > 1 ? `Select bin for all ${li.quantity} units *` : "Select bin *"}</option>
+        {bins.map((b) => (
+          <option key={b.id} value={b.id}>{b.code} — {b.name}{b.location ? ` (${b.location})` : ""}</option>
         ))}
-      </div>
+      </select>
     );
   };
 
@@ -501,9 +485,9 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
     label: shipment.status === "PARTIALLY_DELIVERED" ? "Partial" : getStatusLabel(shipment.status),
   };
 
-  const putawayReady = Object.entries(binSelections).filter(([liId]) => {
+  const putawayReady = Object.entries(binSelections).filter(([liId, binId]) => {
     const li = shipment.lineItems.find((l) => l.id === liId);
-    return li?.isDelivered && !li.binId;
+    return Boolean(binId) && li?.isDelivered && !li.binId;
   }).length;
 
   return (
@@ -512,7 +496,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         <Link href="/inbound" className="p-2 -ml-2 rounded-lg hover:bg-slate-100 focus-ring" aria-label="Back"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <div className="flex-1 min-w-0">
           <h1 className="text-lg font-bold text-slate-900 tabular-nums truncate">{shipment.shipmentNo}</h1>
-          <p className="text-xs text-slate-500 tabular-nums truncate">{shipment.brand.name} | Bill: {shipment.billNo}</p>
+          <p className="text-xs text-slate-500 tabular-nums truncate">Bill: {shipment.billNo}</p>
         </div>
         <Badge className={`text-xs shrink-0 ${statusBadge.colorClass}`}>{statusBadge.label}</Badge>
       </div>
@@ -541,7 +525,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           {shipment.deliveredAt && (
             <div className="flex justify-between items-center">
               <span className="text-xs text-slate-500">Delivered</span>
-              <span className="text-sm font-semibold text-green-600 tabular-nums">{formatDate(shipment.deliveredAt)}</span>
+              <span className="text-sm font-semibold text-green-600 tabular-nums">{formatDateTime(shipment.deliveredAt)}</span>
             </div>
           )}
           {isAdmin && (
@@ -562,24 +546,31 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           )}
           <div className="flex justify-between items-center">
             <span className="text-xs text-slate-500">Created by</span>
-            <span className="text-xs text-slate-700 tabular-nums">{shipment.createdBy.name} on {formatDate(shipment.createdAt)}</span>
+            <span className="text-xs text-slate-700 tabular-nums">{shipment.createdBy.name} on {formatDateTime(shipment.createdAt)}</span>
           </div>
           {shipment.approvedBy && (
             <div className="flex justify-between items-center">
               <span className="text-xs text-slate-500">Approved by</span>
-              <span className="text-xs text-green-700 font-medium tabular-nums">{shipment.approvedBy.name} on {formatDate(shipment.approvedAt!)}</span>
+              <span className="text-xs text-green-700 font-medium tabular-nums">{shipment.approvedBy.name} on {formatDateTime(shipment.approvedAt)}</span>
             </div>
           )}
+          {/* Delivered and putaway are moments the row already carries (`deliveredAt`,
+              `putawayAt` — plan 0909-stock-screens-size-category-and-sidebar, Part F). A
+              name with no time answered "who" and threw "when" away. */}
           {shipment.deliveredBy && (
             <div className="flex justify-between items-center">
               <span className="text-xs text-slate-500">Delivered by</span>
-              <span className="text-xs text-slate-700">{shipment.deliveredBy.name}</span>
+              <span className="text-xs text-slate-700 tabular-nums">
+                {shipment.deliveredBy.name}{shipment.deliveredAt ? ` on ${formatDateTime(shipment.deliveredAt)}` : ""}
+              </span>
             </div>
           )}
           {shipment.putawayBy && (
             <div className="flex justify-between items-center">
               <span className="text-xs text-slate-500">Putaway by</span>
-              <span className="text-xs text-slate-700">{shipment.putawayBy.name}</span>
+              <span className="text-xs text-slate-700 tabular-nums">
+                {shipment.putawayBy.name}{shipment.putawayAt ? ` on ${formatDateTime(shipment.putawayAt)}` : ""}
+              </span>
             </div>
           )}
         </CardContent>
@@ -603,109 +594,36 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         </div>
       )}
 
-      {/* Item Type Selector — mandatory before stock count */}
-      {shipment.status !== "DELIVERED" && (
-        shipmentType === null ? (
-          <div className="mb-3 bg-blue-50 border border-blue-200 rounded-xl p-4">
-            <p className="text-sm font-semibold text-blue-900 mb-0.5">What type of items are in this shipment?</p>
-            <p className="text-xs text-blue-600 mb-3">Select the category before doing the stock count.</p>
-            <div className="grid grid-cols-2 gap-2">
-              {([
-                { key: "BICYCLE" as const, label: "Cycles", bg: "bg-blue-600" },
-                { key: "SPARE_PART" as const, label: "Spares", bg: "bg-amber-600" },
-                { key: "ACCESSORY" as const, label: "Accessories", bg: "bg-purple-600" },
-                { key: "MIXED" as const, label: "Mixed", bg: "bg-slate-700" },
-              ]).map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => handleTypeSelect(t.key)}
-                  className={`py-3 rounded-xl text-sm font-semibold text-white ${t.bg} active:opacity-80`}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="mb-3 flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500">Type:</span>
-              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                shipmentType === "BICYCLE" ? "bg-blue-100 text-blue-700" :
-                shipmentType === "SPARE_PART" ? "bg-amber-100 text-amber-700" :
-                shipmentType === "ACCESSORY" ? "bg-purple-100 text-purple-700" :
-                "bg-slate-200 text-slate-700"
-              }`}>
-                {shipmentType === "BICYCLE" ? "Cycles" : shipmentType === "SPARE_PART" ? "Spares" : shipmentType === "ACCESSORY" ? "Accessories" : "Mixed"}
-              </span>
-            </div>
-            <button onClick={() => setShipmentType(null)} className="text-xs text-slate-400 underline">
-              Change
-            </button>
-          </div>
-        )
-      )}
-
       {/* Location selector (bins dormant) — where this shipment is received */}
-      {!BIN_TRACKING_ENABLED && canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && shipmentType !== null && (
+      {!BIN_TRACKING_ENABLED && canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3">
           <p className="text-xs font-medium text-blue-800 mb-1.5 flex items-center gap-1.5">
             <MapPin className="h-3.5 w-3.5" /> Receive into
           </p>
           <div className="grid grid-cols-2 gap-2">
-            {STOCK_LOCATIONS.map((loc) => (
+            {warehouses.map((loc) => (
               <button
-                key={loc.value}
-                onClick={() => setReceiveLocation(loc.value)}
+                key={loc.id}
+                onClick={() => setReceiveLocation(loc.id)}
                 className={`py-2.5 rounded-lg text-sm font-semibold border transition-colors ${
-                  receiveLocation === loc.value
+                  receiveLocation === loc.id
                     ? "bg-blue-600 text-white border-blue-600"
                     : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
                 }`}
               >
-                {loc.label}
+                {loc.name}
               </button>
             ))}
           </div>
         </div>
       )}
 
-      {/* Mark Delivered */}
-      {canDeliver && isApproved && shipment.status === "IN_TRANSIT" && shipmentType !== null && (
-        <div className="flex gap-2 mb-3">
-          <Button onClick={() => handleMarkDelivered("DELIVERED")} disabled={actionLoading}
-            className="flex-1 min-h-[48px] rounded-lg font-medium bg-green-600 hover:bg-green-700" size="lg">
-            <Truck className="h-4 w-4 mr-2" /> {actionLoading ? "..." : "Mark All Delivered"}
-          </Button>
-          <Button onClick={() => handleMarkDelivered("PARTIALLY_DELIVERED")} disabled={actionLoading}
-            variant="outline" className="flex-1 min-h-[48px] rounded-lg font-medium" size="lg">
-            Partial
-          </Button>
-        </div>
-      )}
-
-      {/* Partial delivery actions */}
-      {canDeliver && isApproved && shipment.status === "PARTIALLY_DELIVERED" && shipmentType !== null && (
-        <div className="space-y-2 mb-3">
-          <p className="text-xs text-amber-700 bg-amber-50 rounded-lg p-2 text-center">
-            {BIN_TRACKING_ENABLED
-              ? "Select bin for each unit, then mark as delivered. Or mark all at once."
-              : "Mark each item as delivered, or mark all at once."}
-          </p>
-          <div className="flex gap-2">
-            <Button onClick={() => handleMarkDelivered("DELIVERED")} disabled={actionLoading}
-              className="flex-1 min-h-[48px] rounded-lg font-medium bg-green-600 hover:bg-green-700" size="lg">
-              <Truck className="h-4 w-4 mr-2" /> {actionLoading ? "..." : "Mark All Delivered"}
-            </Button>
-            {deliveredCount === 0 && (
-              <Button onClick={() => setShowRevertConfirm(true)} disabled={actionLoading}
-                variant="outline" className="gap-1.5 min-h-[48px] rounded-lg font-medium" size="lg">
-                <RotateCcw className="h-4 w-4" /> Undo
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Mark All Delivered / Partial / Undo are GONE (R3, D6).
+          They wrote a shipment STATUS directly through api/inbound/[id]/status without
+          touching a single line item, so a shipment could read DELIVERED while every line
+          was still unreceived and no stock had moved. Receiving is per line now, and the
+          shipment finishes itself when the last outstanding line is received — the state is
+          derived from the lines rather than asserted over them. */}
 
       {/* Post-delivery Putaway */}
       {BIN_TRACKING_ENABLED && canDeliver && isApproved && needsBinCount > 0 && shipment.status === "DELIVERED" && (
@@ -731,17 +649,16 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
         type="success"
         title="Inward Completed Successfully!"
         referenceId={successMsg?.shipmentNo || ""}
-        performedBy={(session?.user as any)?.name}
+        performedBy={(session?.user as { name?: string } | undefined)?.name}
         items={[
           { label: "Items Received", value: `${successMsg?.deliveredCount || 0} items` },
           { label: "Bill", value: shipment?.billNo || "" },
-          { label: "Brand", value: shipment?.brand.name || "" },
         ]}
         details="All items received and stock updated"
       />
 
       {/* Select All — apply one bin to ALL undelivered items */}
-      {BIN_TRACKING_ENABLED && canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && bins.length > 0 && shipmentType !== null && (
+      {BIN_TRACKING_ENABLED && canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && bins.length > 0 && (
         <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 mb-3">
           <p className="text-xs font-medium text-blue-800 mb-1.5">Apply same bin to all items</p>
           <select
@@ -751,7 +668,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
               const undelivered = shipment.lineItems.filter((li) => !li.isDelivered);
               const newSelections = { ...binSelections };
               for (const li of undelivered) {
-                newSelections[li.id] = new Array(li.quantity).fill(binId);
+                newSelections[li.id] = binId;
               }
               setBinSelections(newSelections);
               e.target.value = "";
@@ -776,6 +693,18 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                 <div className="flex-1 min-w-0 mr-2">
                   <p className="text-base font-medium text-slate-900">{li.productName}</p>
                   {li.product && <p className="text-xs text-slate-500">{li.product.sku} | {li.product.name}</p>}
+                  <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                    {li.product?.brand?.name && (
+                      <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                        Brand: {li.product.brand.name}
+                      </span>
+                    )}
+                    {li.product?.category?.name && (
+                      <span className="inline-flex items-center rounded-md bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                        Category: {li.product.category.name}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   {li.isDelivered && <CheckCircle2 className="h-4 w-4 text-green-500" />}
@@ -796,13 +725,30 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                 </div>
               )}
 
-              {/* Bin mode: selectors for undelivered items (during partial delivery) */}
-              {BIN_TRACKING_ENABLED && canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && bins.length > 0 && shipmentType !== null && (
+              {/* Home Bin Rule Match Info */}
+              {BIN_TRACKING_ENABLED && putawayItems[li.id] && (
+                putawayItems[li.id].suggestedBin ? (
+                  <div className="flex items-center gap-1.5 mt-2 px-2.5 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-300">
+                    <Sparkles className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                    <span>
+                      Auto-matched Home Bin ({putawayItems[li.id].matchedRule?.label || "Rule"}): <strong>{putawayItems[li.id].suggestedBin?.code}</strong> — {putawayItems[li.id].suggestedBin?.name}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 mt-2 px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-500 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400">
+                    <Info className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                    <span>No Home Bin Rule matched — select a destination bin below</span>
+                  </div>
+                )
+              )}
+
+              {/* Bin mode: selectors and Mark Delivered for undelivered items (IN_TRANSIT or PARTIALLY_DELIVERED) */}
+              {BIN_TRACKING_ENABLED && canDeliver && isApproved && (shipment.status === "IN_TRANSIT" || shipment.status === "PARTIALLY_DELIVERED") && !li.isDelivered && (
                 <div>
                   {renderBinSelectors(li)}
                   <button
                     onClick={() => handleMarkItemDelivered(li)}
-                    disabled={itemLoading === li.id}
+                    disabled={itemLoading === li.id || bins.length === 0}
                     className="mt-2 w-full py-2.5 h-10 rounded-lg bg-green-50 text-green-700 text-xs font-medium border border-green-200 hover:bg-green-100 disabled:opacity-50"
                   >
                     {itemLoading === li.id ? "Marking..." : `Mark Delivered (Qty: ${li.quantity})`}
@@ -810,20 +756,23 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                 </div>
               )}
 
-              {/* Location mode: just a Mark Delivered button per item during partial delivery */}
-              {!BIN_TRACKING_ENABLED && canDeliver && shipment.status === "PARTIALLY_DELIVERED" && !li.isDelivered && shipmentType !== null && (
+              {/* RECEIVE THIS LINE (when bin tracking is dormant) */}
+              {!BIN_TRACKING_ENABLED && canDeliver && isApproved
+                && shipment.status !== "DELIVERED" && !li.isDelivered && (
                 <button
-                  onClick={() => handleMarkItemDelivered(li)}
-                  disabled={itemLoading === li.id}
-                  className="mt-2 w-full py-2.5 h-10 rounded-lg bg-green-50 text-green-700 text-xs font-medium border border-green-200 hover:bg-green-100 disabled:opacity-50"
+                  onClick={() => setConfirmReceive(li)}
+                  disabled={receivingLineId === li.id}
+                  className="mt-2 w-full min-h-[44px] rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 focus-ring"
                 >
-                  {itemLoading === li.id ? "Marking..." : `Mark Delivered (Qty: ${li.quantity})`}
+                  {receivingLineId === li.id ? "Receiving…" : `Receive ×${li.quantity}`}
                 </button>
               )}
 
-              {/* Bin mode: selectors for IN_TRANSIT items (pre-select before Mark All Delivered) */}
-              {BIN_TRACKING_ENABLED && canDeliver && shipment.status === "IN_TRANSIT" && bins.length > 0 && shipmentType !== null && (
-                renderBinSelectors(li)
+              {/* Received (when bin tracking is dormant) */}
+              {!BIN_TRACKING_ENABLED && li.isDelivered && (
+                <div className="mt-2 w-full min-h-[44px] flex items-center justify-center rounded-lg bg-green-50 text-green-700 text-sm font-semibold border border-green-200">
+                  Received ×{li.deliveredQty ?? li.quantity} ✓
+                </div>
               )}
 
               {/* Bin mode: post-delivery bin assignment (delivered but no bin) */}
@@ -881,20 +830,41 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           {deliveredCount > 0 ? "Delete & Reverse Stock" : "Delete Shipment"}
         </button>
       )}
-      {/* Revert Confirmation */}
-      {showRevertConfirm && (
+
+      {/* RECEIVE CONFIRMATION.
+          Receiving adds stock to a warehouse, and the goods desk is a phone in someone's hand
+          — a mis-tap should not silently move inventory. It names the product, the quantity
+          and the destination, because "into which building" is the part that is easy to get
+          wrong and impossible to see afterwards. */}
+      {confirmReceive && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-4">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-5 space-y-4">
-            <h3 className="text-base font-bold text-slate-900">Revert Shipment?</h3>
-            <p className="text-sm text-slate-600">This will revert the shipment back to In Transit status. Are you sure?</p>
+            <h3 className="text-base font-bold text-slate-900">Receive this item?</h3>
+            <p className="text-sm text-slate-600">
+              {confirmReceive.productName} — <span className="font-semibold tabular-nums">×{confirmReceive.quantity}</span>
+              {" into "}
+              <span className="font-semibold">
+                {warehouses.find((w) => w.id === receiveLocation)?.name ?? "the selected warehouse"}
+              </span>
+              .
+            </p>
+            <p className="text-[11px] text-slate-500">
+              Short or damaged? Cancel and use Report Issue instead — receiving records the full
+              billed quantity.
+            </p>
             <div className="flex gap-2">
-              <button onClick={() => setShowRevertConfirm(false)}
-                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50">
+              <button
+                onClick={() => setConfirmReceive(null)}
+                className="flex-1 min-h-[48px] rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              >
                 Cancel
               </button>
-              <button onClick={handleRevert}
-                className="flex-1 py-2.5 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700">
-                Yes, Revert
+              <button
+                onClick={() => handleReceiveLine(confirmReceive)}
+                disabled={receivingLineId === confirmReceive.id}
+                className="flex-1 min-h-[48px] rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+              >
+                {receivingLineId === confirmReceive.id ? "Receiving…" : "Receive"}
               </button>
             </div>
           </div>
@@ -962,13 +932,20 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm h-20 resize-none" />
             </div>
 
+            {/* Inside the modal, not on the page behind it. */}
+            {issueError && (
+              <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                {issueError}
+              </p>
+            )}
+
             <div className="flex gap-2">
-              <button onClick={() => setIssueModal(null)}
-                className="flex-1 py-2.5 rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50">
+              <button onClick={() => { setIssueModal(null); setIssueError(""); }}
+                className="flex-1 min-h-[48px] rounded-lg border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50">
                 Cancel
               </button>
               <button onClick={handleReportIssue} disabled={issueSaving}
-                className="flex-1 py-2.5 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50">
+                className="flex-1 min-h-[48px] rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50">
                 {issueSaving ? "Reporting..." : "Report Issue"}
               </button>
             </div>
@@ -983,7 +960,7 @@ export default function InboundDetailPage({ params }: { params: Promise<{ id: st
           type={confirmation.type}
           title={confirmation.title}
           referenceId={confirmation.referenceId}
-          performedBy={(session?.user as any)?.name}
+          performedBy={(session?.user as { name?: string } | undefined)?.name}
           items={confirmation.items}
           details={confirmation.details}
         />

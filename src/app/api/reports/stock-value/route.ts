@@ -3,11 +3,11 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
+    await requireFeature("reports", "view");
     const { searchParams } = new URL(req.url);
     const groupBy = searchParams.get("groupBy") || "category";
 
@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
       where: { status: "ACTIVE" },
       select: {
         id: true, sku: true,
-        categoryId: true, brandId: true, type: true,
+        categoryId: true, brandId: true,
         currentStock: true, costPrice: true, sellingPrice: true, mrp: true,
         category: { select: { name: true } },
         brand: { select: { name: true } },
@@ -97,9 +97,6 @@ export async function GET(req: NextRequest) {
       if (groupBy === "brand") {
         key = p.brandId;
         name = p.brand?.name || "Unknown";
-      } else if (groupBy === "type") {
-        key = p.type;
-        name = p.type.replace(/_/g, " ");
       } else {
         key = p.categoryId;
         name = p.category?.name || "Unknown";

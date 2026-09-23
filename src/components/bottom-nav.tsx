@@ -2,48 +2,38 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { LayoutDashboard, MoreHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getPrimaryTabs, NAV_FEATURE_MAP, FEATURE_NAV_ITEMS, HOME_TAB, MORE_TAB } from "@/lib/nav-config";
-import { usePermissions } from "@/lib/use-permissions";
-import type { Role } from "@/types";
+import { useBottomNav } from "@/lib/use-bottom-nav";
+import { moduleIcon } from "@/lib/module-icons";
 
-interface BottomNavProps {
-  role: Role;
-}
+// Mobile bottom nav. Home and More are always present; the tabs between them are the ones an
+// admin pinned for THIS user on their edit page, in the admin's order, intersected with what
+// their role still grants — see src/lib/use-bottom-nav.ts for the whole rule. Nothing pinned
+// means no bar at all (owner decision, 7 Sep 2026), which is why the same hook also tells the
+// dashboard layout to stop reserving the bar's height.
 
-export function BottomNav({ role }: BottomNavProps) {
+export function BottomNav() {
   const pathname = usePathname();
-  const { canView, navTabs } = usePermissions(role);
+  const { tabs: pinned, hasNav } = useBottomNav();
 
-  // 1) Admin override: if the admin assigned this employee a custom bottom nav, honour it —
-  // Home + their chosen tabs (still permission-checked for safety) + More. Applies to ANY role.
-  const overrideItems = (navTabs || [])
-    .map((href) => FEATURE_NAV_ITEMS.find((f) => f.href === href))
-    .filter((f): f is (typeof FEATURE_NAV_ITEMS)[number] => Boolean(f))
-    .filter((f) => {
-      const feature = NAV_FEATURE_MAP[f.href];
-      return !feature || canView(feature);
-    })
-    .slice(0, 4);
+  const tabs = [
+    { key: "home", href: "/", label: "Home", icon: LayoutDashboard },
+    ...pinned.map((t) => ({
+      key: t.key,
+      href: t.href,
+      label: t.label,
+      icon: moduleIcon(t.icon),
+    })),
+    { key: "more", href: "/more", label: "More", icon: MoreHorizontal },
+  ];
 
-  let tabs;
-  if (overrideItems.length > 0) {
-    tabs = [HOME_TAB, ...overrideItems, MORE_TAB];
-  } else {
-    // 2) No override → default behaviour. CUSTOM roles derive from the feature catalog (filtered
-    // by grants); built-in roles use their curated list. Always show Home + More.
-    const allTabs = role === "CUSTOM" ? [HOME_TAB, ...FEATURE_NAV_ITEMS, MORE_TAB] : getPrimaryTabs(role);
-    const filtered = allTabs.filter((tab) => {
-      if (tab.key === "home" || tab.key === "more") return true;
-      const feature = NAV_FEATURE_MAP[tab.href];
-      if (!feature) return true;
-      return canView(feature);
-    });
-    tabs =
-      role === "CUSTOM"
-        ? [HOME_TAB, ...filtered.filter((t) => t.key !== "home" && t.key !== "more").slice(0, 3), MORE_TAB]
-        : filtered;
-  }
+  // No bar when nothing is pinned — and none while the grants are still loading either
+  // (`hasNav` is false in that window). This replaces the old 5-cell skeleton on purpose: a
+  // skeleton flashes a bar that then vanishes, for exactly the users who turn out to have
+  // none. Users who DO have tabs get one small layout shift when the store resolves, once
+  // per session, which is the cheaper of the two.
+  if (!hasNav) return null;
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";
@@ -63,19 +53,12 @@ export function BottomNav({ role }: BottomNavProps) {
               href={tab.href}
               className={cn(
                 "flex flex-col items-center justify-center flex-1 h-full min-w-[44px] gap-0.5 transition-colors",
-                {
-                  "text-slate-900": active,
-                  "text-slate-400": !active,
-                }
+                { "text-slate-900": active, "text-slate-400": !active }
               )}
             >
-              <Icon
-                className={cn("h-5 w-5", {
-                  "stroke-[2.5px]": active,
-                })}
-              />
+              <Icon className={cn("h-5 w-5", { "stroke-[2.5px]": active })} />
               <span
-                className={cn("text-[10px] font-medium", {
+                className={cn("text-[10px] font-medium truncate max-w-[64px]", {
                   "font-semibold": active,
                 })}
               >
