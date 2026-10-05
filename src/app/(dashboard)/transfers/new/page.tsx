@@ -3,49 +3,68 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { ArrowLeft, ArrowRight, Search, Plus, Trash2, Package, Loader2 } from "lucide-react";
+import { usePermissions } from "@/lib/use-permissions";
+import { ArrowLeft, Search, Plus, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent } from "@/components/ui/card";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
-import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, stockLocationLabel, type StockLocation } from "@/lib/inventory-config";
+import { useStores } from "@/hooks/use-sites";
+import { apiTry } from "@/lib/api-client";
+import { compressImageFull } from "@/lib/media-compress";
+import { uploadMedia } from "@/lib/media-upload";
+import { createLogger } from "@/lib/logger";
+import type { TransferDocType } from "@prisma/client";
+import { kindsForMode } from "@/lib/transfers/mode";
+import {
+  RoutePicker,
+  DIRECTIONS,
+  DIRECTION_LABEL,
+  KIND_WORD,
+  docLabel,
+  resolveRoute,
+  type DirectionMode,
+  type RoutePicks,
+} from "./_components/route-picker";
+import { DocumentPicker } from "./_components/document-picker";
+import { ItemList, type Product, type TransferItem } from "./_components/item-list";
+import { resolveLineBins, type LineBins } from "../_components/line-bin-pickers";
+import { useTransferBinOptions } from "../_components/use-bin-options";
 
-interface Product {
-  id: string;
-  name: string;
-  sku: string;
-  currentStock: number;
-  bin: { id: string; code: string; location: string } | null;
-}
+const log = createLogger("transfers:new");
 
-interface Bin {
-  id: string;
-  code: string;
-  name: string;
-  location: string;
-}
+/**
+ * `-v4` because the draft SHAPE changed, not for a version number's sake.
+ *
+ * A v3 draft holds a store-based mode ("STORE_TO_STORE") and lines without bins or keys. Read
+ * back into this page it would restore a direction that no longer exists. Changing the key
+ * orphans those drafts instead — sessionStorage, so at worst somebody re-picks a route once.
+ *
+ * The file is NOT in the draft. A `File` does not survive JSON, and a draft that claimed to
+ * hold a document it could not produce would be worse than one that asks again.
+ */
+const STORAGE_KEY = "transfer-order-draft-v4";
 
-interface TransferItem {
-  product: Product;
-  quantity: number;
-  fromBinId: string;
-  toBinId: string;
-  fromLocation: StockLocation;
-  toLocation: StockLocation;
-}
-
-const STORAGE_KEY = "transfer-order-draft";
-
-interface DraftData {
+interface DraftData extends RoutePicks {
   items: TransferItem[];
   notes: string;
 }
 
-function saveDraft(items: TransferItem[], notes: string) {
+function newLineKey(): string {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+/** Where the document is uploaded before the order (and its number) exists. */
+function newDocumentKey(ext: string): string {
+  return `transfers/new/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+}
+
+function saveDraft(d: DraftData) {
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ items, notes }));
-  } catch { /* ignore */ }
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(d));
+  } catch (e) {
+    log.debug("draft not saved", { message: e instanceof Error ? e.message : String(e) });
+  }
 }
 
 function loadDraft(): DraftData | null {
@@ -53,220 +72,341 @@ function loadDraft(): DraftData | null {
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     return JSON.parse(raw) as DraftData;
-  } catch { return null; }
+  } catch (e) {
+    log.warn("draft unreadable, starting empty", { message: e instanceof Error ? e.message : String(e) });
+    return null;
+  }
 }
 
 function clearDraft() {
-  try { sessionStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch (e) {
+    log.debug("draft not cleared", { message: e instanceof Error ? e.message : String(e) });
+  }
+}
+
+interface CreatedOrder {
+  id?: string;
+  orderNo?: string;
+  status?: string;
 }
 
 export default function NewTransferOrderPage() {
   const router = useRouter();
   const { data: session } = useSession();
-  const isAdmin = ["ADMIN", "CEO"].includes((session?.user as { role?: string })?.role || "");
+  const { canApprove } = usePermissions();
+  const isAutoApproved = canApprove("transfers");
 
-  const [bins, setBins] = useState<Bin[]>([]);
+  const { stores, loading: storesLoading, error: storesError } = useStores();
+
+  // Plan 0310, Part D and R8: a direction and two warehouses, each picked from one list of every
+  // warehouse of its kind across all stores.
+  const [picks, setPicks] = useState<RoutePicks>({
+    mode: "GODOWN_TO_FLOOR",
+    fromWarehouseId: "",
+    toWarehouseId: "",
+  });
   const [items, setItems] = useState<TransferItem[]>([]);
   const [notes, setNotes] = useState("");
+  // The file AND the document it was attached as. A route change can switch the document (Q7):
+  // a challan attached for a same-store move is the wrong paper once the stores differ, so it
+  // stops counting (`docFile` below) instead of being cleared in a handler that might be missed.
+  const [attached, setAttached] = useState<{ file: File; type: TransferDocType } | null>(null);
+  const [docNumber, setDocNumber] = useState("");
+  const [docDate, setDocDate] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  // Screenshot receipt shown after submit (the WhatsApp verification gate)
   const [receipt, setReceipt] = useState<{
     type: "success" | "warning";
     title: string;
     referenceId: string;
     items: Array<{ label: string; value: string }>;
     details: string;
+    redirectTo: string;
   } | null>(null);
 
-  // Item search state
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [searching, setSearching] = useState(false);
 
-  // Load draft on mount
   useEffect(() => {
     const draft = loadDraft();
-    if (draft) {
-      if (draft.items?.length > 0) setItems(draft.items);
-      if (draft.notes) setNotes(draft.notes);
-    }
-  }, []);
-
-  // Auto-save on changes
-  useEffect(() => {
-    if (items.length > 0 || notes) {
-      saveDraft(items, notes);
-    }
-  }, [items, notes]);
-
-  useEffect(() => {
-    if (!BIN_TRACKING_ENABLED) return;
-    fetch("/api/bins")
-      .then((r) => r.json())
-      .then((res) => { if (res.success) setBins(res.data); })
-      .catch(() => {});
+    if (!draft) return;
+    // Restoring a draft is the one setState-in-an-effect this file keeps. It cannot move into
+    // a useState initialiser: those run during render, including the server render, where
+    // sessionStorage does not exist — and a client that started with the draft while the
+    // server started without it is a hydration mismatch. Mount-only, so it cascades once.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPicks({
+      mode: (DIRECTIONS as readonly string[]).includes(draft.mode) ? draft.mode : "GODOWN_TO_FLOOR",
+      fromWarehouseId: draft.fromWarehouseId ?? "",
+      toWarehouseId: draft.toWarehouseId ?? "",
+    });
+    if (draft.items?.length > 0) setItems(draft.items);
+    if (draft.notes) setNotes(draft.notes);
   }, []);
 
   useEffect(() => {
-    if (search.length < 1) { setSearchResults([]); return; }
-    setSearching(true);
-    const timer = setTimeout(() => {
-      fetch(`/api/products?search=${encodeURIComponent(search)}&limit=10`)
-        .then((r) => r.json())
-        .then((res) => { if (res.success) setSearchResults(res.data); })
-        .catch(() => {})
-        .finally(() => setSearching(false));
+    if (items.length > 0 || notes || picks.fromWarehouseId || picks.toWarehouseId) {
+      saveDraft({ ...picks, items, notes });
+    }
+  }, [picks, items, notes]);
+
+  useEffect(() => {
+    if (search.length < 1) return;
+    // Everything is inside the timeout, so the effect body itself sets no state. The spinner
+    // therefore covers the request rather than the debounce — which also stops it flickering
+    // on every keystroke.
+    const timer = setTimeout(async () => {
+      setSearching(true);
+      const { data, error: err } = await apiTry<Product[]>(
+        `/api/products?search=${encodeURIComponent(search)}&limit=10`
+      );
+      if (err) log.warn("product search failed", { message: err });
+      setSearchResults(data ?? []);
+      setSearching(false);
     }, 300);
     return () => clearTimeout(timer);
   }, [search]);
 
+  // Stale matches are hidden by DERIVING the visible list from the query, rather than clearing
+  // the state in the effect above. Same behaviour, no cascading render.
+  const visibleResults = search.length >= 1 ? searchResults : [];
+
+  // The route, derived during render — `resolveRoute` is also what the picker shows, so the two
+  // can never disagree about which warehouse a side resolved to.
+  const route = resolveRoute(stores, picks);
+  const fromWh = route.fromWarehouse;
+  const toWh = route.toWarehouse;
+  const routeChosen = Boolean(fromWh && toWh && fromWh.id !== toWh.id);
+  const sourceLabel = fromWh ? `${fromWh.storeName} · ${fromWh.name}` : null;
+  const destinationLabel = toWh ? `${toWh.storeName} · ${toWh.name}` : null;
+  const docFile = attached && attached.type === route.docType ? attached.file : null;
+
+  // The bins every line can name (plan 0310, Part C), and what each line will actually send.
+  const { options: binOptions, loading: binsLoading, error: binsError } = useTransferBinOptions(
+    fromWh?.id ?? null,
+    toWh?.id ?? null,
+    items.map((i) => i.product.id)
+  );
+  const resolved = items.map((i) => resolveLineBins(i.product.id, i, binOptions));
+  // A line may take what its from-bin holds less what the OTHER lines on that same bin take.
+  const limits = items.map((item, index) => {
+    const r = resolved[index];
+    if (!r.fromBinId) return item.product.currentStock;
+    const others = items.reduce(
+      (n, o, j) =>
+        j !== index && o.product.id === item.product.id && resolved[j].fromBinId === r.fromBinId ? n + o.quantity : n,
+      0
+    );
+    return Math.max(0, r.fromQty - others);
+  });
+  const binsChosen = resolved.every((r) => r.fromBinId && r.toBinId);
+  const quantitiesValid = items.every((i, index) => i.quantity > 0 && i.quantity <= limits[index]);
+  const isValid = routeChosen && items.length > 0 && binsChosen && quantitiesValid && Boolean(docFile);
+
+  function missingHint(): string {
+    const kinds = kindsForMode(picks.mode);
+    if (!fromWh) {
+      return route.fromOptions.length === 0
+        ? `No store has an active ${KIND_WORD[kinds.from]} to send from.`
+        : `Choose the ${KIND_WORD[kinds.from]} the stock leaves from.`;
+    }
+    if (!toWh) {
+      return route.toOptions.length === 0
+        ? `There is no ${KIND_WORD[kinds.to]} to send to.`
+        : `Choose the ${KIND_WORD[kinds.to]} the stock goes to.`;
+    }
+    if (items.length === 0) return "Add at least one item to transfer.";
+    if (binsLoading) return "Loading bins…";
+    if (binsError) return `Bins could not be loaded: ${binsError}`;
+    if (!binsChosen) return "Choose the from-bin and to-bin on every line.";
+    if (!quantitiesValid) return "Set a valid quantity for each line.";
+    if (!docFile) return `Attach the ${route.docType ? docLabel(route.docType).toLowerCase() : "document"} — it is required.`;
+    return "";
+  }
+
+  function switchMode(next: DirectionMode) {
+    if (next === picks.mode) return;
+    log.debug("direction switched", { from: picks.mode, to: next });
+    // The warehouses are re-picked for the new kinds. The items stay, and their bins re-resolve
+    // against the new warehouses (`resolveLineBins` drops what no longer fits).
+    setPicks((p) => ({ ...p, mode: next, fromWarehouseId: "", toWarehouseId: "" }));
+  }
+
   function addItem(product: Product) {
-    // Don't add duplicate product
     if (items.some((i) => i.product.id === product.id)) {
-      setError(`${product.name} is already in the list`);
-      setTimeout(() => setError(""), 2000);
+      setError(`${product.name} is already in the list — use "+ from another bin" on its line to take more from a different bin`);
+      setTimeout(() => setError(""), 3000);
       return;
     }
-    setItems((prev) => [
-      ...prev,
-      {
-        product,
-        quantity: 1,
-        fromBinId: product.bin?.id || "",
-        toBinId: "",
-        // Default direction: replenish a shop floor from its warehouse
-        fromLocation: "BCH_WAREHOUSE",
-        toLocation: "BCH_STORE",
-      },
-    ]);
+    setItems((prev) => [...prev, { key: newLineKey(), product, quantity: 1, fromBinId: "", toBinId: "" }]);
     setSearch("");
     setSearchResults([]);
   }
 
-  function updateItem(index: number, field: keyof TransferItem, value: string | number) {
-    setItems((prev) => prev.map((item, i) => {
-      if (i !== index) return item;
-      const next = { ...item, [field]: value };
-      // If From now equals To, bump To to a different location.
-      if (!BIN_TRACKING_ENABLED && field === "fromLocation" && next.toLocation === value) {
-        const other = STOCK_LOCATIONS.find((l) => l.value !== value);
-        if (other) next.toLocation = other.value;
-      }
-      return next;
-    }));
+  function setQuantity(index: number, quantity: number) {
+    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, quantity } : item)));
+  }
+
+  function setLineBins(index: number, patch: Partial<LineBins>) {
+    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  }
+
+  /** Same product, another bin (2209 Q2a): a new line under this one, its from-bin left to choose. */
+  function splitLine(index: number) {
+    setItems((prev) => {
+      const line = prev[index];
+      const copy: TransferItem = { key: newLineKey(), product: line.product, quantity: 1, fromBinId: "", toBinId: line.toBinId };
+      return [...prev.slice(0, index + 1), copy, ...prev.slice(index + 1)];
+    });
   }
 
   function removeItem(index: number) {
     setItems((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function getBinLabel(binId: string) {
-    const bin = bins.find((b) => b.id === binId);
-    return bin ? `${bin.code} (${bin.name})` : "";
-  }
-
-  function locationLabel(loc: StockLocation) {
-    return stockLocationLabel(loc);
-  }
-
-  const isValid = items.length > 0 && items.every((i) =>
-    BIN_TRACKING_ENABLED
-      ? i.fromBinId && i.toBinId && i.fromBinId !== i.toBinId && i.quantity > 0 && i.quantity <= i.product.currentStock
-      : i.fromLocation && i.toLocation && i.fromLocation !== i.toLocation && i.quantity > 0 && i.quantity <= i.product.currentStock
-  );
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!isValid) return;
+  /**
+   * Submit order: the file goes up FIRST, then the order is created with the returned URL.
+   * If the upload fails nothing is created — the document is required, so an order without
+   * one would be a record the server has to refuse anyway. Two steps, each logged.
+   */
+  async function handleSubmit() {
+    if (!isValid || !docFile || !fromWh || !toWh || submitting) return;
 
     setSubmitting(true);
     setError("");
+
+    const itemCount = items.length;
+    const ids = { mode: picks.mode, fromWarehouseId: fromWh.id, toWarehouseId: toWh.id, itemCount };
+
+    let url: string;
     try {
-      const res = await fetch("/api/transfer-orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items: items.map((i) => (
-            BIN_TRACKING_ENABLED
-              ? { productId: i.product.id, quantity: i.quantity, fromBinId: i.fromBinId, toBinId: i.toBinId }
-              : { productId: i.product.id, quantity: i.quantity, fromLocation: i.fromLocation, toLocation: i.toLocation }
-          )),
-          notes: notes || undefined,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        clearDraft();
-        const approved = data.data?.status === "APPROVED";
-        // Build a screenshottable receipt: one row per item, product → route × qty.
-        const receiptItems = items.map((i) => ({
-          label: i.product.name.length > 28 ? i.product.name.slice(0, 28) + "…" : i.product.name,
-          value: BIN_TRACKING_ENABLED
-            ? `${getBinLabel(i.fromBinId)} → ${getBinLabel(i.toBinId)} ×${i.quantity}`
-            : `${locationLabel(i.fromLocation)} → ${locationLabel(i.toLocation)} ×${i.quantity}`,
-        }));
-        setReceipt({
-          type: approved ? "success" : "warning",
-          title: approved ? "Transfer Approved" : "Transfer Submitted",
-          referenceId: data.data?.orderNo || "Transfer",
-          items: receiptItems,
-          details: approved
-            ? "Stock moved. Screenshot and share on the WhatsApp group."
-            : "Pending approval. Screenshot and share on the WhatsApp group for verification.",
-        });
-      } else setError(data.error || "Failed to create transfer order.");
-    } catch {
-      setError("Network error. Please check your connection.");
-    } finally {
+      log.debug("submit 1/2: uploading document", { ...ids, bytes: docFile.size, contentType: docFile.type || "unknown" });
+      // Images are downscaled and re-encoded; a PDF comes back untouched with ext "pdf".
+      const { blob, ext, contentType } = await compressImageFull(docFile);
+      const type = contentType || (ext === "pdf" ? "application/pdf" : docFile.type) || "application/octet-stream";
+      const key = newDocumentKey(ext);
+      url = await uploadMedia(blob, key, type);
+      // The key is logged; the URL is not — the presigned form of it is a credential.
+      log.debug("submit 1/2: document uploaded", { key, bytes: blob.size, contentType: type });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Upload failed";
+      log.error("document upload failed; no order created", { ...ids, message });
+      setError(message);
       setSubmitting(false);
+      return;
     }
+
+    const document = {
+      url,
+      ...(docNumber.trim() ? { number: docNumber.trim() } : {}),
+      ...(docDate ? { date: docDate } : {}),
+    };
+    const lines = items.map((i, index) => ({
+      productId: i.product.id,
+      quantity: i.quantity,
+      fromBinId: resolved[index].fromBinId,
+      toBinId: resolved[index].toBinId,
+    }));
+    const body = {
+      mode: picks.mode,
+      fromWarehouseId: fromWh.id,
+      toWarehouseId: toWh.id,
+      items: lines,
+      notes: notes || undefined,
+      document,
+    };
+
+    log.debug("submit 2/2: creating order", { ...ids, hasNumber: Boolean(document.number), hasDate: Boolean(document.date) });
+    const { data, error: err } = await apiTry<CreatedOrder>("/api/transfer-orders", { method: "POST", json: body });
+
+    setSubmitting(false);
+
+    if (!data) {
+      log.error("transfer create failed after the document uploaded", { ...ids, message: err });
+      setError(err ?? "Failed to create transfer order.");
+      return;
+    }
+
+    clearDraft();
+    const approved = data.status === "APPROVED";
+    log.info("transfer created", { orderId: data.id, orderNo: data.orderNo, mode: picks.mode, itemCount, status: data.status });
+    setReceipt({
+      type: approved ? "success" : "warning",
+      title: approved ? "Transfer Approved" : "Transfer Submitted",
+      referenceId: data.orderNo || "Transfer",
+      redirectTo: data.id ? `/transfers/${data.id}` : "/transfers",
+      items: [
+        { label: "Direction", value: DIRECTION_LABEL[picks.mode] },
+        { label: "Route", value: `${sourceLabel ?? "—"} → ${destinationLabel ?? "—"}` },
+        { label: "Document", value: route.docType ? docLabel(route.docType) : "—" },
+        ...items.map((i) => ({
+          label: i.product.name.length > 28 ? i.product.name.slice(0, 28) + "…" : i.product.name,
+          value: `×${i.quantity}`,
+        })),
+      ],
+      // The copy is explicit that nothing has moved. An approved transfer has NOT moved the
+      // stock, and saying so when it has not is how a shop floor ends up looking for goods
+      // that are still in the other building.
+      details: approved
+        ? "Approved — nothing has moved yet. Dispatch it when the van leaves."
+        : "Pending approval. Screenshot and share on the WhatsApp group for verification.",
+    });
   }
 
   return (
     <div className="pb-32">
       <div className="flex items-center gap-3 mb-4">
-        <Link href="/transfers" className="p-2 -ml-2 rounded-lg hover:bg-slate-100 focus-ring" aria-label="Back"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
+        <Link href="/transfers" className="p-2 -ml-2 rounded-lg hover:bg-slate-100 focus-ring" aria-label="Back">
+          <ArrowLeft className="h-5 w-5 text-slate-600" />
+        </Link>
         <div className="min-w-0">
           <h1 className="text-lg font-bold text-slate-900 truncate">New Transfer Order</h1>
           <p className="text-xs text-slate-500">
-            {isAdmin ? "Auto-approved (Admin)" : "Will need Admin/Supervisor approval"}
+            {isAutoApproved ? "Approved on creation — dispatch separately" : "Will need approval"}
           </p>
         </div>
       </div>
 
-      {!isAdmin && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 mb-3">
-          <p className="text-xs text-amber-700">This transfer order will be submitted for approval.</p>
-        </div>
-      )}
+      {/* ONE route for the whole order, not one per line. An order is dispatched and received
+          as a single thing — one van, one document, one e-way bill. */}
+      <RoutePicker
+        stores={stores}
+        loading={storesLoading}
+        error={storesError}
+        picks={picks}
+        route={route}
+        disabled={submitting}
+        onModeChange={switchMode}
+        onFromWarehouseChange={(id) => setPicks((p) => ({ ...p, fromWarehouseId: id }))}
+        onToWarehouseChange={(id) => setPicks((p) => ({ ...p, toWarehouseId: id }))}
+      />
 
       {/* Search & Add Items */}
       <div className="mb-4">
-        <label className="block text-sm font-medium text-slate-700 mb-1">Search & Add Items</label>
+        <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="product-search">Search & Add Items</label>
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <Input
+            id="product-search"
             placeholder="Search product name or SKU..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            disabled={submitting}
             className="pl-9 min-h-[44px]"
           />
-          {searching && (
-            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 animate-spin" />
-          )}
+          {searching && <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 animate-spin" />}
 
-          {searchResults.length > 0 && (
+          {visibleResults.length > 0 && (
             <div className="absolute top-full left-0 right-0 z-20 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
-              {searchResults.map((p) => (
+              {visibleResults.map((p) => (
                 <button key={p.id} type="button" onClick={() => addItem(p)}
-                  className="w-full text-left px-3 py-2.5 hover:bg-purple-50 border-b border-slate-100 last:border-0 flex items-center justify-between">
+                  className="w-full text-left px-3 py-2.5 hover:bg-purple-50 border-b border-slate-100 last:border-0 flex items-center justify-between focus-ring">
                   <div>
                     <p className="text-sm font-medium text-slate-900">{p.name}</p>
-                    <p className="text-xs text-slate-500">
-                      {p.sku} | Stock: {p.currentStock}
-                      {BIN_TRACKING_ENABLED && (p.bin ? ` | Bin: ${p.bin.code}` : " | No bin")}
-                    </p>
+                    <p className="text-xs text-slate-500 tabular-nums">{p.sku} | Stock: {p.currentStock}</p>
                   </div>
                   <Plus className="h-4 w-4 text-purple-500 shrink-0" />
                 </button>
@@ -276,162 +416,59 @@ export default function NewTransferOrderPage() {
         </div>
       </div>
 
-      {/* Items List */}
-      {items.length === 0 ? (
-        <div className="text-center py-8 border-2 border-dashed border-slate-200 rounded-lg mb-4">
-          <Package className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-          <p className="text-sm text-slate-400">Search and add items to transfer</p>
-        </div>
-      ) : (
-        <div className="space-y-3 mb-4">
-          <p className="text-xs font-medium text-slate-500">{items.length} item{items.length !== 1 ? "s" : ""} to transfer</p>
-          {items.map((item, index) => (
-            <Card key={item.product.id} className="border-purple-100">
-              <CardContent className="p-3">
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex-1 min-w-0 mr-2">
-                    <p className="text-sm font-medium text-slate-900">{item.product.name}</p>
-                    <p className="text-xs text-slate-500">{item.product.sku} | Stock: {item.product.currentStock}</p>
-                  </div>
-                  <button type="button" onClick={() => removeItem(index)}
-                    className="p-1.5 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-600">
-                    <Trash2 className="h-4 w-4" />
-                  </button>
-                </div>
+      {/* Items — product, quantity and the two bins. The lane lives on the route card above. */}
+      <ItemList
+        items={items}
+        limits={limits}
+        options={binOptions}
+        optionsLoading={binsLoading}
+        routeReady={routeChosen}
+        sourceName={fromWh?.name}
+        destinationName={toWh?.name}
+        disabled={submitting}
+        onQuantityChange={setQuantity}
+        onBinChange={setLineBins}
+        onSplit={splitLine}
+        onRemove={removeItem}
+      />
 
-                {/* Quantity */}
-                <div className="mb-2">
-                  <label className="text-xs text-slate-500 mb-0.5 block">Qty</label>
-                  <div className="flex items-center gap-2">
-                    <button type="button"
-                      onClick={() => updateItem(index, "quantity", Math.max(1, item.quantity - 1))}
-                      disabled={item.quantity <= 1}
-                      className="h-11 w-11 rounded-lg border border-slate-300 bg-white text-slate-700 text-lg font-bold flex items-center justify-center disabled:opacity-30">
-                      −
-                    </button>
-                    <span className="h-11 min-w-[3rem] rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center text-sm font-semibold text-slate-900 tabular-nums">
-                      {item.quantity}
-                    </span>
-                    <button type="button"
-                      onClick={() => updateItem(index, "quantity", Math.min(item.product.currentStock, item.quantity + 1))}
-                      disabled={item.quantity >= item.product.currentStock}
-                      className="h-11 w-11 rounded-lg border border-purple-300 bg-purple-50 text-purple-700 text-lg font-bold flex items-center justify-center disabled:opacity-30">
-                      +
-                    </button>
-                    <span className="text-[11px] text-slate-400 tabular-nums">/ {item.product.currentStock}</span>
-                  </div>
-                  {item.quantity > item.product.currentStock && (
-                    <p className="text-xs text-red-600 mt-1">Exceeds available stock</p>
-                  )}
-                </div>
+      <DocumentPicker
+        docType={route.docType}
+        file={docFile}
+        number={docNumber}
+        date={docDate}
+        disabled={submitting}
+        onFileChange={(file) => setAttached(file && route.docType ? { file, type: route.docType } : null)}
+        onNumberChange={setDocNumber}
+        onDateChange={setDocDate}
+      />
 
-                {/* From → To */}
-                {BIN_TRACKING_ENABLED ? (
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <label className="text-xs text-slate-500 mb-0.5 block">From</label>
-                      <select value={item.fromBinId} onChange={(e) => updateItem(index, "fromBinId", e.target.value)}
-                        className="w-full min-h-[44px] rounded-lg border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600">
-                        <option value="">Select...</option>
-                        {bins.map((b) => (
-                          <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-purple-500 shrink-0 mt-7" />
-                    <div className="flex-1">
-                      <label className="text-xs text-slate-500 mb-0.5 block">To</label>
-                      <select value={item.toBinId} onChange={(e) => updateItem(index, "toBinId", e.target.value)}
-                        className="w-full min-h-[44px] rounded-lg border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600">
-                        <option value="">Select...</option>
-                        {bins.filter((b) => b.id !== item.fromBinId).map((b) => (
-                          <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1">
-                      <label className="text-xs text-slate-500 mb-0.5 block">From</label>
-                      <select value={item.fromLocation} onChange={(e) => updateItem(index, "fromLocation", e.target.value)}
-                        className="w-full min-h-[44px] rounded-lg border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600">
-                        {STOCK_LOCATIONS.map((loc) => (
-                          <option key={loc.value} value={loc.value}>{loc.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <ArrowRight className="h-4 w-4 text-purple-500 shrink-0 mt-7" />
-                    <div className="flex-1">
-                      <label className="text-xs text-slate-500 mb-0.5 block">To</label>
-                      <select value={item.toLocation} onChange={(e) => updateItem(index, "toLocation", e.target.value)}
-                        className="w-full min-h-[44px] rounded-lg border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-2 focus:ring-purple-600">
-                        {STOCK_LOCATIONS.filter((loc) => loc.value !== item.fromLocation).map((loc) => (
-                          <option key={loc.value} value={loc.value}>{loc.label}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-                )}
-
-                {/* Route Preview */}
-                {BIN_TRACKING_ENABLED ? (
-                  <>
-                    {item.fromBinId && item.toBinId && item.fromBinId !== item.toBinId && (
-                      <div className="bg-purple-50 rounded-lg p-1.5 mt-2 text-center">
-                        <p className="text-[11px] text-purple-700 font-medium tabular-nums">
-                          {getBinLabel(item.fromBinId)} → {getBinLabel(item.toBinId)}
-                        </p>
-                      </div>
-                    )}
-                    {item.fromBinId && item.toBinId && item.fromBinId === item.toBinId && (
-                      <p className="text-xs text-red-600 mt-1">Source and destination must be different</p>
-                    )}
-                  </>
-                ) : (
-                  <div className="bg-purple-50 rounded-lg p-1.5 mt-2 text-center">
-                    <p className="text-[11px] text-purple-700 font-medium tabular-nums">
-                      {locationLabel(item.fromLocation)} → {locationLabel(item.toLocation)}
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Notes */}
       <div className="mb-4">
-        <label className="block text-sm font-medium text-slate-700 mb-1">Notes (optional)</label>
-        <textarea placeholder="Reason for transfer..." value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
-          className="flex w-full min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-600" />
+        <label className="block text-sm font-medium text-slate-700 mb-1" htmlFor="transfer-notes">Notes (optional)</label>
+        <textarea id="transfer-notes" placeholder="Reason for transfer..." value={notes} onChange={(e) => setNotes(e.target.value)} rows={2}
+          disabled={submitting}
+          className="flex w-full min-h-[44px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-600 disabled:opacity-50" />
       </div>
 
       {error && <p className="text-sm text-red-600 mb-3">{error}</p>}
 
-      {/* Submit - fixed at bottom */}
       <div className="fixed above-nav left-0 right-0 bg-white border-t border-slate-200 p-4 pb-safe z-50">
         {!isValid && !submitting && (
-          <p className="text-xs text-slate-500 mb-2 text-center">
-            {items.length === 0 ? "Add at least one item to transfer." : "Set a valid quantity and route for each item."}
-          </p>
+          <p className="text-xs text-slate-500 mb-2 text-center">{missingHint()}</p>
         )}
         <Button type="button" size="lg" disabled={!isValid || submitting} onClick={handleSubmit}
           className="w-full min-h-[48px] bg-green-600 hover:bg-green-700">
           {submitting ? (
-            <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Creating...</>
-          ) : isAdmin ? (
-            `Transfer ${items.length} Item${items.length !== 1 ? "s" : ""} Now`
+            <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Uploading and creating…</>
           ) : (
-            `Submit ${items.length} Item${items.length !== 1 ? "s" : ""} for Approval`
+            `${isAutoApproved ? "Create" : "Submit"} transfer · ${items.length} item${items.length !== 1 ? "s" : ""}`
           )}
         </Button>
       </div>
 
       <ActionConfirmation
         open={!!receipt}
-        onClose={() => { setReceipt(null); router.push("/transfers"); }}
+        onClose={() => { const to = receipt?.redirectTo ?? "/transfers"; setReceipt(null); router.push(to); }}
         type={receipt?.type || "success"}
         title={receipt?.title || ""}
         referenceId={receipt?.referenceId || ""}

@@ -9,18 +9,48 @@ import {
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { BIN_TRACKING_ENABLED, STOCK_LOCATIONS, stockLocationLabel, type StockLocation } from "@/lib/inventory-config";
+import { useStores } from "@/hooks/use-sites";
+import { apiTry } from "@/lib/api-client";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("stock-audit:brand-count");
 
 interface Brand { id: string; name: string; _count: { products: number } }
-interface BinOption { id: string; code: string; name: string; location: string }
+// One row per warehouse, flattened out of `useStores()` so the lookups below can resolve a
+// warehouse id back to its store. `kind` is optional on purpose: `Warehouse.kind` arrives with
+// plan 0909-stock-store-and-warehouse-scoping; until it is on the wire the Floor/Godown tag
+// simply does not render (plan 0909-stock-screens-size-category-and-sidebar, Part E).
+interface WarehouseRow {
+  id: string; code: string; name: string; sortOrder: number;
+  kind?: "FLOOR" | "GODOWN";
+  storeId: string; storeName: string;
+}
+// `location` is the legacy free-text column and is nullable — never read it. A bin belongs to
+// exactly one warehouse, which is what the picker filters on (plan 1509, B3).
+interface BinOption {
+  id: string; code: string; name: string; location: string | null;
+  /** Decides the count entry (plan 2109, R32): one number, or Assembled + Unassembled. */
+  nonAssemblable?: boolean;
+  warehouse: { id: string; name: string; kind: "FLOOR" | "GODOWN" };
+}
+/**
+ * One product's entry. `qty` is the TOTAL — what "counted" and the progress bar read. In an
+ * assemblable bin it is the sum of `assembled` + `unassembled` (R32), which are what is saved.
+ */
+interface CountEntry {
+  qty: number | null;
+  reorder: number | null;
+  assembled?: number | null;
+  unassembled?: number | null;
+}
 interface CategoryOption { id: string; name: string }
 interface ProductItem {
-  id: string; sku: string; name: string; type: string; size: string | null;
+  id: string; sku: string; name: string;
   currentStock: number; reorderLevel: number; reorderQty: number;
   category: { name: string } | null; brand: { name: string } | null;
 }
 interface SearchResult {
-  id: string; sku: string; name: string; type: string;
+  id: string; sku: string; name: string;
   currentStock: number; reorderLevel: number;
   category: { name: string } | null; brand: { name: string } | null;
 }
@@ -37,6 +67,25 @@ function clearBrandCountDraft() {
 }
 
 export default function BrandCountPage() {
+  // Bins are always on (plan 2109, Q27): the `useBinTracking()` switch was removed, and a
+  // brand count is "this brand, in this bin" (R36).
+  const { stores, loading: storesLoading } = useStores();
+  // Store first, then that store's warehouses (Part E). The flat list is only for lookups —
+  // the picker itself is grouped, so nobody has to know which building belongs to which shop.
+  const warehouses: WarehouseRow[] = stores.flatMap((s) =>
+    (s.warehouses as Array<Omit<WarehouseRow, "storeId" | "storeName">>).map((w) => ({
+      ...w, storeId: s.id, storeName: s.name,
+    }))
+  );
+  const selectedWarehouseFor = (id: string | null | undefined) => warehouses.find((w) => w.id === id) ?? null;
+  const locationName = (id: string | null | undefined) =>
+    warehouses.find((w) => w.id === id)?.name ?? "—";
+  // "<warehouse> · <store>" — what the header, sticky bar and success copy print, because a
+  // warehouse name alone ("Godown") does not say which shop's godown was counted.
+  const locationLabel = (id: string | null | undefined) => {
+    const w = warehouses.find((x) => x.id === id);
+    return w ? `${w.name} · ${w.storeName}` : "—";
+  };
   const { data: session } = useSession();
   const userName = (session?.user as { name?: string })?.name || "You";
 
@@ -46,9 +95,10 @@ export default function BrandCountPage() {
   const [categories, setCategories] = useState<CategoryOption[]>([]);
   const [selectedBrand, setSelectedBrand] = useState<Brand | null>(null);
   const [selectedBin, setSelectedBin] = useState<BinOption | null>(null);
-  const [selectedLocation, setSelectedLocation] = useState<StockLocation | null>(null);
+  const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
+  const [selectedLocation, setSelectedLocation] = useState<string | null>(null);
   const [products, setProducts] = useState<ProductItem[]>([]);
-  const [counts, setCounts] = useState<Record<string, { qty: number | null; reorder: number | null }>>({});
+  const [counts, setCounts] = useState<Record<string, CountEntry>>({});
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -76,20 +126,32 @@ export default function BrandCountPage() {
         step?: Step;
         selectedBrand?: Brand | null;
         selectedBin?: BinOption | null;
-        selectedLocation?: StockLocation | null;
+        selectedStoreId?: string | null;
+        selectedLocation?: string | null;
         products?: ProductItem[];
-        counts?: Record<string, { qty: number | null; reorder: number | null }>;
+        counts?: Record<string, CountEntry>;
       };
       if (d.step && d.step !== "submitted" && d.selectedBrand) {
         setSelectedBrand(d.selectedBrand);
-        if (d.selectedBin) setSelectedBin(d.selectedBin);
+        // A draft saved before plan 1509 can hold a bin with no store or warehouse — the bin
+        // path used to skip both. Such a draft goes back to the location step, and a bin is
+        // kept only when it sits in the restored warehouse, so the submit never sends a bin
+        // the server would refuse.
+        const hasScope = !!d.selectedStoreId && !!d.selectedLocation;
+        if (d.selectedStoreId) setSelectedStoreId(d.selectedStoreId);
         if (d.selectedLocation) setSelectedLocation(d.selectedLocation);
+        const binKept = hasScope && !!d.selectedBin && d.selectedBin.warehouse?.id === d.selectedLocation;
+        if (binKept) setSelectedBin(d.selectedBin!);
         if (Array.isArray(d.products) && d.products.length) setProducts(d.products);
         if (d.counts) setCounts(d.counts);
-        setStep(d.step);
+        // A bin is required since plan 2109 (R36): a "whole warehouse" draft goes back to the
+        // bin step instead of counting into a submit the server would refuse.
+        setStep(d.step === "count" && !binKept ? "bin" : d.step);
         setDraftRestored(true);
       }
-    } catch { /* ignore */ }
+    } catch (e) {
+      log.warn("draft restore failed", { message: e instanceof Error ? e.message : String(e) });
+    }
   }, []);
 
   // Auto-save the in-progress count on every change (skip the empty/done states).
@@ -97,79 +159,144 @@ export default function BrandCountPage() {
     if (step === "submitted") return;
     if (step === "brand" && !selectedBrand) return;
     try {
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ step, selectedBrand, selectedBin, selectedLocation, products, counts }));
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ step, selectedBrand, selectedBin, selectedStoreId, selectedLocation, products, counts }));
     } catch { /* ignore */ }
-  }, [step, selectedBrand, selectedBin, selectedLocation, products, counts]);
+  }, [step, selectedBrand, selectedBin, selectedStoreId, selectedLocation, products, counts]);
 
+  // Brands, bins and categories. Every call through `apiTry` — these were raw `fetch().json()`
+  // with a bare `.catch(() => {})`, so an expired session left three empty pickers and no word.
   useEffect(() => {
-    Promise.all([
-      fetch("/api/brands").then((r) => r.json()),
-      BIN_TRACKING_ENABLED ? fetch("/api/bins").then((r) => r.json()) : Promise.resolve({ success: false }),
-      fetch("/api/categories").then((r) => r.json()),
-    ]).then(([brandsRes, binsRes, catsRes]) => {
-      if (brandsRes.success) setBrands(brandsRes.data.filter((b: Brand) => b._count.products > 0));
-      if (binsRes.success) setBins(binsRes.data);
-      if (catsRes.success) {
+    let cancelled = false;
+    (async () => {
+      const [brandsRes, binsRes, catsRes] = await Promise.all([
+        apiTry<Brand[]>("/api/brands"),
+        apiTry<BinOption[]>("/api/bins"),
+        apiTry<Array<{ id: string; name: string; children?: { id: string; name: string }[] }>>("/api/categories"),
+      ]);
+      if (cancelled) return;
+      if (brandsRes.error) {
+        log.error("brands load failed", { message: brandsRes.error });
+        setError(`Could not load brands: ${brandsRes.error}`);
+      } else setBrands((brandsRes.data ?? []).filter((b) => b._count.products > 0));
+      if (binsRes.error) {
+        // No bins, no brand count (R36) — say why rather than show an empty bin step.
+        log.error("bins load failed", { message: binsRes.error });
+        setError(`Could not load bins: ${binsRes.error}`);
+      } else setBins(binsRes.data ?? []);
+      if (catsRes.error) {
+        log.warn("categories load failed", { message: catsRes.error });
+      } else {
         const flat: CategoryOption[] = [];
-        (catsRes.data as Array<{ id: string; name: string; children?: { id: string; name: string }[] }>).forEach((c) => {
+        (catsRes.data ?? []).forEach((c) => {
           flat.push({ id: c.id, name: c.name });
           c.children?.forEach((ch) => flat.push({ id: ch.id, name: ch.name }));
         });
         setCategories(flat.sort((a, b) => a.name.localeCompare(b.name)));
       }
-    }).catch(() => {});
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  // Debounced "not in list" search
+  // Debounced "not in list" search. Results and the spinner are cleared by the input's
+  // onChange, so this effect only sets state from its timer (react-hooks/set-state-in-effect).
   useEffect(() => {
-    if (notInListSearch.length < 2) { setNotInListResults([]); return; }
+    if (notInListSearch.length < 2) return;
+    let cancelled = false;
     const timer = setTimeout(() => {
-      setNotInListSearching(true);
-      fetch(`/api/products/search?q=${encodeURIComponent(notInListSearch)}`)
-        .then((r) => r.json())
-        .then((res) => { if (res.success) setNotInListResults(res.data); })
-        .catch(() => {})
-        .finally(() => setNotInListSearching(false));
+      void (async () => {
+        const { data, error: err } = await apiTry<SearchResult[]>(
+          `/api/products/search?q=${encodeURIComponent(notInListSearch)}`
+        );
+        if (cancelled) return;
+        setNotInListSearching(false);
+        if (err) {
+          log.warn("product search failed", { message: err });
+          setNotInListResults([]);
+          return;
+        }
+        setNotInListResults(data ?? []);
+      })();
     }, 300);
-    return () => clearTimeout(timer);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [notInListSearch]);
 
   const loadProducts = useCallback(async (brandId: string) => {
     setLoading(true);
-    try {
-      const res = await fetch(`/api/products?brandId=${brandId}&status=ACTIVE&limit=500`);
-      const json = await res.json();
-      if (json.success) {
-        const items = (json.data || []) as ProductItem[];
-        setProducts(items);
-        const initial: Record<string, { qty: number | null; reorder: number | null }> = {};
-        items.forEach((p) => { initial[p.id] = { qty: null, reorder: p.reorderLevel || null }; });
-        setCounts(initial);
-        setExpandedCategories(new Set()); // all collapsed by default
-      }
-    } catch { setError("Failed to load products"); }
-    finally { setLoading(false); }
+    const { data, error: err } = await apiTry<ProductItem[]>(`/api/products?brandId=${brandId}&status=ACTIVE&limit=500`);
+    setLoading(false);
+    if (err) {
+      log.error("products load failed", { brandId, message: err });
+      setError(`Failed to load products: ${err}`);
+      return;
+    }
+    const items = data ?? [];
+    setProducts(items);
+    const initial: Record<string, CountEntry> = {};
+    items.forEach((p) => { initial[p.id] = { qty: null, reorder: p.reorderLevel || null }; });
+    setCounts(initial);
+    setExpandedCategories(new Set()); // all collapsed by default
   }, []);
 
   const handleSelectBrand = (brand: Brand) => {
     setSelectedBrand(brand);
     loadProducts(brand.id);
-    // Step 2 is location (bins dormant) or bin selection.
+    // Step 2 is store → warehouse → bin.
     setStep("bin");
   };
 
   const handleSelectBin = (bin: BinOption) => {
     setSelectedBin(bin);
+    // The condition entry depends on the bin (R32). Totals typed for another bin carry over;
+    // into an assemblable bin they arrive as Unassembled, the condition every inward starts in.
+    setCounts((prev) => {
+      const next: Record<string, CountEntry> = {};
+      for (const [k, c] of Object.entries(prev)) {
+        next[k] = bin.nonAssemblable
+          ? { ...c, assembled: null, unassembled: null }
+          : c.assembled != null || c.unassembled != null || c.qty === null
+            ? c
+            : { ...c, assembled: 0, unassembled: c.qty };
+      }
+      return next;
+    });
     setStep("count");
   };
 
-  const handleSelectLocation = (loc: StockLocation) => {
-    setSelectedLocation(loc);
-    setStep("count");
+  const handleSelectStore = (storeId: string) => {
+    setSelectedStoreId(storeId);
+    // A bin belongs to one warehouse, so it never survives a store switch.
+    setSelectedBin(null);
+    // A warehouse picked under another store must not survive the switch — the server would
+    // refuse the pair (api/stock-counts/route.ts) and the person would not know why.
+    if (selectedLocation && selectedWarehouseFor(selectedLocation)?.storeId !== storeId) {
+      setSelectedLocation(null);
+    }
   };
+
+  // The warehouse is selected and the bin list for it opens below (plan 1509, B1). A bin is
+  // required (plan 2109, R36): the "bins off → count the whole warehouse" jump and the
+  // "Whole warehouse" button were removed.
+  const handleSelectLocation = (loc: string) => {
+    setSelectedLocation(loc);
+    setSelectedBin(null);
+  };
+
+  const nonAssemblableBin = selectedBin?.nonAssemblable === true;
 
   const updateCount = (productId: string, field: "qty" | "reorder", value: number | null) => {
     setCounts((prev) => ({ ...prev, [productId]: { ...prev[productId], [field]: value } }));
+  };
+
+  /** Assemblable bin (R32): one half changes, the total follows. Both empty = not counted. */
+  const updateHalf = (productId: string, field: "assembled" | "unassembled", value: number | null) => {
+    setCounts((prev) => {
+      const cur = prev[productId] ?? { qty: null, reorder: null };
+      const next = { ...cur, [field]: value };
+      const a = next.assembled ?? null;
+      const u = next.unassembled ?? null;
+      next.qty = a === null && u === null ? null : (a ?? 0) + (u ?? 0);
+      return { ...prev, [productId]: next };
+    });
   };
 
   const handleReclassify = async (
@@ -180,40 +307,32 @@ export default function BrandCountPage() {
   ) => {
     setReclassifying((prev) => new Set(prev).add(productId));
     setInlineEdit(null);
-    try {
-      const body = field === "brand" ? { brandId: newId } : { categoryId: newId };
-      const res = await fetch(`/api/products/${productId}/reclassify`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (res.ok) {
-        setProducts((prev) =>
-          prev.map((p) => {
-            if (p.id !== productId) return p;
-            return {
-              ...p,
-              brand: field === "brand" ? { name: newLabel } : p.brand,
-              category: field === "category" ? { name: newLabel } : p.category,
-            };
-          })
-        );
-      } else {
-        setError("Failed to update — check your connection and try again");
-      }
-    } catch {
-      setError("Failed to update — check your connection and try again");
-    } finally {
-      setReclassifying((prev) => { const n = new Set(prev); n.delete(productId); return n; });
+    const body = field === "brand" ? { brandId: newId } : { categoryId: newId };
+    const { error: err } = await apiTry(`/api/products/${productId}/reclassify`, { method: "PUT", json: body });
+    setReclassifying((prev) => { const n = new Set(prev); n.delete(productId); return n; });
+    if (err) {
+      log.error("reclassify failed", { productId, field, message: err });
+      setError(`Failed to update: ${err}`);
+      return;
     }
+    setProducts((prev) =>
+      prev.map((p) => {
+        if (p.id !== productId) return p;
+        return {
+          ...p,
+          brand: field === "brand" ? { name: newLabel } : p.brand,
+          category: field === "category" ? { name: newLabel } : p.category,
+        };
+      })
+    );
   };
 
   const handleAddToCount = (result: SearchResult) => {
     const alreadyInList = !!products.find((p) => p.id === result.id);
     if (!alreadyInList) {
       const newProduct: ProductItem = {
-        id: result.id, sku: result.sku, name: result.name, type: result.type,
-        size: null, currentStock: result.currentStock, reorderLevel: result.reorderLevel,
+        id: result.id, sku: result.sku, name: result.name,
+        currentStock: result.currentStock, reorderLevel: result.reorderLevel,
         reorderQty: 0, category: result.category, brand: result.brand,
       };
       setProducts((prev) => [...prev, newProduct]);
@@ -234,71 +353,99 @@ export default function BrandCountPage() {
   const countedCount = Object.values(counts).filter((c) => c.qty !== null).length;
   const totalProducts = products.length;
 
+
   const handleSubmit = async () => {
     if (!selectedBrand) return;
-    if (BIN_TRACKING_ENABLED && !selectedBin) return;
-    if (!BIN_TRACKING_ENABLED && !selectedLocation) { setError("Select a location first"); return; }
+    // Store, warehouse AND bin are required (plan 1509, B2; plan 2109, R36).
+    if (!selectedStoreId || !selectedLocation) { setError("Select a store and location first"); return; }
+    const selectedWarehouse = selectedWarehouseFor(selectedLocation);
+    if (!selectedWarehouse) { setError("That warehouse is no longer available — pick another"); return; }
+    if (selectedWarehouse.storeId !== selectedStoreId) {
+      setError("That warehouse belongs to a different store — pick the location again"); return;
+    }
+    if (!selectedBin) { setError("Choose a bin"); setStep("bin"); return; }
+    if (selectedBin.warehouse?.id !== selectedLocation) {
+      setError(`Bin ${selectedBin.code} is not in ${selectedWarehouse.name} — pick the bin again`); return;
+    }
     const counted = Object.entries(counts).filter(([, c]) => c.qty !== null);
     if (counted.length === 0) { setError("Count at least one item"); return; }
 
     setSubmitting(true);
     setError("");
+    const ctx = { brandId: selectedBrand.id, storeId: selectedStoreId, warehouseId: selectedLocation, binId: selectedBin.id };
 
     try {
       const userId = (session?.user as { userId?: string })?.userId;
       if (!userId) { setError("Not logged in"); return; }
 
-      const title = BIN_TRACKING_ENABLED && selectedBin
-        ? `${selectedBrand.name} @ ${selectedBin.name} — Brand Count`
-        : `${selectedBrand.name} @ ${stockLocationLabel(selectedLocation)} — Brand Count`;
-      const res = await fetch("/api/stock-counts", {
+      const title = `${selectedBrand.name} @ ${locationName(selectedLocation)} · Bin ${selectedBin.code} — Brand Count`;
+      const { data: created, error: createError, status } = await apiTry<{ id: string }>("/api/stock-counts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        json: {
           title,
-          ...(BIN_TRACKING_ENABLED && selectedBin
-            ? { binId: selectedBin.id, location: selectedBin.location }
-            : { location: selectedLocation }),
-          productIds: products.map((p) => p.id),
+          // Scope as store + warehouse + bin. The store is chosen first, the warehouse from
+          // that store's own list and the bin from that warehouse's, so every id is the
+          // person's explicit pick; the server refuses anything else (api/stock-counts/route.ts).
+          storeId: selectedStoreId,
+          warehouseId: selectedLocation,
+          binId: selectedBin.id,
+          // The COUNTED products only. Every product of the brand used to be sent, and the
+          // Complete step below then refused with "N items not yet counted" whenever the
+          // counter had (rightly) skipped products that are not in this bin.
+          productIds: counted.map(([productId]) => productId),
           assignedToId: userId,
           selfCount: true,
           dueDate: new Date().toISOString(),
-        }),
+        },
       });
-      const createJson = await res.json();
-      if (!res.ok || !createJson.success) { setError(createJson.error || "Failed to create count"); return; }
+      if (createError || !created) {
+        log.error("create failed", { ...ctx, status, message: createError });
+        setError(createError || "Failed to create count");
+        return;
+      }
 
-      const countId = createJson.data.id;
+      const countId = created.id;
 
-      const startRes = await fetch(`/api/stock-counts/${countId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "IN_PROGRESS" }),
-      });
-      if (!startRes.ok) { setError("Failed to start count"); return; }
+      // Every step below through `apiTry` — they were raw `fetch()` calls whose failures were
+      // reported as a generic sentence, or (the reorder save) not at all.
+      const started = await apiTry(`/api/stock-counts/${countId}`, { method: "PUT", json: { status: "IN_PROGRESS" } });
+      if (started.error) {
+        log.error("start failed", { ...ctx, countId, message: started.error });
+        setError(`Failed to start count: ${started.error}`);
+        return;
+      }
 
-      const itemsRes = await fetch(`/api/stock-counts/${countId}`).then((r) => r.json());
-      if (!itemsRes.success) { setError("Failed to load count items"); return; }
+      const loaded = await apiTry<{ items: Array<{ id: string; productId: string }> }>(`/api/stock-counts/${countId}`);
+      if (loaded.error || !loaded.data) {
+        log.error("count items load failed", { ...ctx, countId, message: loaded.error });
+        setError(`Failed to load count items: ${loaded.error ?? "empty response"}`);
+        return;
+      }
 
-      const stockCountItems = itemsRes.data.items as Array<{ id: string; productId: string }>;
-
-      const itemUpdates = stockCountItems
+      // Saved through the items route, which keeps the condition split (R32): Assembled +
+      // Unassembled in an assemblable bin, one number in a non-assemblable one. The old
+      // `PUT /api/stock-counts/[id]` body path saved the total only and cleared any split.
+      const itemUpdates = loaded.data.items
         .filter((sci) => counts[sci.productId]?.qty !== null && counts[sci.productId]?.qty !== undefined)
-        .map((sci) => ({
-          id: sci.id,
-          countedQty: counts[sci.productId].qty!,
-          notes: counts[sci.productId].reorder !== null
-            ? `Reorder: ${counts[sci.productId].reorder}`
-            : undefined,
-        }));
+        .map((sci) => {
+          const c = counts[sci.productId];
+          const hasSplit = !nonAssemblableBin && (c.assembled != null || c.unassembled != null);
+          return {
+            id: sci.id,
+            ...(hasSplit
+              ? { assembledQty: c.assembled ?? 0, unassembledQty: c.unassembled ?? 0 }
+              : { countedQty: c.qty! }),
+            notes: c.reorder !== null ? `Reorder: ${c.reorder}` : undefined,
+          };
+        });
 
       if (itemUpdates.length > 0) {
-        const updateRes = await fetch(`/api/stock-counts/${countId}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ items: itemUpdates }),
-        });
-        if (!updateRes.ok) { setError("Failed to save counted items"); return; }
+        const saved = await apiTry(`/api/stock-counts/${countId}/items`, { method: "PUT", json: { items: itemUpdates } });
+        if (saved.error) {
+          log.error("count save failed", { ...ctx, countId, lines: itemUpdates.length, message: saved.error });
+          setError(`Failed to save counted items: ${saved.error}`);
+          return;
+        }
       }
 
       const reorderUpdates = Object.entries(counts)
@@ -306,33 +453,33 @@ export default function BrandCountPage() {
         .map(([productId, c]) => ({ id: productId, reorderLevel: c.reorder! }));
 
       if (reorderUpdates.length > 0) {
-        await fetch("/api/reorder/update-levels", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ items: reorderUpdates }),
-        });
+        const reordered = await apiTry("/api/reorder/update-levels", { method: "PUT", json: { items: reorderUpdates } });
+        // Not fatal: the count itself is saved. Said, not swallowed.
+        if (reordered.error) {
+          log.warn("reorder levels not saved", { ...ctx, countId, products: reorderUpdates.length, message: reordered.error });
+          setError(`Count saved, but reorder levels were not: ${reordered.error}`);
+        }
       }
 
-      const completeRes = await fetch(`/api/stock-counts/${countId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "COMPLETED" }),
-      });
-      if (!completeRes.ok) {
-        const err = await completeRes.json().catch(() => ({}));
-        setError((err as { error?: string }).error || "Failed to mark as completed");
+      const completed = await apiTry(`/api/stock-counts/${countId}`, { method: "PUT", json: { status: "COMPLETED" } });
+      if (completed.error) {
+        log.error("complete failed", { ...ctx, countId, message: completed.error });
+        setError(completed.error || "Failed to mark as completed");
         return;
       }
 
+      log.info("brand count submitted", { ...ctx, countId, lines: itemUpdates.length });
       clearBrandCountDraft();
       setResultId(countId);
       setStep("submitted");
     } catch (e) {
+      log.error("submit failed", { ...ctx, message: e instanceof Error ? e.message : String(e) });
       setError(e instanceof Error ? e.message : "Submit failed");
     } finally {
       setSubmitting(false);
     }
   };
+
 
   const filtered = products.filter((p) => {
     if (!search) return true;
@@ -358,8 +505,9 @@ export default function BrandCountPage() {
   // Auto-expand all categories when user is searching
   const isCategoryExpanded = (cat: string) => search.length > 0 || expandedCategories.has(cat);
 
-  const warehouseBins = bins.filter((b) => b.location.toLowerCase().includes("warehouse"));
-  const otherBins = bins.filter((b) => !b.location.toLowerCase().includes("warehouse"));
+  // "<warehouse> · <store>", plus " · Bin <code>" when a bin was picked — one label for the
+  // header, the sticky bar and the success copy, in both modes.
+  const scopeLabel = `${locationLabel(selectedLocation)}${selectedBin ? ` · Bin ${selectedBin.code}` : ""}`;
 
   return (
     <div className="pb-32">
@@ -369,12 +517,8 @@ export default function BrandCountPage() {
           <h1 className="text-lg font-bold text-slate-900">Brand Stock Count</h1>
           <p className="text-[10px] text-slate-500">
             {step === "brand" && "Step 1: Select brand"}
-            {step === "bin" && (BIN_TRACKING_ENABLED
-              ? `Step 2: ${selectedBrand?.name} — Select bin`
-              : `Step 2: ${selectedBrand?.name} — Select location`)}
-            {step === "count" && (BIN_TRACKING_ENABLED
-              ? `Step 3: Count ${selectedBrand?.name} items in ${selectedBin?.name}`
-              : `Step 3: Count ${selectedBrand?.name} at ${stockLocationLabel(selectedLocation)}`)}
+            {step === "bin" && `Step 2: ${selectedBrand?.name} — Select location and bin`}
+            {step === "count" && `Step 3: Count ${selectedBrand?.name} at ${scopeLabel}`}
             {step === "submitted" && "Done! Waiting for approval"}
           </p>
         </div>
@@ -393,7 +537,7 @@ export default function BrandCountPage() {
           <button
             onClick={() => {
               clearBrandCountDraft();
-              setStep("brand"); setSelectedBrand(null); setSelectedBin(null); setSelectedLocation(null);
+              setStep("brand"); setSelectedBrand(null); setSelectedBin(null); setSelectedStoreId(null); setSelectedLocation(null);
               setProducts([]); setCounts({}); setSearch(""); setDraftRestored(false);
             }}
             className="underline shrink-0"
@@ -448,75 +592,116 @@ export default function BrandCountPage() {
         </div>
       )}
 
-      {/* ── STEP 2: Select Location (bins dormant) ── */}
-      {step === "bin" && !BIN_TRACKING_ENABLED && (
-        <div className="space-y-2">
-          <p className="text-xs text-slate-600 mb-2">Which location are you counting {selectedBrand?.name} at?</p>
-          {STOCK_LOCATIONS.map((loc) => (
-            <button key={loc.value} onClick={() => handleSelectLocation(loc.value)}
-              className="w-full flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg hover:border-blue-400 transition-colors text-left">
-              <div className="flex items-center gap-2">
-                <MapPin className={`h-4 w-4 ${loc.kind === "Warehouse" ? "text-amber-500" : "text-blue-500"}`} />
-                <div>
-                  <p className="text-sm font-medium text-slate-900">{loc.label}</p>
-                  <p className="text-[10px] text-slate-500">{loc.kind}</p>
-                </div>
-              </div>
-              <ChevronRight className="h-4 w-4 text-slate-400" />
-            </button>
-          ))}
-          <button onClick={() => { setStep("brand"); setSelectedBrand(null); }}
-            className="text-xs text-blue-600 mt-2 underline">← Change brand</button>
-        </div>
-      )}
-
-      {/* ── STEP 2: Select Bin ── */}
-      {step === "bin" && BIN_TRACKING_ENABLED && (
-        <div className="space-y-2">
-          <p className="text-xs text-slate-600 mb-2">Where are the {selectedBrand?.name} items stored?</p>
-
-          {warehouseBins.length > 0 && (
-            <div className="mb-3">
-              <p className="text-[10px] font-semibold text-slate-500 uppercase mb-1">Warehouse Bins</p>
-              {warehouseBins.map((b) => (
-                <button key={b.id} onClick={() => handleSelectBin(b)}
-                  className="w-full flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg hover:border-blue-400 transition-colors text-left mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <MapPin className="h-4 w-4 text-blue-500" />
-                    <div>
-                      <p className="text-sm font-medium text-slate-900">{b.name}</p>
-                      <p className="text-[10px] text-slate-500">{b.code} · {b.location}</p>
-                    </div>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-slate-400" />
-                </button>
-              ))}
-            </div>
-          )}
-
-          {otherBins.length > 0 && (
+      {/* ── STEP 2: Select Location — store first, then that store's warehouses, in BOTH modes.
+          Replaces a flat list of every warehouse in the business. No "Whole store" button: a
+          brand count corrects stock, and correction is per warehouse (D12). With bins on, the
+          bins of the chosen warehouse follow, plus "Whole warehouse" (plan 1509, B1). The old
+          bins-on step was a flat bin list that skipped store and warehouse entirely, which is
+          how a count went out with no storeId. ── */}
+      {step === "bin" && (() => {
+        const selectedStore = stores.find((s) => s.id === selectedStoreId) ?? null;
+        const storeWarehouses = warehouses.filter((w) => w.storeId === selectedStoreId);
+        const pickedWarehouse = storeWarehouses.find((w) => w.id === selectedLocation) ?? null;
+        const warehouseBins = pickedWarehouse ? bins.filter((b) => b.warehouse?.id === pickedWarehouse.id) : [];
+        return (
+          <div className="space-y-3">
             <div>
-              <p className="text-[10px] font-semibold text-slate-500 uppercase mb-1">Store Bins</p>
-              {otherBins.map((b) => (
-                <button key={b.id} onClick={() => handleSelectBin(b)}
-                  className="w-full flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg hover:border-slate-300 transition-colors text-left mb-1.5">
-                  <div className="flex items-center gap-2">
-                    <MapPin className="h-4 w-4 text-slate-400" />
-                    <div>
-                      <p className="text-sm font-medium text-slate-900">{b.name}</p>
-                      <p className="text-[10px] text-slate-500">{b.code} · {b.location}</p>
-                    </div>
-                  </div>
-                  <ChevronRight className="h-4 w-4 text-slate-400" />
-                </button>
-              ))}
+              <p className="text-xs text-slate-600 mb-2">Which store are you counting {selectedBrand?.name} at?</p>
+              <div className="grid grid-cols-2 gap-2">
+                {stores.map((s) => (
+                  <button
+                    key={s.id}
+                    onClick={() => handleSelectStore(s.id)}
+                    className={`min-h-[44px] rounded-lg text-sm font-medium transition-colors focus-ring ${
+                      selectedStoreId === s.id ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                    }`}
+                  >
+                    {s.name}
+                  </button>
+                ))}
+              </div>
+              {storesLoading && stores.length === 0 && (
+                <div className="flex items-center justify-center py-4">
+                  <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+                </div>
+              )}
+              {!storesLoading && stores.length === 0 && (
+                <p className="text-xs text-slate-400 text-center py-4">No stores available</p>
+              )}
             </div>
-          )}
 
-          <button onClick={() => { setStep("brand"); setSelectedBrand(null); }}
-            className="text-xs text-blue-600 mt-2 underline">← Change brand</button>
-        </div>
-      )}
+            {selectedStore && (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-600">Which location in {selectedStore.name}?</p>
+                {storeWarehouses.map((loc) => (
+                  <button key={loc.id} onClick={() => handleSelectLocation(loc.id)}
+                    className={`w-full flex items-center justify-between p-3 border rounded-lg hover:border-blue-400 transition-colors text-left ${
+                      selectedLocation === loc.id
+                        ? "border-slate-900 bg-slate-50 ring-1 ring-slate-900"
+                        : "bg-white border-slate-200"
+                    }`}>
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4 text-amber-500" />
+                      <div>
+                        <p className="text-sm font-medium text-slate-900 flex items-center gap-1.5">
+                          <span>{loc.name}</span>
+                          {/* Floor / Godown tag — only once `Warehouse.kind` is on the wire. */}
+                          {loc.kind && (
+                            <Badge className="text-[9px] px-1 py-0 bg-slate-100 text-slate-600 font-normal">
+                              {loc.kind === "FLOOR" ? "Floor" : "Godown"}
+                            </Badge>
+                          )}
+                        </p>
+                        <p className="text-[10px] text-slate-500 font-mono">{loc.code}</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-slate-400" />
+                  </button>
+                ))}
+                {storeWarehouses.length === 0 && (
+                  <p className="text-[11px] text-slate-500">
+                    {selectedStore.name} has no active warehouses — a brand count needs one, so pick another store.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* The bin is picked INSIDE the chosen warehouse, and is REQUIRED (plan 2109, R36):
+                a brand count is "this brand, in this bin". "Whole warehouse" was removed. */}
+            {pickedWarehouse && (
+              <div className="space-y-2">
+                <p className="text-xs text-slate-600">Which bin in {pickedWarehouse.name}?</p>
+                {warehouseBins.map((b) => (
+                  <button key={b.id} onClick={() => handleSelectBin(b)}
+                    className="w-full min-h-[44px] flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg hover:border-blue-400 transition-colors text-left">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="h-4 w-4 text-blue-500" />
+                      <div>
+                        <p className="text-sm font-medium text-slate-900 flex items-center gap-1.5">
+                          <span>{b.name}</span>
+                          {b.nonAssemblable && (
+                            <Badge className="text-[9px] px-1 py-0 bg-amber-50 text-amber-700 font-normal">Non-assemblable</Badge>
+                          )}
+                        </p>
+                        <p className="text-[10px] text-slate-500 font-mono">{b.code}</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="h-4 w-4 text-slate-400" />
+                  </button>
+                ))}
+                {warehouseBins.length === 0 && (
+                  <p className="text-[11px] text-slate-500">
+                    No bins in this warehouse — add one on /bins before counting here.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <button onClick={() => { setStep("brand"); setSelectedBrand(null); }}
+              className="text-xs text-blue-600 mt-2 underline">← Change brand</button>
+          </div>
+        );
+      })()}
 
       {/* ── STEP 3: Count Items ── */}
       {step === "count" && (
@@ -574,12 +759,6 @@ export default function BrandCountPage() {
                                     <p className="text-xs font-medium text-slate-900 leading-tight">{p.name}</p>
                                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                                       <span className="text-[10px] text-slate-400 font-mono">{p.sku}</span>
-                                      {p.size && (
-                                        <Badge className="text-[9px] px-1 py-0 bg-slate-100 text-slate-600">{p.size}</Badge>
-                                      )}
-                                      <Badge className="text-[9px] px-1 py-0 bg-blue-50 text-blue-600">
-                                        {p.type.replace("_", " ")}
-                                      </Badge>
                                     </div>
 
                                     {/* Brand & Category change chips */}
@@ -655,14 +834,38 @@ export default function BrandCountPage() {
                                 </div>
 
                                 <div className="flex items-center gap-2 mt-2">
-                                  <div className="flex-1">
-                                    <label className="text-[9px] text-slate-500 block mb-0.5">Count</label>
-                                    <input type="number" min="0" inputMode="numeric"
-                                      value={c.qty === null ? "" : c.qty}
-                                      onChange={(e) => updateCount(p.id, "qty", e.target.value === "" ? null : parseInt(e.target.value) || 0)}
-                                      placeholder="Qty"
-                                      className="w-full text-center text-sm font-medium border border-slate-300 rounded-lg py-2 focus:ring-2 focus:ring-green-500 focus:border-green-500" />
-                                  </div>
+                                  {nonAssemblableBin ? (
+                                    // R32: a non-assemblable bin — one number, no condition.
+                                    <div className="flex-1">
+                                      <label className="text-[9px] text-slate-500 block mb-0.5">Count</label>
+                                      <input type="number" min="0" inputMode="numeric"
+                                        value={c.qty === null ? "" : c.qty}
+                                        onChange={(e) => updateCount(p.id, "qty", e.target.value === "" ? null : parseInt(e.target.value) || 0)}
+                                        placeholder="Qty"
+                                        className="w-full text-center text-sm font-medium border border-slate-300 rounded-lg py-2 focus:ring-2 focus:ring-green-500 focus:border-green-500" />
+                                    </div>
+                                  ) : (
+                                    // R32: an assemblable bin — Assembled and Unassembled; the
+                                    // total is their sum.
+                                    <>
+                                      <div className="flex-1">
+                                        <label className="text-[9px] text-slate-500 block mb-0.5">Assembled</label>
+                                        <input type="number" min="0" inputMode="numeric"
+                                          value={c.assembled == null ? "" : c.assembled}
+                                          onChange={(e) => updateHalf(p.id, "assembled", e.target.value === "" ? null : parseInt(e.target.value) || 0)}
+                                          placeholder="0"
+                                          className="w-full text-center text-sm font-medium border border-slate-300 rounded-lg py-2 focus:ring-2 focus:ring-green-500 focus:border-green-500" />
+                                      </div>
+                                      <div className="flex-1">
+                                        <label className="text-[9px] text-slate-500 block mb-0.5">Unassembled</label>
+                                        <input type="number" min="0" inputMode="numeric"
+                                          value={c.unassembled == null ? "" : c.unassembled}
+                                          onChange={(e) => updateHalf(p.id, "unassembled", e.target.value === "" ? null : parseInt(e.target.value) || 0)}
+                                          placeholder="0"
+                                          className="w-full text-center text-sm font-medium border border-slate-300 rounded-lg py-2 focus:ring-2 focus:ring-green-500 focus:border-green-500" />
+                                      </div>
+                                    </>
+                                  )}
                                   <div className="flex-1">
                                     <label className="text-[9px] text-slate-500 block mb-0.5">Reorder Level</label>
                                     <input type="number" min="0" inputMode="numeric"
@@ -694,7 +897,12 @@ export default function BrandCountPage() {
                   <Input
                     placeholder="Search by name or SKU..."
                     value={notInListSearch}
-                    onChange={(e) => setNotInListSearch(e.target.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setNotInListSearch(v);
+                      if (v.length < 2) { setNotInListResults([]); setNotInListSearching(false); }
+                      else setNotInListSearching(true);
+                    }}
                     className="pr-8"
                   />
                   {notInListSearching && (
@@ -756,13 +964,15 @@ export default function BrandCountPage() {
                 )}
               </div>
 
-              {BIN_TRACKING_ENABLED ? (
-                <button onClick={() => { setStep("bin"); setSelectedBin(null); }}
-                  className="text-xs text-blue-600 mt-4 underline">← Change bin</button>
-              ) : (
-                <button onClick={() => { setStep("bin"); setSelectedLocation(null); }}
-                  className="text-xs text-blue-600 mt-4 underline">← Change location</button>
-              )}
+              {/* Back to the bin list of the same warehouse. */}
+              <button
+                onClick={() => {
+                  setStep("bin");
+                  setSelectedBin(null);
+                }}
+                className="text-xs text-blue-600 mt-4 underline">
+                ← Change location or bin
+              </button>
             </>
           )}
         </div>
@@ -775,10 +985,10 @@ export default function BrandCountPage() {
           <div>
             <p className="text-lg font-bold text-green-900">Count Submitted!</p>
             <p className="text-sm text-slate-600 mt-1">
-              {countedCount} items counted for {selectedBrand?.name}{BIN_TRACKING_ENABLED && selectedBin ? ` in ${selectedBin.name}` : selectedLocation ? ` at ${stockLocationLabel(selectedLocation)}` : ""}
+              {countedCount} items counted for {selectedBrand?.name}{selectedLocation ? ` at ${scopeLabel}` : ""}
             </p>
             <p className="text-xs text-slate-500 mt-2">
-              This is a verification count — it records the numbers and any variance, but does not change stock. Stock is added through Inwards.
+              Stock does not change until an approver reviews this count. They can record the differences only, or set this bin&apos;s stock to the counts — which also gives uncoded items their codes.
             </p>
           </div>
           <div className="flex gap-2 justify-center mt-4">
@@ -789,7 +999,7 @@ export default function BrandCountPage() {
             <button
               onClick={() => {
                 clearBrandCountDraft();
-                setStep("brand"); setSelectedBrand(null); setSelectedBin(null); setSelectedLocation(null);
+                setStep("brand"); setSelectedBrand(null); setSelectedBin(null); setSelectedStoreId(null); setSelectedLocation(null);
                 setProducts([]); setCounts({}); setSearch(""); setResultId("");
                 setNotInListSearch(""); setNotInListResults([]); setDraftRestored(false);
               }}
@@ -807,7 +1017,7 @@ export default function BrandCountPage() {
             <div>
               <p className="text-xs text-slate-600"><strong>{countedCount}</strong> of {totalProducts} counted</p>
               <p className="text-[10px] text-slate-400">
-                by {userName} · {selectedBrand?.name}{BIN_TRACKING_ENABLED && selectedBin ? ` · ${selectedBin.code}` : selectedLocation ? ` · ${stockLocationLabel(selectedLocation)}` : ""}
+                by {userName} · {selectedBrand?.name}{selectedLocation ? ` · ${scopeLabel}` : ""}
               </p>
             </div>
             <button onClick={handleSubmit} disabled={submitting}

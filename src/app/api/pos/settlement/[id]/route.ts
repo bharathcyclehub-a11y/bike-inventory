@@ -3,13 +3,13 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError, getServerSession } from "@/lib/auth-helpers";
-import { ZohoClient } from "@/lib/zoho";
+import { requireFeature, AuthError, getServerSession } from "@/lib/auth-helpers";
+import { getBooks } from "@/lib/integrations";
 
 // GET — Settlement detail with sessions and matches
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
+    await requireFeature("pos", "view");
     const { id } = await params;
 
     const settlement = await prisma.dailySettlement.findUnique({
@@ -51,9 +51,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       account_name: string;
     }> = [];
     try {
-      const zoho = new ZohoClient();
-      const ok = await zoho.init();
-      if (ok) {
+      const zoho = await getBooks();
+      if (zoho) {
         const dateStr = settlement.date.toISOString().split("T")[0];
         const data = await zoho.listCustomerPayments(1, dateStr, dateStr);
         zohoPayments = data.customerpayments || [];
@@ -73,7 +72,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const session = await getServerSession();
-    await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
+    await requireFeature("pos", "edit");
     const userId = (session?.user as { userId?: string })?.userId || "";
     const { id } = await params;
     const body = await req.json();

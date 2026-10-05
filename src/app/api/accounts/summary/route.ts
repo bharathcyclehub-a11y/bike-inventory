@@ -2,12 +2,15 @@ export const dynamic = "force-dynamic";
 
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
 import type { BillStatus, POStatus, InvoiceStatus } from "@prisma/client";
 
 export async function GET() {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
+    // `accounts`, not `bills`. This endpoint feeds the /accounts hub, which now has its own
+    // module — gating it on another module's grant meant the hub could not be given to
+    // anyone without also handing them Bills & Payments.
+    await requireFeature("accounts", "view");
     const now = new Date();
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 

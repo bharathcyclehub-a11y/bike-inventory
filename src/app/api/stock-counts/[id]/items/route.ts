@@ -1,17 +1,72 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { userCan } from "@/lib/rbac";
+import { getWarehouseQtyMap, getStoreQtyMap } from "@/lib/stock-location";
+import { getBinQtyMap } from "@/lib/units/bin-qty";
+import { logActivity } from "@/lib/activity-log";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("stock-counts:items");
+
+const qty = z.number().int().min(0);
+
+/**
+ * One counted line. The unit-level audit (plan 1709, R11, Q42) counts a line as
+ * **assembled + unassembled**, and `countedQty` is their sum. An older client that sends only
+ * `countedQty` still saves a valid line — with no split, which the approval applies as a plain
+ * count change.
+ */
+const lineSchema = z
+  .object({
+    id: z.string().min(1),
+    countedQty: qty.optional(),
+    assembledQty: qty.optional(),
+    unassembledQty: qty.optional(),
+    notes: z.string().max(1000).nullable().optional(),
+  })
+  .refine((l) => l.countedQty !== undefined || (l.assembledQty !== undefined && l.unassembledQty !== undefined), {
+    message: "Each line needs Assembled and Unassembled counts",
+  });
+
+const putSchema = z.object({ items: z.array(lineSchema) });
+
+/**
+ * The system quantity for these products WITHIN this audit's scope (R2, §5.1).
+ *
+ * Both callers below used to compare against `Product.currentStock`, the GLOBAL total across
+ * every store. For a warehouse-scoped audit that made every line look stale the moment any
+ * other warehouse moved, and "Refresh" then overwrote `systemQty` with a number the counter
+ * could not possibly see — manufacturing a variance on every product.
+ *
+ * `currentStock` survives as the fallback for exactly one case: a legacy audit with neither
+ * FK set, whose scope is genuinely unknown.
+ *
+ * A bin audit reads THE BIN's quantity (plan 2109, R33) — the figure it was raised with and the
+ * one its approval applies against. It read the whole warehouse here before, so every line of a
+ * bin audit looked stale whenever another bin of the warehouse held the product.
+ */
+async function scopedQtyMap(
+  scope: { storeId: string | null; warehouseId: string | null; binId: string | null },
+  productIds: string[]
+): Promise<Map<string, number> | null> {
+  if (scope.binId) return getBinQtyMap(scope.binId, productIds);
+  if (scope.warehouseId) return getWarehouseQtyMap(productIds, scope.warehouseId);
+  if (scope.storeId) return getStoreQtyMap(productIds, scope.storeId);
+  return null; // legacy audit — the caller falls back to currentStock
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"]);
+    const user = await requireFeature("stock_audit", "view");
     const { id } = await params;
 
     // Clerks/Mechanic can only access their assigned stock counts
-    if (["INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"].includes(user.role)) {
+    if (!(await userCan(user.id, "stock_audit", "approve"))) {
       const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
       if (!sc) return errorResponse("Stock count not found", 404);
       if (sc.assignedToId !== user.id) return errorResponse("You can only access stock counts assigned to you", 403);
@@ -63,19 +118,33 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
       include: {
         product: {
           select: {
-            name: true, sku: true, currentStock: true, type: true, size: true,
+            name: true, sku: true, currentStock: true,
             category: { select: { name: true } },
             brand: { select: { name: true } },
             bin: { select: { code: true, location: true } },
           },
         },
       },
-      orderBy: { product: { name: "asc" } },
+      orderBy: searchParams.get("sort") === "name" 
+        ? { product: { name: "asc" } }
+        : [{ systemQty: "desc" }, { product: { name: "asc" } }],
       ...(searchParams.get("limit") ? { take: parseInt(searchParams.get("limit")!) } : { take: 500 }),
     });
 
-    // Calculate stale count — items where systemQty differs from current product stock
-    const staleCount = items.filter((i) => i.systemQty !== i.product.currentStock).length;
+    // Stale = systemQty differs from what is in the SCOPE now, not from the global total.
+    const scope = await prisma.stockCount.findUnique({
+      where: { id },
+      select: { storeId: true, warehouseId: true, binId: true },
+    });
+    const liveQty = scope ? await scopedQtyMap(scope, items.map((i) => i.productId)) : null;
+    // `liveQty` rides on every line (plan §3 C2): the review table shows a "Now" column when
+    // stock moved between raising the audit and approving it, so a stale snapshot is visible
+    // before anything is applied. Same map that decides `staleCount` — computed once.
+    const withLive = items.map((i) => ({
+      ...i,
+      liveQty: liveQty ? (liveQty.get(i.productId) ?? 0) : i.product.currentStock,
+    }));
+    const staleCount = withLive.filter((i) => i.systemQty !== i.liveQty).length;
 
     // Count totals for tabs
     const allCounts = await prisma.stockCountItem.groupBy({
@@ -89,7 +158,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const totalCount = allCounts[0]?._count || 0;
 
     return successResponse({
-      items,
+      items: withLive,
       staleCount,
       totalCount,
       countedCount,
@@ -97,46 +166,72 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    log.error("items fetch failed", { message: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch items", 500);
   }
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"]);
+    const user = await requireFeature("stock_audit", "edit");
     const { id } = await params;
 
-    // ADMIN cannot save counts — only approve/reject
-    if (user.role === "ADMIN") return errorResponse("Admin can only approve or reject stock counts", 403);
-
-    // Clerks/Mechanic can only edit their assigned stock counts
-    if (["INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"].includes(user.role)) {
-      const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
-      if (!sc) return errorResponse("Stock count not found", 404);
-      if (sc.assignedToId !== user.id) return errorResponse("You can only edit stock counts assigned to you", 403);
+    // Saving counts belongs to the ASSIGNEE, whoever they are (R2).
+    //
+    // The line that used to sit here — "if you hold approve, you cannot save counts" —
+    // blocked an approve-holder from counting an audit assigned to them, which is how an
+    // owner who assigned an audit to themselves found a screen where nothing worked. Holding
+    // `approve` is not a disqualification; the only thing it must not let you do is sign off
+    // your own count, and that is enforced on the status transition in [id]/route.ts.
+    const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true, status: true } });
+    if (!sc) return errorResponse("Stock count not found", 404);
+    if (sc.assignedToId !== user.id) {
+      return errorResponse(
+        "Only the person this audit is assigned to can start, count or complete it",
+        403
+      );
     }
-    const body = await req.json();
-
-    if (!body.items || !Array.isArray(body.items)) {
+    // Counts are written while counting, and only then. This had no status check, so a
+    // line could be rewritten under a COMPLETED or APPROVED audit — after the approver had
+    // looked at it, or after stock had been corrected from it (plan §2.4 D6).
+    if (sc.status !== "IN_PROGRESS") {
+      log.warn("count write refused by status", { stockCountId: id, status: sc.status, userId: user.id });
+      return errorResponse(
+        `This audit is ${sc.status.toLowerCase().replace(/_/g, " ")}; counts can only be saved while it is in progress`,
+        409
+      );
+    }
+    const body = await req.json().catch(() => null);
+    if (!body || !Array.isArray(body.items)) {
       return errorResponse("Items array is required", 400);
     }
+    const parsed = putSchema.safeParse(body);
+    if (!parsed.success) {
+      log.warn("count save refused: invalid lines", { stockCountId: id, issue: parsed.error.issues[0]?.message });
+      return errorResponse(parsed.error.issues[0]?.message ?? "Invalid counts", 400);
+    }
 
+    let splitLines = 0;
     const results = await prisma.$transaction(async (tx) => {
       const updated = [];
-      for (const item of body.items) {
-        if (!item.id || item.countedQty === undefined) continue;
-
+      for (const item of parsed.data.items) {
         const existing = await tx.stockCountItem.findUnique({
           where: { id: item.id },
         });
         if (!existing || existing.stockCountId !== id) continue;
 
+        // The split wins when both halves are sent: the total is derived, never trusted.
+        const split = item.assembledQty !== undefined && item.unassembledQty !== undefined;
+        const countedQty = split ? item.assembledQty! + item.unassembledQty! : item.countedQty!;
+        if (split) splitLines += 1;
+
         const result = await tx.stockCountItem.update({
           where: { id: item.id },
           data: {
-            countedQty: item.countedQty,
-            variance: item.countedQty - existing.systemQty,
-            suggestedBrand: item.suggestedBrand ?? existing.suggestedBrand,
+            countedQty,
+            assembledQty: split ? item.assembledQty! : null,
+            unassembledQty: split ? item.unassembledQty! : null,
+            variance: countedQty - existing.systemQty,
             notes: item.notes ?? existing.notes,
             countedAt: new Date(),
           },
@@ -146,42 +241,154 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return updated;
     });
 
+    log.debug("counts saved", { stockCountId: id, lines: results.length, splitLines });
     return successResponse({ updated: results.length });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    log.error("items update failed", { message: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed to update items", 400);
+  }
+}
+
+const addSchema = z.object({ productId: z.string({ error: "Choose a product" }).min(1, "Choose a product") });
+
+/**
+ * Add a product the counter found in the bin but that is not on the count (plan 2109, Q26).
+ *
+ * An empty bin's audit starts with no lines, so this is how its contents get onto it. The line
+ * starts at what the bin holds of that product — 0 for anything genuinely new to the bin — and
+ * is counted like any other. Approval then creates the `U-` codes for what was counted (R31).
+ *
+ * Same door as saving counts: the assignee, while the audit is IN PROGRESS. Only a bin audit
+ * takes new lines; an old audit saved without a bin cannot be applied to stock anyway (R36).
+ */
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  try {
+    const user = await requireFeature("stock_audit", "edit");
+
+    const sc = await prisma.stockCount.findUnique({
+      where: { id },
+      select: { id: true, countNo: true, assignedToId: true, status: true, binId: true },
+    });
+    if (!sc) return errorResponse("Stock count not found", 404);
+    if (sc.assignedToId !== user.id) {
+      return errorResponse("Only the person this audit is assigned to can start, count or complete it", 403);
+    }
+    if (sc.status !== "IN_PROGRESS") {
+      log.warn("add line refused by status", { stockCountId: id, status: sc.status, userId: user.id });
+      return errorResponse(
+        `This audit is ${sc.status.toLowerCase().replace(/_/g, " ")}; products can only be added while it is in progress`,
+        409
+      );
+    }
+    if (!sc.binId) {
+      log.warn("add line refused: audit has no bin", { stockCountId: id });
+      return errorResponse("Products can only be added to a bin audit", 400);
+    }
+
+    const body = await req.json().catch(() => null);
+    const parsed = addSchema.safeParse(body);
+    if (!parsed.success) {
+      log.warn("add line refused: invalid body", { stockCountId: id, issue: parsed.error.issues[0]?.message });
+      return errorResponse(parsed.error.issues[0]?.message ?? "Choose a product", 400);
+    }
+    const { productId } = parsed.data;
+
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+      select: { id: true, name: true, sku: true, status: true },
+    });
+    if (!product) return errorResponse("That product does not exist", 400);
+    if (product.status !== "ACTIVE") {
+      return errorResponse(`${product.name} is not active and cannot be counted`, 400);
+    }
+
+    const already = await prisma.stockCountItem.findFirst({
+      where: { stockCountId: id, productId },
+      select: { id: true },
+    });
+    if (already) {
+      log.debug("add line: already on the count", { stockCountId: id, productId });
+      return errorResponse(`${product.name} is already on this count — search for it in the list`, 409);
+    }
+
+    const binQty = (await getBinQtyMap(sc.binId, [productId])).get(productId) ?? 0;
+
+    const created = await prisma.$transaction(async (tx) => {
+      const item = await tx.stockCountItem.create({
+        data: { stockCountId: id, productId, systemQty: binQty },
+        include: {
+          product: {
+            select: {
+              name: true, sku: true, currentStock: true,
+              category: { select: { name: true } },
+              brand: { select: { name: true } },
+              bin: { select: { code: true, location: true } },
+            },
+          },
+        },
+      });
+      await logActivity(tx, {
+        module: "stock_audit",
+        action: "line_added",
+        entityType: "StockCount",
+        entityId: id,
+        entityRef: sc.countNo,
+        details: `${product.name} (${product.sku}) added to the count`,
+        userId: user.id,
+        userName: user.name,
+      });
+      return item;
+    });
+
+    log.info("line added to count", { stockCountId: id, productId, itemId: created.id, systemQty: binQty });
+    return successResponse({ ...created, liveQty: binQty }, 201);
+  } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    log.error("add line failed", { stockCountId: id, message: error instanceof Error ? error.message : String(error) });
+    return errorResponse(error instanceof Error ? error.message : "Failed to add the product", 400);
   }
 }
 
 // PATCH — Refresh systemQty from current product stock
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"]);
+    const user = await requireFeature("stock_audit", "edit");
     const { id } = await params;
 
     // Clerks/Mechanic can only refresh their assigned stock counts
-    if (["INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE"].includes(user.role)) {
+    if (!(await userCan(user.id, "stock_audit", "approve"))) {
       const sc = await prisma.stockCount.findUnique({ where: { id }, select: { assignedToId: true } });
       if (!sc) return errorResponse("Stock count not found", 404);
       if (sc.assignedToId !== user.id) return errorResponse("You can only access stock counts assigned to you", 403);
     }
+
+    const scope = await prisma.stockCount.findUnique({
+      where: { id },
+      select: { storeId: true, warehouseId: true, binId: true },
+    });
+    if (!scope) return errorResponse("Stock count not found", 404);
 
     const items = await prisma.stockCountItem.findMany({
       where: { stockCountId: id },
       include: { product: { select: { currentStock: true } } },
     });
 
+    // Refresh to the SCOPED quantity. This wrote the global `currentStock` before, so on a
+    // warehouse audit Refresh replaced a correct systemQty with the sum across every store.
+    const liveQty = await scopedQtyMap(scope, items.map((i) => i.productId));
+
     let refreshed = 0;
     await prisma.$transaction(async (tx) => {
       for (const item of items) {
-        if (item.systemQty !== item.product.currentStock) {
-          const newVariance = item.countedQty !== null
-            ? item.countedQty - item.product.currentStock
-            : null;
+        const live = liveQty ? (liveQty.get(item.productId) ?? 0) : item.product.currentStock;
+        if (item.systemQty !== live) {
+          const newVariance = item.countedQty !== null ? item.countedQty - live : null;
           await tx.stockCountItem.update({
             where: { id: item.id },
             data: {
-              systemQty: item.product.currentStock,
+              systemQty: live,
               variance: newVariance,
             },
           });
@@ -193,6 +400,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return successResponse({ refreshed });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    log.error("systemQty refresh failed", { message: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed to refresh", 400);
   }
 }

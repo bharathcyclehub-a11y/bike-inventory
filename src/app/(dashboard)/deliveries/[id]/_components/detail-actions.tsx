@@ -1,23 +1,29 @@
 "use client";
 
 import { useState } from "react";
-import { CheckCircle2, Truck, Package, Wrench } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { CheckCircle2, Truck, Package } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
-import { DeliveryData } from "./types";
+import { usePermissions } from "@/lib/use-permissions";
+import { DeliveryData, StockShortLine, isOutstationDelivery } from "./types";
 import { ScheduleForm } from "./schedule-form";
 import { DispatchForm } from "./dispatch-form";
 import { HandoverChecklist } from "./handover-checklist";
 import { ServiceInvoiceSection } from "./service-invoice-section";
 import { FlagSection } from "./flag-section";
+import { ApprovalSection } from "./approval-section";
+import { PriorityStar } from "./priority-star";
 
 interface DetailActionsProps {
   data: DeliveryData;
   deliveryId: string;
-  contactSaved: boolean;
+  /** `data.customerId` is set. Schedule and Walk-out need it; the server re-checks (plan 1609 A6). */
+  customerSaved: boolean;
   templates: Record<string, string>;
-  initialAction: "WALK_OUT" | null;
   onStatusChange: (status: string, extra?: Record<string, unknown>) => Promise<void>;
   onRefetch: () => void;
+  /** Floor lines a SCHEDULED change could not hold; the page shows them on the stock-hold card. */
+  onStockShort: (lines: StockShortLine[]) => void;
   onError: (msg: string) => void;
   onConfirmation: (conf: {
     type: "success";
@@ -31,22 +37,34 @@ interface DetailActionsProps {
 export function DetailActions({
   data,
   deliveryId,
-  contactSaved,
+  customerSaved,
   templates,
-  initialAction,
   onStatusChange,
   onRefetch,
+  onStockShort,
   onError,
   onConfirmation,
 }: DetailActionsProps) {
   const [showSchedule, setShowSchedule] = useState(false);
   const [showDispatch, setShowDispatch] = useState(false);
-  const [showHandover, setShowHandover] = useState<"WALK_OUT" | "DELIVERED" | null>(
-    data.status === "WALK_OUT" || data.status === "DELIVERED" ? null : initialAction
-  );
+  const router = useRouter();
+  // Walk-out has its own focused screen (plan 1609 A44, A45); inline handover is Delivered only.
+  const [showHandover, setShowHandover] = useState<"DELIVERED" | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
 
-  const isOuts = data.isOutstation;
+  const isOuts = isOutstationDelivery(data);
+
+  // Plan 1709, R19/R26a. Every one of these is COSMETIC — each route re-checks its own grant.
+  // `delivery_priority` is its own module (Q21), so starring does not require `deliveries.edit`.
+  const { canEdit, canApprove } = usePermissions();
+  const mayStar = canEdit("delivery_priority");
+  const mayApprove = canApprove("deliveries");
+  const mayEditDelivery = canEdit("deliveries");
+
+  // R26a: dispatch and ship are blocked until the outward is approved. The server refuses either
+  // way; disabling the button is what stops a person pressing it and reading a refusal instead.
+  const blockedByApproval = !data.approved;
+  const dispatchTitle = blockedByApproval ? "Approval is needed before dispatch" : undefined;
 
   const handleStatusUpdate = async (status: string, extra?: Record<string, unknown>) => {
     setActionLoading(true);
@@ -65,6 +83,26 @@ export function DetailActions({
         deliveryId={deliveryId}
         onFlagged={onRefetch}
         onResolved={onRefetch}
+      />
+
+      {/* ★ priority (R16, R19–R21). Shown to anyone who may set it; the grant is its own module. */}
+      {mayStar && (
+        <PriorityStar
+          deliveryId={deliveryId}
+          priorityAt={data.priorityAt}
+          canEdit={mayStar}
+          onChanged={onRefetch}
+          variant="button"
+        />
+      )}
+
+      {/* Outbound approval (R25, R26a). Blocks Dispatch and Ship; a walk-out needs none. */}
+      <ApprovalSection
+        data={data}
+        deliveryId={deliveryId}
+        canApprove={mayApprove}
+        canRequest={mayEditDelivery}
+        onChanged={onRefetch}
       />
 
       {/* Prebook Info */}
@@ -95,8 +133,9 @@ export function DetailActions({
           data={data}
           deliveryId={deliveryId}
           templates={templates}
-          onScheduled={() => {
+          onScheduled={(stockShort) => {
             setShowSchedule(false);
+            onStockShort(stockShort);
             onRefetch();
           }}
           onCancel={() => setShowSchedule(false)}
@@ -115,7 +154,6 @@ export function DetailActions({
             onRefetch();
           }}
           onCancel={() => setShowHandover(null)}
-          onError={onError}
           onConfirmation={onConfirmation}
         />
       )}
@@ -138,9 +176,10 @@ export function DetailActions({
       {/* Action Buttons */}
       {(data.status === "PENDING" || data.status === "VERIFIED") && !showSchedule && !showHandover && (
         <div className="space-y-2">
-          {!contactSaved && data.customerPhone ? (
+          {/* Regardless of whether a phone exists: staff can type one in the customer card (B2). */}
+          {!customerSaved ? (
             <p className="text-xs text-amber-600 font-medium py-2">
-              Save customer contact above to proceed
+              Save the customer above to schedule or walk out
             </p>
           ) : (
             <div className="flex gap-2">
@@ -152,8 +191,8 @@ export function DetailActions({
               </button>
               <button
                 onClick={() => {
-                  if (!contactSaved && data.customerPhone) return;
-                  setShowHandover("WALK_OUT");
+                  if (!customerSaved) return;
+                  router.push(`/deliveries/${deliveryId}/walkout`);
                 }}
                 className="flex-1 bg-green-600 text-white py-2.5 min-h-[48px] rounded-lg text-sm font-medium flex items-center justify-center gap-1.5"
               >
@@ -179,7 +218,8 @@ export function DetailActions({
       {data.status === "SCHEDULED" && isOuts && !showDispatch && (
         <button
           onClick={() => setShowDispatch(true)}
-          disabled={actionLoading}
+          disabled={actionLoading || blockedByApproval}
+          title={dispatchTitle}
           className="w-full flex items-center justify-center gap-2 bg-orange-600 text-white py-2.5 min-h-[48px] rounded-lg text-sm font-medium disabled:opacity-50"
         >
           <Truck className="h-4 w-4" /> Dispatch
@@ -202,7 +242,7 @@ export function DetailActions({
         <div className="space-y-2">
           <button
             onClick={() => {
-              if (data.isOutstation) {
+              if (isOuts) {
                 const trackingNo = prompt("Enter courier tracking number:");
                 if (!trackingNo?.trim()) return;
                 handleStatusUpdate("SHIPPED", { courierTrackingNo: trackingNo.trim() });
@@ -210,7 +250,8 @@ export function DetailActions({
                 handleStatusUpdate("SHIPPED");
               }
             }}
-            disabled={actionLoading}
+            disabled={actionLoading || blockedByApproval}
+            title={dispatchTitle}
             className="w-full flex items-center justify-center gap-2 bg-amber-600 text-white py-2.5 min-h-[48px] rounded-lg text-sm font-medium disabled:opacity-50"
           >
             <Truck className="h-4 w-4" /> Mark Shipped

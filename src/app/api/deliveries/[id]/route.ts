@@ -1,62 +1,225 @@
 export const dynamic = "force-dynamic";
 
-import { NextRequest } from "next/server";
+export const runtime = "nodejs";
+// nodejs, explicitly: this route reaches SMTP (a raw socket on 587) and the FCM JWT signer
+// (node crypto) through notify(). Neither works on the edge runtime, and the failure there
+// is not self-explanatory. Node is the default today; this stops a later change from
+// silently breaking sends. See the notifications plan, Part C and D.1.
+import { NextRequest, after } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { deliveryUpdateSchema } from "@/lib/validations";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { maybeNotifyBelowReorder, type ReorderCrossing } from "@/lib/notify/stock";
+import {
+  holdDeliveryStock,
+  releaseDeliveryStock,
+  deductDeliveryFromFloor,
+  floorShortForDispatch,
+  shortRefusalMessage,
+  FloorShortError,
+  isDummy,
+  type ShortLine,
+} from "@/lib/deliveries/floor-stock";
+import { notifyTransferNeeded } from "@/lib/deliveries/transfer-needed";
+import {
+  APPROVAL_GATED_STATUSES,
+  approvalRefusal,
+  isDeliveryApproved,
+} from "@/lib/approvals/actions/delivery";
+import {
+  slotRefusal,
+  SLOT_REFUSAL_MESSAGE,
+  istDayBounds,
+  isDateString,
+  toISTDateString,
+} from "@/lib/deliveries/slots";
+import { toPlus91, samePhone } from "@/lib/phone";
+import { zoneColumns, zoneFromOutstation } from "@/lib/deliveries/zone";
+import { deliveryPayment } from "@/lib/deliveries/payment";
+import { createLogger } from "@/lib/logger";
+import { sellDeliveryUnits } from "@/lib/units";
+
+const log = createLogger("deliveries:api");
+
+const DUMMY_MESSAGE = "Dummy delivery: no warehouse matched this invoice number. No actions are allowed.";
+
+/** Statuses whose `scheduledDate` does not take one of the day's slots (same rule as slots.ts). */
+const SLOTLESS_STATUSES = ["PREBOOKED", "WALK_OUT"];
+
+/** The IST calendar day ("YYYY-MM-DD") a staff date means, or null when it is not a date. */
+function staffDateToISTDay(value: string): string | null {
+  if (isDateString(value)) {
+    const probe = new Date(`${value}T00:00:00+05:30`);
+    return Number.isNaN(probe.getTime()) || toISTDateString(probe) !== value ? null : value;
+  }
+  const moment = new Date(value);
+  return Number.isNaN(moment.getTime()) ? null : toISTDateString(moment);
+}
+
+const DELIVERY_INCLUDE = {
+  verifiedBy: { select: { name: true } },
+  warehouse: { select: { id: true, name: true, kind: true } },
+  customer: { select: { id: true, name: true, phone: true } },
+} as const;
+
+/** `Delivery.zohoBalance` as a JSON number — a Prisma Decimal would otherwise serialise as a string. */
+function decimalToNumber(v: { toString(): string } | null): number | null {
+  if (v === null) return null;
+  const n = Number(v.toString());
+  return Number.isFinite(n) ? n : null;
+}
+
+/** The receivables row for an invoice, or null. A failed lookup is logged and treated as absent. */
+async function receivableFor(deliveryId: string, invoiceNo: string) {
+  try {
+    return await prisma.customerInvoice.findFirst({
+      where: { invoiceNo },
+      select: { amount: true, paidAmount: true, status: true },
+    });
+  } catch (err) {
+    log.warn("payment lookup failed", {
+      deliveryId,
+      invoiceNo,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+}
+
+/** A refusal thrown inside the transaction that carries its own HTTP status (404, 409). */
+class DeliveryActionError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "DeliveryActionError";
+    this.status = status;
+  }
+}
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let deliveryId: string | undefined;
   try {
-    await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SALES_MANAGER"]);
+    await requireFeature("deliveries", "view");
     const { id } = await params;
+    deliveryId = id;
 
     const delivery = await prisma.delivery.findUnique({
       where: { id },
-      include: { verifiedBy: { select: { name: true } } },
+      include: DELIVERY_INCLUDE,
     });
 
     if (!delivery) return errorResponse("Delivery not found", 404);
 
-    // Check payment status from receivables
+    // Check payment status from receivables. `paymentStatus` is the older shape
+    // (handover-checklist.tsx still reads it); `payment` is the summary card's (A31): the
+    // receivables row first, else Zoho's snapshot from import, else null ("not available").
+    // One lookup feeds both. Payment is a nice-to-have on the detail screen: a failed lookup is
+    // logged inside receivableFor, the delivery still loads, and `payment` falls back to the
+    // Zoho snapshot rather than losing both.
+    const invoice = await receivableFor(id, delivery.invoiceNo);
     let paymentStatus: { hasPending: boolean; balance: number; paidAmount: number; totalAmount: number } | null = null;
-    try {
-      const invoice = await prisma.customerInvoice.findFirst({
-        where: { invoiceNo: delivery.invoiceNo },
-        select: { amount: true, paidAmount: true, status: true },
-      });
-      if (invoice) {
-        const balance = invoice.amount - invoice.paidAmount;
-        paymentStatus = {
-          hasPending: balance > 0,
-          balance,
-          paidAmount: invoice.paidAmount,
-          totalAmount: invoice.amount,
-        };
-      }
-    } catch { /* CustomerInvoice table might not exist yet */ }
+    if (invoice) {
+      const balance = invoice.amount - invoice.paidAmount;
+      paymentStatus = {
+        hasPending: balance > 0,
+        balance,
+        paidAmount: invoice.paidAmount,
+        totalAmount: invoice.amount,
+      };
+    }
+    const payment = deliveryPayment(delivery, invoice);
 
-    return successResponse({ ...delivery, paymentStatus });
+    return successResponse({
+      ...delivery,
+      zohoBalance: decimalToNumber(delivery.zohoBalance),
+      isDummy: isDummy(delivery),
+      // Plan 1709, R26a: derived, never stored. A return after an approval revokes it, so the
+      // screen must not read `approvedAt` on its own — the comparison lives in one place.
+      approved: isDeliveryApproved(delivery),
+      paymentStatus,
+      payment,
+    });
   } catch (error) {
-    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    if (error instanceof AuthError) {
+      log.warn("delivery fetch refused", { deliveryId, status: error.status });
+      return errorResponse(error.message, error.status);
+    }
+    log.error("delivery fetch failed", {
+      deliveryId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch delivery", 500);
   }
 }
 
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let deliveryId: string | undefined;
+
+  // Plan 1709, R14: a shortage tells every holder of `transfers.create`. These three live OUTSIDE
+  // the try because a REFUSED handover or dispatch rolls the transaction back and is reported
+  // from the catch — and the shortage is a real fact whether the status change stood or not.
+  let notifyShort: ShortLine[] = [];
+  let userId: string | undefined;
+  const deliveryRef = { id: "", invoiceNo: "", warehouse: null as { name: string } | null };
+
   try {
-    const user = await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER"]);
+    const user = await requireFeature("deliveries", "edit");
+    userId = user.id;
     const { id } = await params;
+    deliveryId = id;
     const body = await req.json();
     const data = deliveryUpdateSchema.parse(body);
 
-    const preCheck = await prisma.delivery.findUnique({ where: { id } });
+    const preCheck = await prisma.delivery.findUnique({ where: { id }, select: { id: true } });
     if (!preCheck) return errorResponse("Delivery not found", 404);
+
+    // §F.0: filled INSIDE the transaction (only the DELIVERED / WALK_OUT deduction below moves
+    // currentStock down), sent AFTER it commits. Hold and release touch reservedQuantity
+    // only and cannot cross the reorder line.
+    const crossings: ReorderCrossing[] = [];
+
+    // Lines a SCHEDULED / PACKED move could not hold (A26, A37). The move is still accepted.
+    let stockShort: ShortLine[] = [];
+    deliveryRef.id = id;
+
+    // Set when a staff phone edit dropped the saved customer; logged once the write commits.
+    let unlinkedCustomerId: string | null = null;
 
     const result = await prisma.$transaction(async (tx) => {
       // Re-read inside transaction to prevent race conditions
-      const existing = await tx.delivery.findUnique({ where: { id } });
-      if (!existing) throw new Error("Delivery not found");
+      const existing = await tx.delivery.findUnique({
+        where: { id },
+        include: { warehouse: { select: { name: true } } },
+      });
+      if (!existing) throw new DeliveryActionError("Delivery not found", 404);
+      deliveryRef.invoiceNo = existing.invoiceNo;
+      deliveryRef.warehouse = existing.warehouse;
+
+      // A Dummy (no floor warehouse matched the invoice prefix) takes no action at all (A41b,
+      // A41c, T2). DELETE is the only exception and lives in its own handler.
+      const changesSomething = Object.values(data).some((v) => v !== undefined);
+      if (isDummy(existing) && changesSomething) {
+        throw new DeliveryActionError(DUMMY_MESSAGE, 409);
+      }
+
+      const updateData: Record<string, unknown> = {};
+
+      // Phones are written `+91-XXXXXXXXXX` (A12b, B3 — a row converts when it is touched);
+      // an empty string clears the column.
+      let customerId = existing.customerId;
+      if (data.customerPhone !== undefined) {
+        const phone = toPlus91(data.customerPhone);
+        updateData.customerPhone = phone;
+        // The saved customer is identified by this number. A different number means it no longer
+        // matches, so the link is dropped and staff must Save the customer again (A6).
+        if (existing.customerId && !samePhone(existing.customerPhone, phone)) {
+          updateData.customerId = null;
+          customerId = null;
+          unlinkedCustomerId = existing.customerId;
+        }
+      }
+      if (data.alternatePhone !== undefined) updateData.alternatePhone = toPlus91(data.alternatePhone);
 
       // Status transition guards (inside transaction for atomicity)
       if (data.status) {
@@ -78,30 +241,90 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           throw new Error(`Cannot change from ${existing.status} to ${data.status}`);
         }
 
-        // Walk-out requires customer phone to be saved
-        if (data.status === "WALK_OUT" && !existing.customerPhone) {
-          throw new Error("Cannot walk-out without saving customer contact first");
+        // Schedule and Walk-out require the saved customer (A5, A6) — Delivery.customerId, set by
+        // Save Contact (`POST /api/deliveries/[id]/customer`), not merely a phone on the row.
+        if ((data.status === "SCHEDULED" || data.status === "WALK_OUT") && !customerId) {
+          throw new DeliveryActionError("Save the customer first.", 409);
         }
 
         // SHIPPED requires tracking number for outstation deliveries
-        if (data.status === "SHIPPED" && existing.isOutstation && !existing.courierTrackingNo && !data.courierTrackingNo) {
+        const outstation = existing.deliveryZone === "OUTSTATION" || existing.isOutstation;
+        if (data.status === "SHIPPED" && outstation && !existing.courierTrackingNo && !data.courierTrackingNo) {
           throw new Error("Tracking number is required for outstation shipments before marking as Shipped");
         }
-      }
-      const updateData: Record<string, unknown> = {};
 
-      // Copy simple fields
+        // ─── Plan 1709: the two gates before an outward leaves the building ────────────────
+        //
+        // 1. APPROVAL (R26a, Q16). OUT_FOR_DELIVERY and SHIPPED need an approval that has not
+        //    since been returned. A WALK_OUT needs none — the customer is standing there — and a
+        //    Dummy never reaches here, having been refused above (Q37).
+        if (APPROVAL_GATED_STATUSES.includes(data.status) && !isDeliveryApproved(existing)) {
+          log.warn("dispatch refused: not approved", {
+            deliveryId: existing.id,
+            invoiceNo: existing.invoiceNo,
+            status: data.status,
+          });
+          throw new DeliveryActionError(approvalRefusal(existing), 409);
+        }
+
+        // 2. STOCK (R13). New at OUT_FOR_DELIVERY: held, or the floor's usable quantity covers
+        //    every line. Scheduling is still never blocked (A26/A37) — this is the hard block,
+        //    and it names where the stock actually is.
+        if (data.status === "OUT_FOR_DELIVERY") {
+          const short = await floorShortForDispatch(tx, existing);
+          if (short.length > 0) {
+            notifyShort = short;
+            throw new DeliveryActionError(
+              shortRefusalMessage(short, existing.warehouse?.name ?? "the floor warehouse"),
+              409
+            );
+          }
+        }
+      }
+
+      // Copy simple fields (phones are handled above)
       if (data.customerAddress !== undefined) updateData.customerAddress = data.customerAddress;
       if (data.customerArea !== undefined) updateData.customerArea = data.customerArea;
       if (data.customerPincode !== undefined) updateData.customerPincode = data.customerPincode;
-      if (data.customerPhone !== undefined) updateData.customerPhone = data.customerPhone;
-      if (data.alternatePhone !== undefined) updateData.alternatePhone = data.alternatePhone;
       if (data.deliveryNotes !== undefined) updateData.deliveryNotes = data.deliveryNotes;
       if (data.notes !== undefined) updateData.notes = data.notes;
-      if (data.scheduledDate) updateData.scheduledDate = new Date(data.scheduledDate);
 
-      // Outstation & courier fields
-      if (data.isOutstation !== undefined) updateData.isOutstation = data.isOutstation;
+      // Staff date (A28, A36, T9). null clears it — staff may schedule without a date. A date is
+      // stored as the start of its IST day and must pass the same 10-per-day slot rule as the
+      // customer's calendar. Keeping the delivery's current day is never refused (it already
+      // holds that slot, and a past day would otherwise block every later edit). A delivery whose
+      // status takes no slot (PREBOOKED, WALK_OUT) is not counted, so it is not checked either.
+      if (data.scheduledDate === null) {
+        updateData.scheduledDate = null;
+      } else if (data.scheduledDate !== undefined) {
+        const day = staffDateToISTDay(data.scheduledDate);
+        if (!day) throw new DeliveryActionError("Enter a valid delivery date.", 400);
+        const currentDay = existing.scheduledDate ? toISTDateString(existing.scheduledDate) : null;
+        const effectiveStatus = data.status ?? existing.status;
+        if (day !== currentDay && !SLOTLESS_STATUSES.includes(effectiveStatus)) {
+          const refusal = await slotRefusal(tx, day, existing.id);
+          if (refusal) {
+            log.warn("staff date refused", {
+              deliveryId: existing.id,
+              invoiceNo: existing.invoiceNo,
+              day,
+              refusal,
+            });
+            throw new DeliveryActionError(SLOT_REFUSAL_MESSAGE[refusal], 409);
+          }
+        }
+        updateData.scheduledDate = istDayBounds(day).start;
+      }
+
+      // Zone (A22, T6): `deliveryZone` and `isOutstation` are always written together. The
+      // three-state `deliveryZone` wins; a body carrying only the legacy boolean still sets a zone.
+      if (data.deliveryZone !== undefined) {
+        Object.assign(updateData, zoneColumns(data.deliveryZone));
+      } else if (data.isOutstation !== undefined) {
+        Object.assign(updateData, zoneColumns(zoneFromOutstation(data.isOutstation)));
+      }
+
+      // Courier fields
       if (data.courierName !== undefined) updateData.courierName = data.courierName;
       if (data.courierTrackingNo !== undefined) updateData.courierTrackingNo = data.courierTrackingNo;
       if (data.courierTrackingLink !== undefined) updateData.courierTrackingLink = data.courierTrackingLink;
@@ -140,125 +363,80 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
           updateData.flagResolvedBy = user.id;
         }
 
-        // Mark delivered timestamp + clear reservation
-        if (data.status === "DELIVERED") {
-          updateData.deliveredAt = new Date();
-          updateData.stockReservedAt = null;
-        }
-        if (data.status === "WALK_OUT") {
-          updateData.stockReservedAt = null;
-        }
-
-        // RESERVE stock on SCHEDULED or PACKED (don't deduct yet)
+        // HOLD stock on SCHEDULED or PACKED, on the matched floor (A46). Never fails on a
+        // shortage (A26, A37): all-or-nothing (T5), the move is accepted and the short lines go
+        // back to the screen. holdDeliveryStock writes `stockReservedAt` itself when it holds,
+        // so updateData must NOT carry that key here or it would overwrite the fresh value.
         if (data.status === "SCHEDULED" || data.status === "PACKED") {
-          if (!existing.stockReservedAt) {
-            const items = (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
-            for (const item of items) {
-              if (!item.sku) continue;
-              const product = await tx.product.findFirst({
-                where: { sku: item.sku, bin: { location: { startsWith: "Bharath Cycle Hub" } } },
-                select: { id: true, currentStock: true, reservedStock: true },
-              }) || await tx.product.findFirst({
-                where: { sku: item.sku },
-                select: { id: true, currentStock: true, reservedStock: true },
-              });
-              if (!product) continue;
-
-              const available = product.currentStock - product.reservedStock;
-              if (available < item.quantity) {
-                throw new Error(`Insufficient available stock for ${item.name} (SKU: ${item.sku}). Available: ${available}, Needed: ${item.quantity}`);
-              }
-              await tx.product.update({
-                where: { id: product.id },
-                data: { reservedStock: product.reservedStock + item.quantity },
-              });
-            }
-            updateData.stockReservedAt = new Date();
+          const hold = await holdDeliveryStock(tx, existing);
+          if (!hold.held) {
+            stockShort = hold.short;
+            // R14: tell the people who can move stock. Sent after this transaction commits.
+            notifyShort = hold.short;
+            log.warn("hold short — status accepted without a hold", {
+              deliveryId: existing.id,
+              invoiceNo: existing.invoiceNo,
+              warehouseId: existing.warehouseId,
+              lines: hold.short.length,
+            });
           }
         }
 
-        // DEDUCT stock on DELIVERED or WALK_OUT (final handover)
+        // DEDUCT stock on DELIVERED or WALK_OUT (final handover), from the floor only (A40).
         if (data.status === "DELIVERED" || data.status === "WALK_OUT") {
-          if (data.status === "WALK_OUT") updateData.deliveredAt = new Date();
+          updateData.deliveredAt = new Date();
+          updateData.stockReservedAt = null;
 
           // Idempotency: skip if already deducted
           const alreadyDeducted = await tx.inventoryTransaction.findFirst({
             where: { referenceNo: existing.invoiceNo, type: "OUTWARD" },
+            select: { id: true },
           });
 
-          if (!alreadyDeducted) {
-            const items = (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
-            for (const item of items) {
-              if (!item.sku) continue;
-              const product = await tx.product.findFirst({
-                where: { sku: item.sku, bin: { location: { startsWith: "Bharath Cycle Hub" } } },
-                select: { id: true, currentStock: true, reservedStock: true },
-              }) || await tx.product.findFirst({
-                where: { sku: item.sku },
-                select: { id: true, currentStock: true, reservedStock: true },
+          if (alreadyDeducted) {
+            // The stock already left; a hold still counted on the floor would never be given
+            // back once stockReservedAt is cleared below.
+            await releaseDeliveryStock(tx, existing);
+            log.warn("handover: OUTWARD already recorded, deduction skipped", {
+              deliveryId: existing.id,
+              invoiceNo: existing.invoiceNo,
+            });
+          } else {
+            // Refuses (plain Error → 400) when the floor is short (A40b); the transaction rolls back.
+            const moved = await deductDeliveryFromFloor(
+              tx,
+              existing,
+              existing.warehouse?.name ?? "the floor warehouse"
+            );
+            for (const line of moved) {
+              // Collect only (§F.0); sent after commit.
+              crossings.push({
+                productId: line.productId,
+                previousStock: line.previousStock,
+                newStock: line.newStock,
               });
-              if (!product) continue;
-
-              const wasReserved = !!existing.stockReservedAt;
-              if (wasReserved) {
-                // Stock was reserved — deduct both
-                const newStock = product.currentStock - item.quantity;
-                if (newStock < 0) {
-                  throw new Error(`Insufficient stock for ${item.name} (SKU: ${item.sku}). Available: ${product.currentStock}, Needed: ${item.quantity}`);
-                }
-                await tx.product.update({
-                  where: { id: product.id },
-                  data: {
-                    currentStock: newStock,
-                    reservedStock: Math.max(0, product.reservedStock - item.quantity),
-                  },
-                });
-              } else {
-                // Direct walk-out (no prior reservation) — check available stock
-                const available = product.currentStock - product.reservedStock;
-                if (available < item.quantity) {
-                  throw new Error(`Insufficient available stock for ${item.name} (SKU: ${item.sku}). Available: ${available}, Needed: ${item.quantity}`);
-                }
-                await tx.product.update({
-                  where: { id: product.id },
-                  data: { currentStock: product.currentStock - item.quantity },
-                });
-              }
-
               await tx.inventoryTransaction.create({
                 data: {
                   type: "OUTWARD",
-                  productId: product.id,
-                  quantity: item.quantity,
-                  previousStock: product.currentStock,
-                  newStock: product.currentStock - item.quantity,
+                  productId: line.productId,
+                  quantity: line.quantity,
+                  previousStock: line.previousStock,
+                  newStock: line.newStock,
                   referenceNo: existing.invoiceNo,
-                  notes: `[ZOHO][VERIFIED] Customer: ${existing.customerName} | Invoice: ${existing.invoiceNo} | ${item.name} x${item.quantity}`,
+                  notes: `[ZOHO][VERIFIED] Customer: ${existing.customerName} | Invoice: ${existing.invoiceNo} | ${line.name} x${line.quantity}`,
                   userId: user.id,
                 },
               });
             }
+            // Plan 1709, Part B (R7, R38): the units behind the lines are SOLD from this floor —
+            // the outward's own held units first — and the bins they sat in go down with them.
+            await sellDeliveryUnits(tx, existing, moved);
           }
         }
 
-        // RELEASE reservation on rollback (SCHEDULED/PACKED → VERIFIED)
+        // RELEASE the hold on rollback (SCHEDULED/PACKED → VERIFIED)
         if (data.status === "VERIFIED" && existing.stockReservedAt) {
-          const items = (existing.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
-          for (const item of items) {
-            if (!item.sku) continue;
-            const product = await tx.product.findFirst({
-              where: { sku: item.sku, bin: { location: { startsWith: "Bharath Cycle Hub" } } },
-              select: { id: true, reservedStock: true },
-            }) || await tx.product.findFirst({
-              where: { sku: item.sku },
-              select: { id: true, reservedStock: true },
-            });
-            if (!product) continue;
-            await tx.product.update({
-              where: { id: product.id },
-              data: { reservedStock: Math.max(0, product.reservedStock - item.quantity) },
-            });
-          }
+          await releaseDeliveryStock(tx, existing);
           updateData.stockReservedAt = null;
         }
       }
@@ -266,23 +444,80 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       return tx.delivery.update({
         where: { id },
         data: updateData,
-        include: { verifiedBy: { select: { name: true } } },
+        include: DELIVERY_INCLUDE,
       });
     });
 
-    return successResponse(result);
+    // §F.0: committed. Sent after the response has gone out; empty unless this PUT deducted
+    // stock, and nothing is sent if the transaction threw.
+    after(() => maybeNotifyBelowReorder(crossings));
+
+    // R14: the floor could not hold this outward, but the status change stood. Everyone holding
+    // `transfers.create` is told, minus the person who just saw it on screen.
+    if (notifyShort.length > 0) {
+      const short = notifyShort;
+      after(() => notifyTransferNeeded({ ...deliveryRef, invoiceNo: result.invoiceNo, warehouse: result.warehouse }, short, user.id));
+    }
+
+    if (unlinkedCustomerId) {
+      log.warn("customer phone changed — saved customer unlinked", {
+        deliveryId: result.id,
+        invoiceNo: result.invoiceNo,
+        customerId: unlinkedCustomerId,
+      });
+    }
+
+    log.info("delivery updated", {
+      deliveryId: result.id,
+      invoiceNo: result.invoiceNo,
+      status: data.status ?? null,
+      zone: result.deliveryZone,
+      stockShortLines: stockShort.length,
+      outwardLines: crossings.length,
+    });
+
+    const payment = deliveryPayment(result, await receivableFor(result.id, result.invoiceNo));
+
+    return successResponse({
+      ...result,
+      zohoBalance: decimalToNumber(result.zohoBalance),
+      isDummy: isDummy(result),
+      stockShort,
+      payment,
+    });
   } catch (error) {
-    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    // R14: a REFUSED handover or dispatch rolled the transaction back, but the shortage it found
+    // is real — the stock is not on the floor. Raise the transfer push from here, once the
+    // rollback is done. `after()` is safe on the error path too: it runs after the response.
+    const refusalShort = error instanceof FloorShortError ? error.short : notifyShort;
+    if (refusalShort.length > 0 && deliveryRef.invoiceNo) {
+      after(() => notifyTransferNeeded(deliveryRef, refusalShort, userId));
+    }
+
+    if (error instanceof AuthError) {
+      log.warn("delivery update refused", { deliveryId, status: error.status });
+      return errorResponse(error.message, error.status);
+    }
+    if (error instanceof DeliveryActionError) {
+      log.warn("delivery update refused", { deliveryId, status: error.status, reason: error.message });
+      return errorResponse(error.message, error.status);
+    }
+    log.warn("delivery update failed", {
+      deliveryId,
+      reason: error instanceof Error ? error.message : String(error),
+    });
     return errorResponse(error instanceof Error ? error.message : "Failed to update delivery", 400);
   }
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let deliveryId: string | undefined;
   try {
-    await requireAuth(["ADMIN", "CEO"]);
+    await requireFeature("deliveries", "delete");
     const { id } = await params;
+    deliveryId = id;
 
-    const delivery = await prisma.delivery.findUnique({ where: { id } });
+    const delivery = await prisma.delivery.findUnique({ where: { id }, select: { status: true } });
     if (!delivery) return errorResponse("Delivery not found", 404);
 
     const blockedStatuses = ["SHIPPED", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "WALK_OUT"];
@@ -290,33 +525,49 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
       return errorResponse(`Cannot delete a delivery in ${delivery.status} status`, 400);
     }
 
-    await prisma.$transaction(async (tx) => {
-      // Release reserved stock if delivery had a reservation
-      if (delivery.stockReservedAt) {
-        const items = (delivery.lineItems as Array<{ name: string; sku: string; quantity: number; rate: number }>) || [];
-        for (const item of items) {
-          if (!item.sku) continue;
-          const product = await tx.product.findFirst({
-            where: { sku: item.sku, bin: { location: { startsWith: "Bharath Cycle Hub" } } },
-            select: { id: true, reservedStock: true },
-          }) || await tx.product.findFirst({
-            where: { sku: item.sku },
-            select: { id: true, reservedStock: true },
-          });
-          if (!product) continue;
-          await tx.product.update({
-            where: { id: product.id },
-            data: { reservedStock: Math.max(0, product.reservedStock - item.quantity) },
-          });
-        }
+    // Allowed on a Dummy (T2) so duplicates such as INVOICE-003951 can be cleared.
+    const deleted = await prisma.$transaction(async (tx) => {
+      const existing = await tx.delivery.findUnique({ where: { id } });
+      if (!existing) throw new DeliveryActionError("Delivery not found", 404);
+      if (blockedStatuses.includes(existing.status)) {
+        throw new DeliveryActionError(`Cannot delete a delivery in ${existing.status} status`, 400);
       }
 
+      // Give back the floor hold, if any. No-op when nothing is held or on a Dummy.
+      await releaseDeliveryStock(tx, existing);
+
+      // Plan 1709, R16/R21: and the physical units a ★ held for it. `reservedForDeliveryId` is
+      // SetNull, so the delete would clear the column anyway — but `reservedAt` would be left
+      // behind, and a unit reading "held since Tuesday, for nobody" is a lie the Awaiting list
+      // would show. Clearing both here keeps the pair honest.
+      const { count: unheld } = await tx.inventoryUnit.updateMany({
+        where: { reservedForDeliveryId: id },
+        data: { reservedForDeliveryId: null, reservedAt: null },
+      });
+
       await tx.delivery.delete({ where: { id } });
+      return { invoiceNo: existing.invoiceNo, unheld };
     });
 
+    log.info("delivery deleted", {
+      deliveryId: id,
+      invoiceNo: deleted.invoiceNo,
+      unitsReleased: deleted.unheld,
+    });
     return successResponse({ deleted: true });
   } catch (error) {
-    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    if (error instanceof AuthError) {
+      log.warn("delivery delete refused", { deliveryId, status: error.status });
+      return errorResponse(error.message, error.status);
+    }
+    if (error instanceof DeliveryActionError) {
+      log.warn("delivery delete refused", { deliveryId, status: error.status, reason: error.message });
+      return errorResponse(error.message, error.status);
+    }
+    log.error("delivery delete failed", {
+      deliveryId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return errorResponse(error instanceof Error ? error.message : "Failed to delete delivery", 400);
   }
 }

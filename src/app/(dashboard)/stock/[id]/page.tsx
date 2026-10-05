@@ -2,17 +2,60 @@
 
 import { use, useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
-import { BIN_TRACKING_ENABLED } from "@/lib/inventory-config";
+import { isLowStock } from "@/lib/reorder";
+import { apiFetch, apiTry } from "@/lib/api-client";
+import { createLogger } from "@/lib/logger";
 import Link from "next/link";
-import { ArrowLeft, QrCode, MapPin, Tag, Package, IndianRupee, Pencil, Save, X, Power } from "lucide-react";
+import { ArrowLeft, QrCode, MapPin, Tag, IndianRupee, Pencil, Save, X, Power, Wrench, RefreshCw } from "lucide-react";
+import { AssemblyLevelSheet } from "@/components/assembly-level-sheet";
+import { ReorderSheet, type ReorderTarget } from "@/components/reorder-sheet";
+import { assemblyLevelLabel, type AssemblyLevelValue } from "@/lib/assembly-level";
 import { LabelPrintButton } from "@/components/label-print";
 import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SearchableSelect, type SearchableSelectOption } from "@/components/ui/searchable-select";
 import { TransactionItem } from "@/components/transaction-item";
 import { usePermissions } from "@/lib/use-permissions";
+
+const log = createLogger("stock:detail");
+
+/**
+ * What GET /api/categories returns: a FLAT list of every row — roots AND children — each with
+ * its `children` nested and its `parent` named. It is not a tree; a child appears twice.
+ */
+interface RawCategory {
+  id: string;
+  name: string;
+  parent: { id: string; name: string } | null;
+  children?: Array<{ id: string; name: string; isActive?: boolean }>;
+}
+
+/**
+ * Flattened for the picker, parent as the hint so "Tyres" under two parents can be told apart.
+ * Only ROOT rows are walked — iterating every row would push each child twice, once as its own
+ * row and once under its parent (plan 0909-stock-screens-size-category-and-sidebar, Q10). A
+ * child whose parent is not in the list (the parent is inactive, the child is not) is kept, or
+ * it would vanish from the picker even though it is a valid destination.
+ */
+function flattenCategories(rows: RawCategory[]): SearchableSelectOption[] {
+  const rootIds = new Set(rows.filter((c) => c.parent === null).map((c) => c.id));
+  const flat: SearchableSelectOption[] = [];
+  for (const c of rows) {
+    if (c.parent === null) {
+      flat.push({ id: c.id, label: c.name });
+      for (const ch of c.children ?? []) {
+        if (ch.isActive === false) continue;
+        flat.push({ id: ch.id, label: ch.name, hint: c.name });
+      }
+    } else if (!rootIds.has(c.parent.id)) {
+      flat.push({ id: c.id, label: c.name, hint: c.parent.name });
+    }
+  }
+  return flat;
+}
 
 interface SerialItem {
   id: string;
@@ -36,20 +79,23 @@ interface ProductDetail {
   id: string;
   sku: string;
   name: string;
-  type: string;
   status: string;
   condition: string;
   currentStock: number;
   reservedStock: number;
   reorderLevel: number;
+  reorderQty: number;
+  reorderVendorId: string | null;
+  reorderVendor: { id: string; name: string } | null;
   maxStock: number;
   costPrice: number;
   sellingPrice: number;
   mrp: number;
   gstRate: number;
   hsnCode: string | null;
-  size: string | null;
   tags: string[];
+  /** The product's one assembly condition level; null = the next Assign asks (plan 1509, D3). */
+  assemblyLevel: AssemblyLevelValue | null;
   categoryId: string | null;
   category: { id: string; name: string } | null;
   brandId: string | null;
@@ -82,36 +128,65 @@ function parseTransactionLabel(notes: string | null, type: string): string {
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { data: session } = useSession();
-  const role = (session?.user as { role?: string })?.role || "";
-  const { canEdit: canEditCheck } = usePermissions(role);
-  const isAdmin = role === "ADMIN" || role === "CEO";
+  const { canView, canApprove } = usePermissions();
+  const { canEdit: canEditCheck } = usePermissions();
+  // assembly.approve, matching PUT /api/products/[id]/assembly-level and the Assign modal that
+  // also writes this column (plan 1509-assembly-queue…, D4). Not stock.edit.
+  const mayAssemblyLevel = canApprove("assembly");
+  const [levelOpen, setLevelOpen] = useState(false);
+  // reorder.edit, matching PUT /api/products/[id]/reorder and the /stock row button — not
+  // stock.edit (plan 1509-reorder-inside-purchase-orders, Q13 a).
+  const mayReorder = canEditCheck("reorder");
+  const [reorderTarget, setReorderTarget] = useState<ReorderTarget | null>(null);
+  // Gates the Pricing card (Cost / Selling / MRP) and nothing else on this page.
+  const isAdmin = canView("cost_price");
   const canEdit = canEditCheck("stock");
-  const canEditType = true; // all authenticated users can reclassify product type
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [actionError, setActionError] = useState("");
-  const [editData, setEditData] = useState<Record<string, unknown>>({ name: "", color: "", size: "", sellingPrice: 0, mrp: 0, reorderLevel: 0, brandId: "", binId: "", type: "" });
+  const [editData, setEditData] = useState<Record<string, unknown>>({ name: "", color: "", categoryId: "", sellingPrice: 0, mrp: 0, reorderLevel: 0, reorderQty: 0, reorderVendorId: "", brandId: "", binId: "" });
+  const [vendors, setVendors] = useState<Array<{ id: string; name: string; code: string }>>([]);
   const [brands, setBrands] = useState<{ id: string; name: string }[]>([]);
+  const [categories, setCategories] = useState<SearchableSelectOption[]>([]);
   const [bins, setBins] = useState<{ id: string; code: string; name: string; location: string }[]>([]);
 
   useEffect(() => {
-    Promise.all([
-      fetch("/api/brands").then((r) => r.json()),
-      BIN_TRACKING_ENABLED ? fetch("/api/bins").then((r) => r.json()) : Promise.resolve({ success: false }),
-    ]).then(([bRes, binRes]) => {
-      if (bRes.success) setBrands(bRes.data);
-      if (binRes.success) setBins(binRes.data);
-    }).catch(() => {});
-  }, []);
+    // GET /api/brands and GET /api/categories both answer active rows only by default — a
+    // retired row is not a destination. The product's own brand / category is appended below
+    // if it is no longer listed.
+    void Promise.all([
+      apiTry<{ id: string; name: string }[]>("/api/brands"),
+      apiTry<RawCategory[]>("/api/categories"),
+      apiTry<{ id: string; code: string; name: string; location: string }[]>("/api/bins"),
+    ]).then(([bRes, cRes, binRes]) => {
+      if (bRes.data) setBrands(bRes.data);
+      else if (bRes.error) log.error("could not load brands", { productId: id, message: bRes.error });
+      if (cRes.data) setCategories(flattenCategories(cRes.data));
+      else if (cRes.error) log.error("could not load categories", { productId: id, message: cRes.error });
+      if (binRes.data) setBins(binRes.data);
+      else if (binRes.error) log.error("could not load bins", { productId: id, message: binRes.error });
+    });
+  }, [id]);
+
+  // Loaded when the form opens rather than with the product: most visits to this page are
+  // to read it, and the vendor list is only needed by the one select in the edit form.
+  useEffect(() => {
+    if (!editing || vendors.length > 0) return;
+    apiTry<Array<{ id: string; name: string; code: string }>>("/api/vendors?limit=500").then(
+      ({ data }) => { if (data) setVendors(data); }
+    );
+  }, [editing, vendors.length]);
 
   useEffect(() => {
-    fetch(`/api/products/${id}`)
-      .then((r) => r.json())
-      .then((res) => { if (res.success) setProduct(res.data); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    // apiTry, not raw .json(): an expired session answers with the login page's HTML, and the
+    // old bare catch turned that into "Product not found" with nothing in the log.
+    apiTry<ProductDetail>(`/api/products/${id}`).then(({ data, error }) => {
+      if (data) setProduct(data);
+      else log.error("could not load product", { productId: id, message: error });
+      setLoading(false);
+    });
   }, [id]);
 
   if (loading) {
@@ -133,17 +208,36 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
 
   const inStockSerials = product.serialItems.filter((s) => s.status === "IN_STOCK");
 
+  // The brand list is active brands only. A product already filed under an inactive brand
+  // must still see its own brand in the select, or the control renders blank and the next
+  // save would silently move the product. Appended, marked, never hidden.
+  const currentBrand = product.brand;
+  const brandOptions =
+    currentBrand && !brands.some((b) => b.id === currentBrand.id)
+      ? [...brands, { id: currentBrand.id, name: `${currentBrand.name} (inactive)` }]
+      : brands;
+
+  // Same rule for the category: the picker lists active rows, and a product already filed
+  // under an inactive one must still see it, or the control renders blank. Saving with the
+  // inactive id still in place succeeds — PUT refuses a category only on CHANGE (D2 / Q9).
+  const currentCategory = product.category;
+  const categoryOptions =
+    currentCategory && !categories.some((c) => c.id === currentCategory.id)
+      ? [...categories, { id: currentCategory.id, label: `${currentCategory.name} (inactive)` }]
+      : categories;
+
   function startEdit() {
     setEditData({
       name: product!.name,
       color: (product as unknown as Record<string, string>).color || "",
-      size: product!.size || "",
+      categoryId: product!.categoryId || "",
       sellingPrice: product!.sellingPrice,
       mrp: product!.mrp,
       reorderLevel: product!.reorderLevel,
+      reorderQty: product!.reorderQty ?? 0,
+      reorderVendorId: product!.reorderVendorId || "",
       brandId: product!.brandId || "",
       binId: product!.binId || "",
-      type: product!.type || "",
     });
     setEditing(true);
   }
@@ -152,37 +246,30 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     setSaving(true);
     setActionError("");
     try {
-      let res;
-      if (canEdit) {
-        // Full edit — admin/purchase manager
-        // Only send non-empty fields; skip type if not set (empty string fails enum validation)
-        const payload: Record<string, unknown> = {};
-        for (const [k, v] of Object.entries(editData)) {
-          if (v !== "" && v !== undefined) payload[k] = v;
-        }
-        res = await fetch(`/api/products/${id}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-      } else {
-        // Type-only reclassification — all authenticated users
-        res = await fetch(`/api/products/${id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: editData.type }),
-        });
+      // Only send non-empty fields. The type-only PATCH branch is gone with the type: this
+      // form is reachable only by a stock.edit holder now.
+      const payload: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(editData)) {
+        if (v !== "" && v !== undefined) payload[k] = v;
       }
-      const data = await res.json();
-      if (data.success) {
-        // Always re-fetch full product so serialItems/transactions/tags are intact
-        const full = await fetch(`/api/products/${id}`).then((r) => r.json());
-        if (full.success) setProduct(full.data);
-        setEditing(false);
-      } else {
-        setActionError(data.error || "Save failed");
-      }
-    } catch (e) { setActionError(e instanceof Error ? e.message : "Save failed"); }
+      // reorderVendorId is the one field where "" is a CHOICE — "No vendor" — not an
+      // untouched box. The loop above drops empty strings, which is right for text fields and
+      // wrong here: it would make clearing a vendor silently do nothing. Sent as null, which
+      // is what the schema and the column both take.
+      if (editData.reorderVendorId === "") payload.reorderVendorId = null;
+      // apiFetch throws with the API's own sentence on a refusal, which is what the old
+      // `data.error` branch showed.
+      await apiFetch(`/api/products/${id}`, { method: "PUT", json: payload });
+      // Always re-fetch full product so serialItems/transactions/tags are intact
+      const full = await apiTry<ProductDetail>(`/api/products/${id}`);
+      if (full.data) setProduct(full.data);
+      else log.warn("product saved but the reload failed", { productId: id, message: full.error });
+      setEditing(false);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Save failed";
+      log.error("product save failed", { productId: id, message });
+      setActionError(message);
+    }
     finally { setSaving(false); }
   }
 
@@ -206,12 +293,13 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             onClick={async () => {
               const newStatus = product.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
               if (!confirm(`Mark this item as ${newStatus}?`)) return;
-              const res = await fetch(`/api/products/${id}`, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ status: newStatus }),
-              }).then(r => r.json());
-              if (res.success) setProduct({ ...product, status: newStatus });
+              const { error } = await apiTry(`/api/products/${id}`, { method: "PUT", json: { status: newStatus } });
+              if (error === null) {
+                setProduct({ ...product, status: newStatus });
+              } else {
+                log.error("status change failed", { productId: id, message: error });
+                setActionError(error);
+              }
             }}
             className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium shrink-0 transition-colors ${
               product.status === "ACTIVE"
@@ -223,7 +311,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             {product.status === "ACTIVE" ? "Active" : "Inactive"}
           </button>
         )}
-        {(canEdit || canEditType) && !editing && (
+        {canEdit && !editing && (
           <button onClick={startEdit} className="p-2 rounded-lg hover:bg-slate-100">
             <Pencil className="h-4 w-4 text-slate-500" />
           </button>
@@ -242,31 +330,6 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           <CardContent className="p-3 space-y-2">
             <p className="text-xs font-semibold text-blue-800 mb-1">Edit Product</p>
 
-            {/* Type selector — visible to ALL users */}
-            <div>
-              <label className="text-[11px] text-slate-500 uppercase tracking-wide font-medium">Item Type</label>
-              <div className="grid grid-cols-3 gap-1.5 mt-1">
-                {([
-                  { key: "BICYCLE", label: "Cycle" },
-                  { key: "SPARE_PART", label: "Spare" },
-                  { key: "ACCESSORY", label: "Accessory" },
-                ] as const).map((t) => (
-                  <button
-                    key={t.key}
-                    type="button"
-                    onClick={() => setEditData({ ...editData, type: t.key })}
-                    className={`py-2 rounded-lg text-xs font-semibold border transition-colors ${
-                      editData.type === t.key
-                        ? "bg-blue-600 text-white border-blue-600"
-                        : "bg-white text-slate-600 border-slate-200 hover:border-slate-400"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
             {/* Full edit fields — admins / purchase manager only */}
             {canEdit && (
               <>
@@ -279,23 +342,30 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                   <select value={editData.brandId as string} onChange={(e) => setEditData({ ...editData, brandId: e.target.value })}
                     className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
                     <option value="">No brand</option>
-                    {brands.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    {brandOptions.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                 </div>
-                {BIN_TRACKING_ENABLED && (
-                  <div>
-                    <label className="text-[11px] text-slate-500">Bin / Location</label>
-                    <select value={editData.binId as string} onChange={(e) => setEditData({ ...editData, binId: e.target.value })}
-                      className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-                      <option value="">No bin</option>
-                      {bins.map((b) => <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>)}
-                    </select>
-                  </div>
-                )}
+                <div>
+                  <label className="text-[11px] text-slate-500">Bin / Location</label>
+                  <select value={editData.binId as string} onChange={(e) => setEditData({ ...editData, binId: e.target.value })}
+                    className="w-full rounded-md border border-slate-200 px-2 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="">No bin</option>
+                    {bins.map((b) => <option key={b.id} value={b.id}>{b.code} — {b.name} ({b.location})</option>)}
+                  </select>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="text-[11px] text-slate-500">Size</label>
-                    <Input value={editData.size as string} onChange={(e) => setEditData({ ...editData, size: e.target.value })} placeholder='e.g. 26"' />
+                    <label className="text-[11px] text-slate-500">Category</label>
+                    {/* Category took over what Size used to say — 20 of the 32 categories ARE
+                        wheel sizes, and `Product.size` was never written. The dropdown is
+                        unportalled; `Card` sets no overflow, so nothing clips it. */}
+                    <SearchableSelect
+                      options={categoryOptions}
+                      value={(editData.categoryId as string) || null}
+                      onChange={(cid) => setEditData({ ...editData, categoryId: cid ?? "" })}
+                      placeholder="Search categories"
+                      emptyText="No category matches"
+                    />
                   </div>
                   <div>
                     <label className="text-[11px] text-slate-500">Color</label>
@@ -316,6 +386,28 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                     <Input type="number" value={editData.reorderLevel as number} onChange={(e) => setEditData({ ...editData, reorderLevel: Number(e.target.value) })} />
                   </div>
                 </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-[11px] text-slate-500">Reorder Qty</label>
+                    <Input type="number" value={editData.reorderQty as number} onChange={(e) => setEditData({ ...editData, reorderQty: Number(e.target.value) })} />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-500">Reorder Vendor</label>
+                    {/* A plain select, matching the Brand and Bin pickers three fields up.
+                        The typeahead lives in the /stock sheet, where the person is scanning a
+                        list; here they already have the product open. */}
+                    <select
+                      value={editData.reorderVendorId as string}
+                      onChange={(e) => setEditData({ ...editData, reorderVendorId: e.target.value })}
+                      className="w-full min-h-[44px] rounded-lg border border-slate-300 px-2 text-sm"
+                    >
+                      <option value="">No vendor</option>
+                      {vendors.map((v) => (
+                        <option key={v.id} value={v.id}>{v.name} ({v.code})</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
               </>
             )}
 
@@ -332,13 +424,56 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* Identity badges */}
-      {(product.brand || (product.type === "BICYCLE" && product.size) || product.condition !== "NEW") && (
-        <div className="flex flex-wrap gap-2 mb-3">
+      {/* Brand, then category in the same violet chip /stock uses for it, so the list and the
+          detail agree on what a category looks like. The size badge that used to sit here is
+          gone with `Product.size` (plan 0909-stock-screens-size-category-and-sidebar, D1). */}
+      {(product.brand || product.category || product.condition !== "NEW") && (
+        <div className="flex flex-wrap items-center gap-2 mb-3">
           {product.brand && <Badge variant="default" className="font-semibold">{product.brand.name}</Badge>}
-          {product.type === "BICYCLE" && product.size && <Badge variant="default">{product.size}</Badge>}
+          {product.category && (
+            <span className="rounded-full bg-violet-50 px-1.5 py-0.5 text-[11px] font-medium text-violet-700">
+              {product.category.name}
+            </span>
+          )}
           {product.condition !== "NEW" && <Badge variant="warning">{product.condition.replace("_", " ")}</Badge>}
         </div>
       )}
+
+      {/* Assembly level (plan 1509-assembly-queue…, E3 / R8). Always shown, "Not set" included:
+          on the details page the absence is itself the fact — it means the next Assign on
+          /assembly will ask. The edit opens the same sheet as the /stock row button. */}
+      <Card className="mb-3">
+        <CardContent className="p-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <Wrench className={`h-4 w-4 shrink-0 ${product.assemblyLevel ? "text-slate-500" : "text-amber-500"}`} />
+            <div className="min-w-0">
+              <p className="text-[11px] text-slate-500">Assembly level</p>
+              <p className={`text-sm font-medium ${product.assemblyLevel ? "text-slate-900" : "text-amber-700"}`}>
+                {assemblyLevelLabel(product.assemblyLevel)}
+              </p>
+            </div>
+          </div>
+          {mayAssemblyLevel && (
+            <button
+              type="button"
+              onClick={() => setLevelOpen(true)}
+              className="min-h-[44px] px-3 inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 focus-ring shrink-0"
+            >
+              <Pencil className="h-3.5 w-3.5" /> {product.assemblyLevel ? "Change" : "Set"}
+            </button>
+          )}
+        </CardContent>
+      </Card>
+
+      <AssemblyLevelSheet
+        open={levelOpen}
+        product={{ id: product.id, name: product.name, sku: product.sku, assemblyLevel: product.assemblyLevel ?? null }}
+        onClose={() => setLevelOpen(false)}
+        onSaved={(updated) => {
+          log.info("assembly level changed from details", { productId: updated.id, level: updated.assemblyLevel });
+          setProduct((prev) => (prev ? { ...prev, assemblyLevel: updated.assemblyLevel } : prev));
+        }}
+      />
 
       {/* Stock + Location combined card (most important info first) */}
       <Card className="mb-3">
@@ -347,7 +482,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
             <div>
               <p className={`text-2xl font-bold tabular-nums ${
                 product.currentStock <= 0 ? "text-red-600" :
-                product.reorderLevel > 0 && product.currentStock <= product.reorderLevel ? "text-yellow-600" : "text-green-600"
+                isLowStock(product) ? "text-yellow-600" : "text-green-600"
               }`}>{product.currentStock}</p>
               <p className="text-xs text-slate-500">In Stock</p>
               {product.reservedStock > 0 && (
@@ -363,7 +498,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
               <p className="text-xs text-slate-500">Max Stock</p>
             </div>
           </div>
-          {BIN_TRACKING_ENABLED && (product.bin ? (
+          {product.bin ? (
             <div className="flex items-center gap-2 pt-3 border-t border-slate-100">
               <MapPin className="h-4 w-4 text-blue-500" />
               <div>
@@ -378,9 +513,92 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
               <MapPin className="h-4 w-4 text-slate-300" />
               <p className="text-xs text-slate-400">No bin assigned</p>
             </div>
-          ))}
+          )}
         </CardContent>
       </Card>
+
+      {/* Reorder (plan 1509-reorder-inside-purchase-orders, R1 / Q13 a). When the stock is at or
+          below this level, the product is offered by "Add reorder items" on a New Purchase
+          Order for its reorder vendor, at this quantity. Set here or from the /stock row —
+          both open the same sheet. The Edit form above keeps its three fields as well. */}
+      <Card className="mb-3">
+        <CardContent className="p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 min-w-0">
+              <RefreshCw className={`h-4 w-4 shrink-0 ${product.reorderLevel > 0 ? "text-slate-500" : "text-amber-500"}`} />
+              <p className="text-sm font-medium text-slate-900">Reorder</p>
+              {product.reorderLevel > 0 && (
+                <Badge variant={isLowStock(product) ? "warning" : "success"} className="text-[10px]">
+                  {isLowStock(product) ? "At or below level" : "OK"}
+                </Badge>
+              )}
+            </div>
+            {mayReorder && (
+              <button
+                type="button"
+                onClick={() =>
+                  setReorderTarget({
+                    id: product.id,
+                    name: product.name,
+                    sku: product.sku,
+                    currentStock: product.currentStock,
+                    reorderLevel: product.reorderLevel,
+                    reorderQty: product.reorderQty,
+                    reorderVendorId: product.reorderVendorId,
+                  })
+                }
+                className="min-h-[44px] px-3 inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white text-xs font-medium text-slate-700 hover:bg-slate-50 focus-ring shrink-0"
+              >
+                <Pencil className="h-3.5 w-3.5" /> {product.reorderLevel > 0 ? "Change" : "Set"}
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-2 mt-2 text-center">
+            <div>
+              <p className="text-[11px] text-slate-500">Level</p>
+              <p className={`text-sm font-semibold tabular-nums ${product.reorderLevel > 0 ? "text-slate-900" : "text-slate-400"}`}>
+                {product.reorderLevel > 0 ? product.reorderLevel : "Not set"}
+              </p>
+            </div>
+            <div>
+              <p className="text-[11px] text-slate-500">Reorder qty</p>
+              <p className={`text-sm font-semibold tabular-nums ${product.reorderQty > 0 ? "text-slate-900" : "text-slate-400"}`}>
+                {product.reorderQty > 0 ? product.reorderQty : "Not set"}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-[11px] text-slate-500">Vendor</p>
+              <p className={`text-sm font-semibold truncate ${product.reorderVendor ? "text-slate-900" : "text-slate-400"}`}>
+                {product.reorderVendor?.name ?? "Not set"}
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <ReorderSheet
+        open={reorderTarget !== null}
+        product={reorderTarget}
+        onClose={() => setReorderTarget(null)}
+        onSaved={(updated) => {
+          log.info("reorder settings changed from details", {
+            productId: updated.id,
+            level: updated.reorderLevel,
+            qty: updated.reorderQty,
+          });
+          setProduct((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  reorderLevel: updated.reorderLevel,
+                  reorderQty: updated.reorderQty,
+                  reorderVendorId: updated.reorderVendorId,
+                  reorderVendor: updated.reorderVendor ?? null,
+                }
+              : prev
+          );
+        }}
+      />
 
       {isAdmin && (
         <Card className="mb-3">

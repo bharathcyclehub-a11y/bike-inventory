@@ -1,0 +1,115 @@
+export const dynamic = "force-dynamic";
+
+import { NextRequest } from "next/server";
+import { prisma } from "@/lib/db";
+import { successResponse, errorResponse } from "@/lib/api-utils";
+import { requireAuth, requireFeature, AuthError } from "@/lib/auth-helpers";
+import { storeSchema } from "@/lib/validations";
+import { clearStoreCache } from "@/lib/stores";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("api:stores");
+
+/**
+ * List stores, with their warehouses nested.
+ *
+ * ⚠️ GUARDED BY requireAuth() ONLY — NOT by requireFeature("stores", "view"). This is
+ * deliberate and must stay that way.
+ *
+ * Every location dropdown in the application reads this: assigning a user to a site on
+ * /team, picking a destination on /transfers/new, choosing where an inbound shipment lands.
+ * Those are things ordinary staff do. Gating this read on the `stores` module — which only
+ * administrators of the hierarchy hold — empties every one of those dropdowns for everyone
+ * else, and it fails as an EMPTY LIST rather than a 403, so it reads as "nobody ever created
+ * a warehouse" instead of "you lack a permission". That is a very expensive thing to debug.
+ *
+ * Knowing that BCH Warehouse exists is not sensitive. CHANGING it is, and every mutation on
+ * this resource is behind `requireFeature("stores", …)` / `requireFeature("warehouses", …)`
+ * — see the plan's Phase 6.
+ *
+ * If a reviewer asks why this route is not permission-guarded, this comment is the answer.
+ */
+export async function GET() {
+  try {
+    await requireAuth();
+
+    const stores = await prisma.store.findMany({
+      where: { isActive: true },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        address: true,
+        phone: true,
+        // Printed on every invoice and on P14's transfer documents — not sensitive, which is
+        // why this route stays requireAuth (see the comment above).
+        gstin: true,
+        stateCode: true,
+        sortOrder: true,
+        warehouses: {
+          where: { isActive: true },
+          // invoicePrefix + isPrimary live on the FLOOR warehouse since plan 1609 (R30, R33);
+          // /stores shows them on the warehouse rows.
+          select: {
+            id: true, code: true, name: true, kind: true, sortOrder: true,
+            invoicePrefix: true, isPrimary: true,
+          },
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+        },
+      },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    });
+
+    log.debug("stores listed", { count: stores.length });
+    return successResponse(stores);
+  } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    const message = error instanceof Error ? error.message : "Failed to fetch stores";
+    log.error("stores list failed", { message });
+    return errorResponse(message, 500);
+  }
+}
+
+// Mutations ARE permission-guarded, unlike the read above. Knowing BCH Store exists is not
+// sensitive; creating or renaming a site is.
+export async function POST(req: NextRequest) {
+  try {
+    await requireFeature("stores", "create");
+    const data = storeSchema.parse(await req.json());
+
+    const code = data.code.trim().toUpperCase();
+    const clash = await prisma.store.findUnique({ where: { code }, select: { name: true } });
+    if (clash) return errorResponse(`Code "${code}" is already used by ${clash.name}`, 409);
+
+    // No invoice prefix on a store since plan 1609 (R30) — it is set on the FLOOR warehouse.
+    const store = await prisma.store.create({
+      data: {
+        code,
+        name: data.name.trim(),
+        address: data.address?.trim() || null,
+        phone: data.phone?.trim() || null,
+        sortOrder: data.sortOrder ?? 0,
+        // "" normalises to null: a store whose GSTIN has not been entered is a real state, and
+        // an empty string would satisfy a "has a GSTIN" check while carrying no number.
+        gstin: data.gstin?.trim().toUpperCase() || null,
+        stateCode: data.stateCode?.trim() || null,
+      },
+      // The retired Store.invoicePrefix column is not echoed back (plan 1609, T1).
+      omit: { invoicePrefix: true },
+    });
+
+    // The module-level cache in src/lib/stores.ts holds a list that no longer matches the
+    // database. It has an invalidator and, until now, nobody called it — so a store created
+    // here stayed invisible to resolveStoreParam() for the life of the process, and
+    // /api/analytics/dashboard?store=NEW answered "unknown store".
+    clearStoreCache();
+
+    log.info("store created", { storeId: store.id, code: store.code });
+    return successResponse(store, 201);
+  } catch (error) {
+    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    const message = error instanceof Error ? error.message : "Failed to create the store";
+    log.error("store create failed", { message });
+    return errorResponse(message, 400);
+  }
+}

@@ -1,0 +1,216 @@
+"use client";
+
+// ─── Permission store ────────────────────────────────────────────────────────
+// Holds the signed-in user's permission set and granted modules for the whole client.
+//
+// Replaces the old module-level `cachedPermissions` variable in src/lib/use-permissions.ts,
+// which had three defects this store fixes:
+//   1. It wasn't React state, so clearing it never re-rendered anything.
+//   2. Sidebar + nav + page each fired their own duplicate fetch on a cold start.
+//   3. canView() returned `true` while loading, briefly showing modules the user may not hold.
+//
+// Here, `load()` is idempotent per session (concurrent callers share one in-flight request),
+// every consumer subscribes to real state, and nothing is granted until the data arrives.
+
+import { create } from "zustand";
+import { apiFetch } from "@/lib/api-client";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("permissions:store");
+
+export type PermAction = "view" | "create" | "edit" | "delete" | "approve" | "fetch";
+
+/** A sub-module's parent, for rendering the collapsible sidebar section heading. */
+export interface ModuleParent {
+  key: string;
+  label: string;
+  icon: string | null;
+  route: string | null;
+  group: string | null;
+  sortOrder: number;
+}
+
+export interface GrantedModule {
+  key: string;
+  label: string;
+  icon: string | null;
+  route: string | null;
+  group: string | null;
+  sortOrder: number;
+  /**
+   * Draw a divider line above this module among its siblings (plan 1709, P5). Menu data from
+   * `Module.dividerBefore`, never a module key compared in code. Optional so a response from
+   * a server that predates the column still renders — absent reads as "no divider".
+   */
+  dividerBefore?: boolean;
+  actions: PermAction[];
+  /**
+   * `null` means this is a root module — every module outside Staff LMS.
+   *
+   * Populated even when the parent itself is NOT granted: /api/my-permissions returns only
+   * modules the user holds, so a user with `staff_lms_learning.view` and no `staff_lms.view`
+   * would otherwise leave the sidebar with no heading to render above the child.
+   */
+  parent: ModuleParent | null;
+}
+
+type PermissionMap = Record<string, Partial<Record<PermAction, boolean>>>;
+
+interface PermissionState {
+  status: "idle" | "loading" | "ready" | "error";
+  user: { id: string; name: string; email: string } | null;
+  role: { key: string; name: string } | null;
+  permissions: PermissionMap;
+  modules: GrantedModule[];
+  /**
+   * The bottom-nav routes an admin pinned for this user, in their order. A display
+   * preference, not a grant — it decides where the tab bar points, never what may be done
+   * there. Empty means this user has no pinned bar.
+   */
+  navTabs: string[];
+  error: string | null;
+
+  /** Fetch the permission set. Safe to call from many components — only one request runs. */
+  load: () => Promise<void>;
+  /** Re-fetch after an admin changes grants. */
+  refresh: () => Promise<void>;
+  /** Drop everything on sign-out so the next user never sees the previous one's grants. */
+  reset: () => void;
+
+  can: (moduleKey: string, action?: PermAction) => boolean;
+  canView: (moduleKey: string) => boolean;
+  canCreate: (moduleKey: string) => boolean;
+  canEdit: (moduleKey: string) => boolean;
+  canDelete: (moduleKey: string) => boolean;
+  canApprove: (moduleKey: string) => boolean;
+  canFetch: (moduleKey: string) => boolean;
+}
+
+// Shared in-flight promise so a cold start with three mounting consumers issues one request.
+let inFlight: Promise<void> | null = null;
+
+async function fetchAccess(set: (p: Partial<PermissionState>) => void) {
+  set({ status: "loading", error: null });
+  try {
+    // apiFetch, not fetch().json(): an expired session answers 307 -> /login HTML with status
+    // 200, which raw .json() turns into "Unexpected token '<'" (CLAUDE.md).
+    const data = await apiFetch<{
+      user?: PermissionState["user"];
+      role?: PermissionState["role"];
+      permissions?: PermissionMap;
+      modules?: GrantedModule[];
+      navTabs?: string[];
+    }>("/api/my-permissions", { cache: "no-store" });
+
+    set({
+      status: "ready",
+      user: data.user ?? null,
+      role: data.role ?? null,
+      permissions: data.permissions ?? {},
+      modules: data.modules ?? [],
+      navTabs: data.navTabs ?? [],
+      error: null,
+    });
+  } catch (e) {
+    log.error("permission load failed", { error: e instanceof Error ? e.message : String(e) });
+    // Fail CLOSED: on error the user holds nothing rather than everything.
+    set({
+      status: "error",
+      permissions: {},
+      modules: [],
+      navTabs: [],
+      error: e instanceof Error ? e.message : "Failed to load permissions",
+    });
+  }
+}
+
+export const usePermissionStore = create<PermissionState>((set, get) => ({
+  status: "idle",
+  user: null,
+  role: null,
+  permissions: {},
+  modules: [],
+  navTabs: [],
+  error: null,
+
+  load: async () => {
+    const { status } = get();
+    if (status === "ready" || status === "loading") {
+      if (inFlight) await inFlight;
+      return;
+    }
+    inFlight = fetchAccess(set).finally(() => {
+      inFlight = null;
+    });
+    await inFlight;
+  },
+
+  refresh: async () => {
+    inFlight = fetchAccess(set).finally(() => {
+      inFlight = null;
+    });
+    await inFlight;
+  },
+
+  reset: () => {
+    inFlight = null;
+    set({
+      status: "idle",
+      user: null,
+      role: null,
+      permissions: {},
+      modules: [],
+      // Cleared with the grants: the pinned bar belongs to the person who signed out, and
+      // leaving it behind would show the next user their predecessor's tabs.
+      navTabs: [],
+      error: null,
+    });
+  },
+
+  // A permission is granted only when the backend said so. Unknown module, unloaded state
+  // and failed fetch all resolve to false — the same answer the API guard would give.
+  can: (moduleKey, action = "view") => {
+    const s = get();
+    if (s.role?.key === "ADMIN") return true;
+    return s.permissions[moduleKey]?.[action] === true;
+  },
+
+  canView: (m) => {
+    const s = get();
+    if (s.role?.key === "ADMIN") return true;
+    return s.permissions[m]?.view === true;
+  },
+  canCreate: (m) => {
+    const s = get();
+    if (s.role?.key === "ADMIN") return true;
+    return s.permissions[m]?.create === true;
+  },
+  canEdit: (m) => {
+    const s = get();
+    if (s.role?.key === "ADMIN") return true;
+    return s.permissions[m]?.edit === true;
+  },
+  canDelete: (m) => {
+    const s = get();
+    if (s.role?.key === "ADMIN") return true;
+    return s.permissions[m]?.delete === true;
+  },
+  canApprove: (m) => {
+    const s = get();
+    if (s.role?.key === "ADMIN") return true;
+    return s.permissions[m]?.approve === true;
+  },
+  canFetch: (m) => {
+    const s = get();
+    if (s.role?.key === "ADMIN") return true;
+    return s.permissions[m]?.fetch === true;
+  },
+}));
+
+/**
+ * Read permissions outside React — route handlers on the client, event callbacks, helpers
+ * in src/lib. Not possible with a Context-based store, which is part of why this is Zustand.
+ */
+export function can(moduleKey: string, action: PermAction = "view"): boolean {
+  return usePermissionStore.getState().can(moduleKey, action);
+}

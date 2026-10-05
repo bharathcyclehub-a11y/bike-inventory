@@ -2,12 +2,16 @@ export const dynamic = "force-dynamic";
 
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
 
 // GET — show stuck syncs
 export async function GET() {
   try {
-    await requireAuth(["ADMIN"]);
+    // zoho.approve, NOT fetch: the POST below flips every PENDING_REVIEW / PARTIAL pull to
+    // APPROVED — the same decision api/zoho/pull-review/approve makes, and that route gates
+    // it on `approve`. On `fetch` alone, whoever presses Fetch could mark every pending bill
+    // batch reviewed without anyone reading it, and it can never be re-reviewed.
+    await requireFeature("zoho", "approve");
 
     const [runningSyncs, stuckPulls] = await Promise.all([
       prisma.syncLog.findMany({
@@ -36,7 +40,11 @@ export async function GET() {
 // POST — clear all stuck syncs
 export async function POST() {
   try {
-    await requireAuth(["ADMIN"]);
+    // zoho.approve, NOT fetch: the POST below flips every PENDING_REVIEW / PARTIAL pull to
+    // APPROVED — the same decision api/zoho/pull-review/approve makes, and that route gates
+    // it on `approve`. On `fetch` alone, whoever presses Fetch could mark every pending bill
+    // batch reviewed without anyone reading it, and it can never be re-reviewed.
+    await requireFeature("zoho", "approve");
 
     const [clearedSyncs, clearedPulls] = await Promise.all([
       prisma.syncLog.updateMany({

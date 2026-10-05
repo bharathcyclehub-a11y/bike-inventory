@@ -2,10 +2,18 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
-import { ZohoClient } from "@/lib/zoho";
-import { ZakyaClient } from "@/lib/zakya";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { getBooks, getZakya, type IntegrationClient } from "@/lib/integrations";
+import {
+  floorWarehouseForInvoice,
+  listFloorWarehousesWithPrefix,
+  deliveryFieldsFromInvoiceDetail,
+} from "@/lib/deliveries/zoho-invoice";
+import { toPlus91 } from "@/lib/phone";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("deliveries:import-zoho");
 
 /*
  * Direct invoice import — fetches invoice details from Zoho and creates Delivery.
@@ -14,25 +22,33 @@ import { requireAuth, AuthError } from "@/lib/auth-helpers";
  */
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE"]);
+    // zoho.APPROVE, not deliveries.fetch. This route WRITES Delivery rows — importing is not
+    // fetching, and gating a write on a read-shaped grant meant anyone who could look could
+    // also import. Flipped in the same commit as the button, so relabelling the UI never
+    // leaves the old grant working by URL.
+    await requireFeature("zoho", "approve");
     const { invoiceIds } = (await req.json()) as { invoiceIds: string[] };
 
     if (!invoiceIds || invoiceIds.length === 0) {
       return errorResponse("No invoice IDs provided", 400);
     }
 
-    // Init clients
-    const zoho = new ZohoClient();
-    const booksReady = await zoho.init();
-    const zakya = new ZakyaClient();
-    const posReady = await zakya.init();
+    // Both sources in parallel — each is a config read and a possible token refresh, and
+    // the answers are independent. Request-scoped, so any later step reuses these.
+    const [zoho, zakya] = await Promise.all([getBooks(), getZakya()]);
 
-    if (!booksReady && !posReady) {
+    if (!zoho && !zakya) {
       return errorResponse("No Zoho source connected", 400);
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const client: any = booksReady ? zoho : zakya;
+    // Books preferred, Zakya as the fallback. Typed `IntegrationClient` rather than `any`:
+    // getInvoice lives on the base class, so both providers satisfy it.
+    const client: IntegrationClient = (zoho ?? zakya)!;
+
+    // Active FLOOR warehouses carrying a prefix, loaded once for attribution, not per invoice
+    // (plan 1609-deliveries, T1 — the prefix moved from Store to the floor warehouse).
+    const floors = await listFloorWarehousesWithPrefix(prisma);
+    log.debug("direct import started", { invoices: invoiceIds.length, floors: floors.length });
 
     let imported = 0;
     const errors: string[] = [];
@@ -48,73 +64,74 @@ export async function POST(req: NextRequest) {
           continue;
         }
 
-        // Skip BCC (Bharath Cycle Centre) invoices
-        if (inv.invoice_number?.startsWith("BCC/")) {
-          errors.push(`${inv.invoice_number}: skipped (Centre invoice)`);
+        // Delivery.invoiceNo is required and is what every later lookup matches on, so an
+        // invoice without a number cannot be imported. Previously the client was typed
+        // `any`, so `undefined` reached prisma.delivery.create() and failed there with a
+        // Prisma error naming a column rather than a sentence naming the invoice.
+        const invoiceNo = inv.invoice_number;
+        if (!invoiceNo) {
+          errors.push(`Invoice ${invoiceId}: Zoho returned no invoice number`);
           continue;
         }
+
+        // THE `BCC/` SKIP IS GONE (O8, owner 4 Sep).
+        //
+        // This was the third of three routes hardcoding a store NAME to decide what not to
+        // import. Bharath Cycle Centre has its own GSTIN and its own stock; hiding its
+        // invoices meant its deliveries never existed and its stock never moved. The FLOOR
+        // warehouse that sold it is now resolved from Warehouse.invoicePrefix and recorded on
+        // the row, with its store (T3). No match is a Dummy: both null, no fallback (A41b).
 
         // Check duplicate
         const exists = await prisma.delivery.findFirst({
-          where: { invoiceNo: inv.invoice_number },
+          where: { invoiceNo },
         });
         if (exists) {
-          errors.push(`${inv.invoice_number}: already imported`);
+          errors.push(`${invoiceNo}: already imported`);
           continue;
         }
 
-        // Map line items
-        const lineItems = (inv.line_items || []).map(
-          (li: { name: string; sku?: string; quantity: number; rate: number; item_total: number }) => ({
-            name: li.name,
-            sku: li.sku || "",
-            quantity: li.quantity,
-            rate: li.rate,
-            itemTotal: li.item_total,
-          })
-        );
+        // One shared mapper with the review-flow import (pull-review/approve), so the two
+        // paths cannot drift. They HAD drifted — only this one read the address, area,
+        // pincode and salesperson.
+        const fields = deliveryFieldsFromInvoiceDetail(inv);
+        const match = floorWarehouseForInvoice(invoiceNo, floors);
 
-        // Extract phone from billing/shipping address or customer
-        const phone =
-          inv.contact_persons?.[0]?.phone ||
-          inv.billing_address?.phone ||
-          inv.shipping_address?.phone ||
-          "";
-
-        const customerAddress = [
-          inv.shipping_address?.address,
-          inv.shipping_address?.street2,
-          inv.shipping_address?.city,
-          inv.shipping_address?.state,
-        ]
-          .filter(Boolean)
-          .join(", ");
-
-        await prisma.delivery.create({
+        const created = await prisma.delivery.create({
           data: {
-            invoiceNo: inv.invoice_number,
-            zohoInvoiceId: inv.invoice_id,
-            invoiceDate: new Date(inv.date),
-            invoiceAmount: Number(inv.total || 0),
-            customerName: inv.customer_name,
-            customerPhone: phone || null,
-            customerAddress: customerAddress || null,
-            customerArea: inv.shipping_address?.city || null,
-            customerPincode: inv.shipping_address?.zip || null,
-            salesPerson: inv.salesperson_name || "",
+            ...fields,
+            // +91-XXXXXXXXXX, as every phone in the deliveries flow is written (B3b).
+            customerPhone: toPlus91(fields.customerPhone),
+            // Zoho's payment snapshot at import (A31) — already in `fields`, named here so a
+            // later edit to the spread cannot drop it silently.
+            zohoPaymentStatus: fields.zohoPaymentStatus,
+            zohoBalance: fields.zohoBalance,
+            invoiceNo,
+            warehouseId: match?.warehouseId ?? null,
+            storeId: match?.storeId ?? null,
             status: "PENDING",
-            lineItems: lineItems.length > 0 ? lineItems : undefined,
+            lineItems: fields.lineItems.length > 0 ? fields.lineItems : undefined,
           },
+          select: { id: true },
         });
         imported++;
+        log.info("invoice imported", {
+          deliveryId: created.id, invoiceNo, warehouseId: match?.warehouseId ?? null, dummy: !match,
+        });
       } catch (e) {
+        log.error("invoice import failed", { invoiceId, message: e instanceof Error ? e.message : String(e) });
         errors.push(`${invoiceId}: ${e instanceof Error ? e.message : "Failed"}`);
       }
     }
 
+    log.info("direct import finished", { requested: invoiceIds.length, imported, errors: errors.length });
     return successResponse({ imported, errors, total: invoiceIds.length });
   } catch (error) {
-    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    if (error instanceof AuthError) {
+      log.warn("direct import refused", { status: error.status });
+      return errorResponse(error.message, error.status);
+    }
+    log.error("direct import failed", { message: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Import failed", 500);
   }
 }

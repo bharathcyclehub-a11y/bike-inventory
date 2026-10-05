@@ -1,316 +1,434 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
-import { ArrowLeft, Save, Eye, Plus, Pencil, Trash2, ShieldCheck, RotateCcw, CloudDownload } from "lucide-react";
+import { ArrowLeft, Save, ShieldCheck, Plus, Trash2, Lock, Search, Grid3X3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { usePermissions } from "@/lib/use-permissions";
+import { apiFetch } from "@/lib/api-client";
+import { createLogger } from "@/lib/logger";
+import { searchModules } from "./_lib/module-search";
 
-interface Feature {
+interface PermissionRow {
+  id: string;
+  key: string;
+  action: string;
+  label: string;
+}
+interface ModuleRow {
+  id: string;
   key: string;
   label: string;
-  hasApprove: boolean;
-  hasCreate: boolean;
-  hasFetch: boolean;
+  description: string | null;
+  group: string | null;
+  /** null = a root module. Sub-modules render indented under their parent. */
+  parentId: string | null;
+  /** false = admin-only: the system role holds it, no other role may. Greyed out below. */
+  assignable: boolean;
+  permissions: PermissionRow[];
+}
+interface RoleRow {
+  id: string;
+  key: string;
+  name: string;
+  description: string | null;
+  isSystem: boolean;
+  isActive: boolean;
+  _count: { permissions: number; users: number };
 }
 
-interface FeaturePermission {
-  view: boolean;
-  create: boolean;
-  edit: boolean;
-  delete: boolean;
-  approve: boolean;
-  fetch: boolean;
-}
+const ACTION_ORDER = ["view", "create", "edit", "delete", "approve", "fetch"];
 
-type RolePermissions = Record<string, Record<string, FeaturePermission>>;
-
-const ROLE_LABELS: Record<string, string> = {
-  SUPERVISOR: "Supervisor",
-  PURCHASE_MANAGER: "Purchase Mgr",
-  ACCOUNTS_MANAGER: "Accounts Mgr",
-  INWARDS_EXECUTIVE: "Inwards Executive",
-  OUTWARDS_EXECUTIVE: "Outwards Executive",
-  STORE_MANAGER: "Store Manager",
-  SALES_MANAGER: "Sales Manager",
-  SERVICE_MANAGER: "Service Manager",
-};
-
-const EDITABLE_ROLES = ["SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "SERVICE_MANAGER"];
+const log = createLogger("team:permissions");
 
 export default function PermissionsPage() {
-  const [permissions, setPermissions] = useState<RolePermissions>({});
-  const [features, setFeatures] = useState<Feature[]>([]);
+  const { canEdit, canCreate, canDelete } = usePermissions();
+
+  const [modules, setModules] = useState<ModuleRow[]>([]);
+  const [roles, setRoles] = useState<RoleRow[]>([]);
+  const [selectedRoleId, setSelectedRoleId] = useState<string>("");
+  const [roleSearch, setRoleSearch] = useState("");
+  // Module search (plan 2209-permissions-module-search). Kept when switching roles (Q4a) —
+  // comparing one module across roles is the point of searching here.
+  const [moduleSearch, setModuleSearch] = useState("");
+  const [granted, setGranted] = useState<Set<string>>(new Set());
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [selectedRole, setSelectedRole] = useState(EDITABLE_ROLES[0]);
 
+  const selectedRole = roles.find((r) => r.id === selectedRoleId);
+  const readOnly = !canEdit("roles") || selectedRole?.isSystem;
+
+  // Matches name OR key: an admin who knows the role as SERVICE_MANAGER should find it by
+  // typing that, not only by its display name. The SELECTED role always stays visible even
+  // when it does not match, so the permission grid below never loses its header.
+  const q = roleSearch.trim().toLowerCase();
+  const visibleRoles = q
+    ? roles.filter(
+        (r) =>
+          r.id === selectedRoleId ||
+          r.name.toLowerCase().includes(q) ||
+          r.key.toLowerCase().includes(q)
+      )
+    : roles;
+
+  // Load the catalog and the role list together.
   useEffect(() => {
-    fetch("/api/role-permissions")
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.success) {
-          setPermissions(res.data.permissions);
-          setFeatures(res.data.features);
-        }
+    Promise.all([
+      apiFetch<{ modules: ModuleRow[] }>("/api/modules"),
+      apiFetch<{ roles: RoleRow[] }>("/api/roles"),
+    ])
+      .then(([m, r]) => {
+        setModules(m.modules);
+        setRoles(r.roles);
+        // `?role=<id>` preselects a role — the Permission gaps matrix (plan 2109 R10) links each
+        // role column here. Read from location, not useSearchParams, so the page needs no Suspense.
+        const wanted = new URLSearchParams(window.location.search).get("role");
+        const first = r.roles.find((x) => x.id === wanted) || r.roles.find((x) => !x.isSystem) || r.roles[0];
+        if (first) setSelectedRoleId(first.id);
       })
-      .catch(() => setError("Failed to load permissions"))
+      .catch((e) => {
+        log.warn("roles and modules failed to load", { error: e instanceof Error ? e.message : String(e) });
+        setError("Failed to load roles and modules");
+      })
       .finally(() => setLoading(false));
   }, []);
 
-  const toggle = (role: string, featureKey: string, perm: keyof FeaturePermission) => {
-    if (role === "ADMIN") return;
-    setPermissions((prev) => ({
-      ...prev,
-      [role]: {
-        ...prev[role],
-        [featureKey]: {
-          ...prev[role]?.[featureKey],
-          [perm]: !prev[role]?.[featureKey]?.[perm],
-        },
-      },
-    }));
+  // Load the selected role's grants.
+  const loadGrants = useCallback((roleId: string) => {
+    if (!roleId) return;
+    apiFetch<{ permissionIds: string[] }>(`/api/roles/${roleId}`)
+      .then((res) => setGranted(new Set<string>(res.permissionIds)))
+      .catch((e) => {
+        log.warn("role grants failed to load", { roleId, error: e instanceof Error ? e.message : String(e) });
+        setError("Failed to load role permissions");
+      });
+  }, []);
+
+  useEffect(() => {
+    loadGrants(selectedRoleId);
+  }, [selectedRoleId, loadGrants]);
+
+  const toggle = (permissionId: string, mod: ModuleRow) => {
+    if (readOnly || !mod.assignable) return;
+    setGranted((prev) => {
+      const next = new Set(prev);
+      if (next.has(permissionId)) next.delete(permissionId);
+      else next.add(permissionId);
+      return next;
+    });
+  };
+
+  const toggleModule = (mod: ModuleRow) => {
+    if (readOnly || !mod.assignable) return;
+    const ids = mod.permissions.map((p) => p.id);
+    const allOn = ids.every((id) => granted.has(id));
+    setGranted((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (allOn) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
   };
 
   const handleSave = async () => {
+    if (!selectedRoleId) return;
     setSaving(true);
     setError("");
     setSuccess("");
     try {
-      const res = await fetch("/api/role-permissions", {
+      await apiFetch(`/api/roles/${selectedRoleId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ permissions }),
-      }).then((r) => r.json());
-      if (res.success) {
-        setSuccess("Permissions saved!");
-        setTimeout(() => setSuccess(""), 3000);
-      } else {
-        setError(res.error || "Failed to save");
-      }
-    } catch {
-      setError("Network error");
+        json: { permissionIds: [...granted] },
+      });
+      setSuccess("Permissions saved. Affected users see the change on their next request.");
+      const rl = await apiFetch<{ roles: RoleRow[] }>("/api/roles");
+      setRoles(rl.roles);
+    } catch (e) {
+      log.warn("role save failed", { roleId: selectedRoleId, error: e instanceof Error ? e.message : String(e) });
+      setError(e instanceof Error ? e.message : "Save failed");
     } finally {
       setSaving(false);
     }
   };
 
-  const handleReset = async () => {
-    if (!confirm("Reset all permissions to defaults? This cannot be undone.")) return;
-    setLoading(true);
+  const handleCreateRole = async () => {
+    const name = window.prompt("Role name (e.g. Store Manager)");
+    if (!name?.trim()) return;
+    const key = name.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_");
     try {
-      await fetch("/api/role-permissions", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ permissions: {} }),
+      const created = await apiFetch<{ id: string }>("/api/roles", {
+        method: "POST",
+        json: { key, name: name.trim() },
       });
-      const res = await fetch("/api/role-permissions").then((r) => r.json());
-      if (res.success) {
-        setPermissions(res.data.permissions);
-        setSuccess("Reset to defaults");
-        setTimeout(() => setSuccess(""), 3000);
-      }
-    } catch {
-      setError("Failed to reset");
-    } finally {
-      setLoading(false);
+      const rl = await apiFetch<{ roles: RoleRow[] }>("/api/roles");
+      setRoles(rl.roles);
+      setSelectedRoleId(created.id);
+    } catch (e) {
+      log.warn("role create failed", { key, error: e instanceof Error ? e.message : String(e) });
+      setError(e instanceof Error ? e.message : "Could not create role");
     }
   };
 
-  const getPerm = (role: string, featureKey: string): FeaturePermission => {
-    return permissions[role]?.[featureKey] || { view: false, create: false, edit: false, delete: false, approve: false, fetch: false };
+  const handleDeleteRole = async () => {
+    if (!selectedRole || selectedRole.isSystem) return;
+    if (!window.confirm(`Delete the role "${selectedRole.name}"? This cannot be undone.`)) return;
+
+    try {
+      await apiFetch(`/api/roles/${selectedRole.id}`, { method: "DELETE" });
+      const rl = await apiFetch<{ roles: RoleRow[] }>("/api/roles");
+      setRoles(rl.roles);
+      setSelectedRoleId(rl.roles[0]?.id || "");
+    } catch (e) {
+      log.warn("role delete failed", { roleId: selectedRole.id, error: e instanceof Error ? e.message : String(e) });
+      setError(e instanceof Error ? e.message : "Could not delete role");
+    }
   };
 
-  if (loading) {
-    return (
-      <div className="pb-8">
-        <div className="h-6 w-40 bg-slate-200 rounded animate-pulse mb-4" />
-        <SkeletonList count={6} type="card" />
-      </div>
-    );
+  // Order a group's modules as roots-then-their-children, so the grant screen shows the
+  // same tree the sidebar does. Deliberately NOT collapsible: the sidebar collapses because
+  // it is navigation you scan constantly, while this is a form you fill in once per role —
+  // a hidden section here is a checkbox someone cannot find.
+  //
+  // The trailing append is not defensive padding. A child whose parent sits in a different
+  // `group` (the seeder forbids it, but data drifts) would be picked up by neither loop and
+  // would VANISH from this screen — a permission that cannot be granted because it does not
+  // render. An ugly row beats a missing one.
+  function orderTree(items: ModuleRow[]): ModuleRow[] {
+    const ordered = items
+      .filter((m) => !m.parentId)
+      .flatMap((root) => [root, ...items.filter((c) => c.parentId === root.id)]);
+    const seen = new Set(ordered.map((m) => m.id));
+    return [...ordered, ...items.filter((m) => !seen.has(m.id))];
   }
 
+  // What the module search shows. It filters what is RENDERED only: `granted` and Save see every
+  // module, so a hidden module keeps its ticks and is saved with the role (R2).
+  const moduleFilter = searchModules(modules, moduleSearch);
+
+  // Group modules for display. A group left with nothing visible is dropped.
+  const groups: { title: string; items: ModuleRow[] }[] = [];
+  for (const m of modules) {
+    if (moduleFilter.visible && !moduleFilter.visible.has(m.id)) continue;
+    const title = m.group || "Other";
+    let g = groups.find((x) => x.title === title);
+    if (!g) groups.push((g = { title, items: [] }));
+    g.items.push(m);
+  }
+
+  if (loading) return <SkeletonList />;
+
   return (
-    <div className="pb-8">
-      <div className="flex items-center gap-3 mb-4">
-        <Link href="/team" aria-label="Back" className="p-2 -ml-2 rounded-lg hover:bg-slate-100 focus-ring">
-          <ArrowLeft className="h-5 w-5 text-slate-600" />
-        </Link>
-        <div className="flex-1">
-          <h1 className="text-lg font-bold text-slate-900">Roles & Permissions</h1>
-          <p className="text-xs text-slate-500">Manage what each role can view, add, edit, delete, approve, and fetch</p>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Link href="/team" className="text-slate-400 hover:text-slate-900">
+            <ArrowLeft className="h-5 w-5" />
+          </Link>
+          <div>
+            <h1 className="text-lg font-bold text-slate-900">Roles & Permissions</h1>
+            <p className="text-xs text-slate-500">
+              A role holds permissions; a user holds one role.
+            </p>
+          </div>
         </div>
-        <button onClick={handleReset} aria-label="Reset to defaults"
-          className="flex items-center gap-1 min-h-[44px] px-2.5 rounded-lg text-red-600 hover:bg-red-50 focus-ring">
-          <RotateCcw className="h-4 w-4" />
-          <span className="text-xs font-medium">Reset</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Read-only modules × roles matrix (plan 2109 R10). Same `roles.view` guard. */}
+          <Link href="/team/permissions/gaps">
+            <Button variant="outline">
+              <Grid3X3 className="h-4 w-4 mr-1" /> Permission gaps
+            </Button>
+          </Link>
+          {canCreate("roles") && (
+            <Button variant="outline" onClick={handleCreateRole}>
+              <Plus className="h-4 w-4 mr-1" /> New role
+            </Button>
+          )}
+        </div>
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
-          <p className="text-sm text-red-700">{error}</p>
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
         </div>
       )}
       {success && (
-        <div className="bg-green-50 border border-green-200 rounded-lg p-3 mb-3">
-          <p className="text-sm text-green-700">{success}</p>
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          {success}
         </div>
       )}
 
-      {/* Admin note */}
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-2.5 mb-4">
-        <p className="text-[11px] text-blue-700">
-          <strong>Admin</strong> always has full access to everything. Configure permissions for other roles below.
-        </p>
-      </div>
+      {/* Role picker. Filtering is CLIENT-SIDE on purpose: every role already arrives in
+          the one /api/roles request, so a round trip per keystroke would be slower, not
+          faster, and would make the pill row flicker while typing. */}
+      {roles.length > 4 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <Input
+            placeholder="Search roles..."
+            value={roleSearch}
+            onChange={(e) => setRoleSearch(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+      )}
 
-      {/* Role tabs */}
-      <div className="flex gap-1.5 overflow-x-auto scrollbar-hide mb-4 pb-1">
-        {EDITABLE_ROLES.map((role) => (
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {visibleRoles.length === 0 && (
+          <p className="text-xs text-slate-500 py-2">No role matches “{roleSearch}”.</p>
+        )}
+        {visibleRoles.map((r) => (
           <button
-            key={role}
-            onClick={() => setSelectedRole(role)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              selectedRole === role
-                ? "bg-slate-900 text-white"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            key={r.id}
+            onClick={() => setSelectedRoleId(r.id)}
+            className={`shrink-0 rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
+              r.id === selectedRoleId
+                ? "border-slate-900 bg-slate-900 text-white"
+                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
             }`}
           >
-            {ROLE_LABELS[role]}
+            <span className="flex items-center gap-1.5">
+              {r.isSystem && <Lock className="h-3 w-3" />}
+              {r.name}
+              <span className="text-[10px] opacity-70">({r._count.users})</span>
+            </span>
           </button>
         ))}
       </div>
 
-      {/* Section header */}
-      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2 px-1">
-        Permissions — {ROLE_LABELS[selectedRole]}
-      </p>
+      {selectedRole?.isSystem && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <strong>{selectedRole.name}</strong> is a system role. It always holds every permission
+          and cannot be edited or deleted — this is what guarantees you can never lock yourself
+          out of this screen.
+        </div>
+      )}
 
-      {/* Permission legend */}
-      <div className="flex items-center gap-3 mb-3 px-1 overflow-x-auto scrollbar-hide">
-        <div className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
-          <Eye className="h-3 w-3" /> View
-        </div>
-        <div className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
-          <Plus className="h-3 w-3" /> Add New
-        </div>
-        <div className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
-          <Pencil className="h-3 w-3" /> Edit
-        </div>
-        <div className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
-          <Trash2 className="h-3 w-3" /> Delete
-        </div>
-        <div className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
-          <ShieldCheck className="h-3 w-3" /> Approve
-        </div>
-        <div className="flex items-center gap-1 text-[11px] text-slate-500 shrink-0">
-          <CloudDownload className="h-3 w-3" /> Fetch
-        </div>
+      {/* Module search (plan 2209, R1). Client-side, like the role search above: every module is
+          already here from /api/modules. */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+        <Input
+          placeholder="Search modules..."
+          value={moduleSearch}
+          onChange={(e) => setModuleSearch(e.target.value)}
+          className="pl-9"
+          aria-label="Search modules by name"
+        />
       </div>
+      {moduleFilter.visible && moduleFilter.matched === 0 && (
+        <p className="text-xs text-slate-500 py-2">No module matches “{moduleSearch.trim()}”.</p>
+      )}
 
-      {/* Permissions matrix for selected role */}
-      <div className="space-y-1.5">
-        {features.map((feature) => {
-          const perm = getPerm(selectedRole, feature.key);
-          return (
-            <Card key={feature.key}>
-              <CardContent className="p-2.5">
-                <div className="flex items-center justify-between min-h-[44px]">
-                  <p className="text-xs font-medium text-slate-800 flex-1 min-w-0 mr-2">
-                    {feature.label}
-                  </p>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {/* View */}
+      {/* Permission grid */}
+      {groups.map((group) => (
+        <div key={group.title} className="space-y-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 px-1">
+            {group.title}
+          </p>
+          {orderTree(group.items).map((mod) => {
+            const ids = mod.permissions.map((p) => p.id);
+            const allOn = ids.length > 0 && ids.every((id) => granted.has(id));
+            const sorted = [...mod.permissions].sort(
+              (a, b) => ACTION_ORDER.indexOf(a.action) - ACTION_ORDER.indexOf(b.action)
+            );
+            // An admin-only module is shown, not hidden, so the reader learns WHY the grant
+            // is unavailable rather than wondering where the module went.
+            const locked = readOnly || !mod.assignable;
+
+            return (
+              <Card key={mod.id} className={mod.parentId ? "ml-4" : undefined}>
+                <CardContent className="p-3">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-900">
+                        {mod.parentId && (
+                          <span className="text-slate-400 mr-1" aria-hidden="true">
+                            &#8627;
+                          </span>
+                        )}
+                        {mod.label}
+                        {/* Shown only because a sub-module matched the search (plan 2209, Q2a). */}
+                        {moduleFilter.contextOnly.has(mod.id) && (
+                          <span className="ml-1.5 text-[11px] font-normal text-slate-400">(parent)</span>
+                        )}
+                        {!mod.assignable && (
+                          <span
+                            title="Only the system role can hold this module's permissions"
+                            className="ml-2 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500 align-middle"
+                          >
+                            <Lock className="h-3 w-3" aria-hidden="true" /> Admin only
+                          </span>
+                        )}
+                      </p>
+                      {mod.description && (
+                        <p className="text-[11px] text-slate-500">{mod.description}</p>
+                      )}
+                    </div>
+                    {/* Scoped to THIS module only — it must never cascade a parent's ticks
+                        onto its children. A grant is one row per module × action; a
+                        cascading control would silently write grants nobody chose. */}
                     <button
-                      onClick={() => toggle(selectedRole, feature.key, "view")}
-                      className={`p-1.5 rounded-md transition-colors ${
-                        perm.view ? "bg-blue-100 text-blue-700" : "bg-slate-50 text-slate-300"
-                      }`}
-                      title="View"
+                      onClick={() => toggleModule(mod)}
+                      disabled={locked}
+                      className="shrink-0 text-[11px] font-medium text-slate-500 hover:text-slate-900 disabled:opacity-40"
                     >
-                      <Eye className="h-3.5 w-3.5" />
+                      {allOn ? "Clear all" : "Select all"}
                     </button>
-                    {/* Add New (only if feature supports it) */}
-                    {feature.hasCreate ? (
-                      <button
-                        onClick={() => toggle(selectedRole, feature.key, "create")}
-                        className={`p-1.5 rounded-md transition-colors ${
-                          perm.create ? "bg-purple-100 text-purple-700" : "bg-slate-50 text-slate-300"
-                        }`}
-                        title="Add New"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
-                    ) : (
-                      <div className="p-1.5 w-[26px]" />
-                    )}
-                    {/* Edit */}
-                    <button
-                      onClick={() => toggle(selectedRole, feature.key, "edit")}
-                      className={`p-1.5 rounded-md transition-colors ${
-                        perm.edit ? "bg-amber-100 text-amber-700" : "bg-slate-50 text-slate-300"
-                      }`}
-                      title="Edit"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    {/* Delete */}
-                    <button
-                      onClick={() => toggle(selectedRole, feature.key, "delete")}
-                      className={`p-1.5 rounded-md transition-colors ${
-                        perm.delete ? "bg-red-100 text-red-700" : "bg-slate-50 text-slate-300"
-                      }`}
-                      title="Delete"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                    {/* Approve (only if feature supports it) */}
-                    {feature.hasApprove ? (
-                      <button
-                        onClick={() => toggle(selectedRole, feature.key, "approve")}
-                        className={`p-1.5 rounded-md transition-colors ${
-                          perm.approve ? "bg-green-100 text-green-700" : "bg-slate-50 text-slate-300"
-                        }`}
-                        title="Approve"
-                      >
-                        <ShieldCheck className="h-3.5 w-3.5" />
-                      </button>
-                    ) : (
-                      <div className="p-1.5 w-[26px]" />
-                    )}
-                    {/* Fetch (only if feature supports it) */}
-                    {feature.hasFetch ? (
-                      <button
-                        onClick={() => toggle(selectedRole, feature.key, "fetch")}
-                        className={`p-1.5 rounded-md transition-colors ${
-                          perm.fetch ? "bg-cyan-100 text-cyan-700" : "bg-slate-50 text-slate-300"
-                        }`}
-                        title="Fetch from Zoho"
-                      >
-                        <CloudDownload className="h-3.5 w-3.5" />
-                      </button>
-                    ) : (
-                      <div className="p-1.5 w-[26px]" />
-                    )}
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+
+                  <div className="flex flex-wrap gap-1.5">
+                    {sorted.map((p) => {
+                      const on = granted.has(p.id);
+                      return (
+                        <button
+                          key={p.id}
+                          onClick={() => toggle(p.id, mod)}
+                          disabled={locked}
+                          title={p.key}
+                          className={`rounded-md border px-2.5 py-1 text-xs font-medium capitalize transition-colors disabled:opacity-50 ${
+                            on
+                              ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                              : "border-slate-200 bg-white text-slate-400 hover:border-slate-300"
+                          }`}
+                        >
+                          {p.action}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      ))}
+
+      {/* Actions */}
+      <div className="sticky bottom-16 lg:bottom-4 flex gap-2 pt-2">
+        <Button onClick={handleSave} disabled={saving || readOnly} className="flex-1">
+          <Save className="h-4 w-4 mr-1" />
+          {saving ? "Saving..." : `Save ${selectedRole?.name || ""}`}
+        </Button>
+        {canDelete("roles") && selectedRole && !selectedRole.isSystem && (
+          <Button variant="outline" onClick={handleDeleteRole}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        )}
       </div>
 
-      {/* Save button */}
-      <div className="mt-4">
-        <Button onClick={handleSave} size="lg" disabled={saving} className="w-full min-h-[48px] bg-emerald-600 hover:bg-emerald-700 focus-ring">
-          <Save className="h-4 w-4 mr-2" />
-          {saving ? "Saving..." : "Save Permissions"}
-        </Button>
-      </div>
+      <p className="flex items-center gap-1.5 text-[11px] text-slate-400 pb-2">
+        <ShieldCheck className="h-3 w-3" />
+        {granted.size} permission{granted.size === 1 ? "" : "s"} granted across {modules.length}{" "}
+        modules.
+      </p>
     </div>
   );
 }

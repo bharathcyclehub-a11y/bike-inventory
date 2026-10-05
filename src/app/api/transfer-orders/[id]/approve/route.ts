@@ -1,134 +1,73 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
-import { BIN_TRACKING_ENABLED, stockLocationLabel, type StockLocation } from "@/lib/inventory-config";
-import { adjustLocationQty, getLocationBreakdown } from "@/lib/stock-location";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { z } from "zod";
+import { approveTransfer, returnTransfer } from "@/lib/approvals/actions/transfer";
+import { createLogger } from "@/lib/logger";
 
-// POST: Approve or reject a transfer order
-export async function POST(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+const log = createLogger("transfer-orders:approve");
+
+const schema = z.object({
+  action: z.enum(["approve", "reject"]),
+  rejectionNote: z.string().max(1000).optional(),
+});
+
+/**
+ * POST: approve a pending transfer, or send it back to the person who raised it.
+ *
+ * ─── THE ROUTE IS NOW A TRANSLATOR, NOT THE RULE ──────────────────────────────────────────
+ *
+ * Everything this used to do — the grant, the state machine, the source stock re-check, the
+ * claim, the activity log — moved to `src/lib/approvals/actions/transfer.ts` (plan 1709, P17).
+ * It had to: the Requests page (`/approvals`) and Wave 3's push-notification Approve button
+ * perform the same act with no screen and no request body behind them, and three copies of an
+ * approval rule is how the purchase-order module ended up with three disagreeing opinions
+ * about who could do what. This file parses the body and turns the answer into a status code.
+ *
+ * ─── APPROVAL NO LONGER MOVES STOCK. THAT IS STILL THE HEART OF P14 ───────────────────────
+ *
+ * Approval agrees to the movement. Dispatch takes the stock out; receipt puts it in. MIG-2
+ * rewrote the legacy APPROVED rows to RECEIVED precisely because they mean the OLD thing
+ * ("everything has moved") and this route produces the new one ("nothing has moved yet").
+ *
+ * ─── "REJECT" WRITES RETURNED (R25, Q36) ──────────────────────────────────────────────────
+ *
+ * The action name in the body is unchanged so an older client keeps working, but the record
+ * now goes to RETURNED with the note: the creator fixes THIS order and resubmits it. REJECTED
+ * is still in the enum for rows written before R25 and is no longer produced by anything.
+ */
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
+    const user = await requireFeature("transfers", "approve");
     const { id } = await params;
     const body = await req.json();
-    const { action, rejectionNote } = body; // "approve" or "reject"
+    const { action, rejectionNote } = schema.parse(body);
 
-    if (!["approve", "reject"].includes(action)) {
-      return errorResponse("Action must be 'approve' or 'reject'", 400);
+    const actor = { id: user.id, name: user.name };
+    const result =
+      action === "approve"
+        ? await approveTransfer(actor, id)
+        : await returnTransfer(actor, id, rejectionNote);
+
+    if (!result.ok) {
+      log.warn("transfer review refused", { orderId: id, action, status: result.httpStatus });
+      return errorResponse(result.error, result.httpStatus);
     }
 
-    const order = await prisma.transferOrder.findUnique({
-      where: { id },
-      include: {
-        items: {
-          include: {
-            product: { select: { id: true, currentStock: true, name: true } },
-            fromBin: { select: { id: true, code: true } },
-            toBin: { select: { id: true, code: true } },
-          },
-        },
-      },
+    return successResponse({
+      message: result.message,
+      status: result.newStatus,
+      orderNo: result.recordRef,
     });
-
-    if (!order) return errorResponse("Transfer order not found", 404);
-    if (order.status !== "PENDING") return errorResponse("Order is not pending", 400);
-
-    if (action === "approve") {
-      // Verify stock is still available at the source
-      const breakdown = BIN_TRACKING_ENABLED
-        ? new Map<string, Record<string, number>>()
-        : await getLocationBreakdown(order.items.map((i) => i.productId));
-      for (const item of order.items) {
-        if (BIN_TRACKING_ENABLED) {
-          if (item.product.currentStock < item.quantity) {
-            return errorResponse(
-              `Insufficient stock for ${item.product.name}. Available: ${item.product.currentStock}, Requested: ${item.quantity}`,
-              400
-            );
-          }
-        } else {
-          const available = item.fromLocation ? (breakdown.get(item.productId)?.[item.fromLocation] ?? 0) : 0;
-          if (available < item.quantity) {
-            return errorResponse(
-              `Insufficient stock for ${item.product.name} at ${stockLocationLabel(item.fromLocation)}. Available: ${available}, Requested: ${item.quantity}`,
-              400
-            );
-          }
-        }
-      }
-
-      await prisma.$transaction(async (tx) => {
-        // Update order status
-        await tx.transferOrder.update({
-          where: { id },
-          data: { status: "APPROVED", reviewedById: user.id, reviewedAt: new Date() },
-        });
-
-        // Execute each item transfer
-        for (const item of order.items) {
-          if (BIN_TRACKING_ENABLED) {
-            await tx.product.update({
-              where: { id: item.productId },
-              data: { binId: item.toBinId },
-            });
-            await tx.serialItem.updateMany({
-              where: { productId: item.productId, binId: item.fromBinId!, status: "IN_STOCK" },
-              data: { binId: item.toBinId },
-            });
-            await tx.inventoryTransaction.create({
-              data: {
-                type: "TRANSFER",
-                productId: item.productId,
-                quantity: item.quantity,
-                previousStock: item.product.currentStock,
-                newStock: item.product.currentStock,
-                referenceNo: order.orderNo,
-                notes: `[APPROVED] From: ${item.fromBin?.code} → To: ${item.toBin?.code} | Transfer Order: ${order.orderNo}`,
-                userId: user.id,
-              },
-            });
-          } else {
-            // Location mode: move qty out of source, into destination. Total unchanged.
-            await adjustLocationQty(tx, item.productId, item.fromLocation as StockLocation, -item.quantity);
-            await adjustLocationQty(tx, item.productId, item.toLocation as StockLocation, item.quantity);
-            await tx.inventoryTransaction.create({
-              data: {
-                type: "TRANSFER",
-                productId: item.productId,
-                quantity: item.quantity,
-                previousStock: item.product.currentStock,
-                newStock: item.product.currentStock,
-                referenceNo: order.orderNo,
-                notes: `[APPROVED] From: ${stockLocationLabel(item.fromLocation)} → To: ${stockLocationLabel(item.toLocation)} | Transfer Order: ${order.orderNo}`,
-                userId: user.id,
-              },
-            });
-          }
-        }
-      });
-
-      return successResponse({ message: "Transfer order approved", status: "APPROVED" });
-    } else {
-      // Reject
-      await prisma.transferOrder.update({
-        where: { id },
-        data: {
-          status: "REJECTED",
-          reviewedById: user.id,
-          reviewedAt: new Date(),
-          rejectionNote: rejectionNote || null,
-        },
-      });
-
-      return successResponse({ message: "Transfer order rejected", status: "REJECTED" });
-    }
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
-    return errorResponse(error instanceof Error ? error.message : "Failed to process transfer order", 400);
+    if (error instanceof z.ZodError) {
+      return errorResponse(error.issues[0]?.message ?? "Invalid request", 400);
+    }
+    const message = error instanceof Error ? error.message : "Failed to process transfer order";
+    log.error("transfer approve failed", { message });
+    return errorResponse(message, 400);
   }
 }

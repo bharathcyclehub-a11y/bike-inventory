@@ -5,14 +5,19 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse, paginatedResponse, parseSearchParams } from "@/lib/api-utils";
 import { userSchema } from "@/lib/validations";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { validateSiteAssignment } from "@/lib/site-assignment";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
+    await requireFeature("team", "view");
     const { page, limit, skip, search } = parseSearchParams(req.url);
+    // Filtered here rather than in the browser: pagination is server-side, so a client-side
+    // filter would leave the page claiming "Showing 1-20 of 47" while rendering three rows.
+    const roleId = new URL(req.url).searchParams.get("roleId") || undefined;
 
     const where = {
+      ...(roleId ? { roleId } : {}),
       ...(search && {
         OR: [
           { name: { contains: search, mode: "insensitive" as const } },
@@ -28,8 +33,13 @@ export async function GET(req: NextRequest) {
           id: true,
           name: true,
           email: true,
-          role: true,
-          customRoleName: true,
+          roleId: true,
+          role: { select: { id: true, key: true, name: true } },
+          // Where this person works. Both nullable — a user may be assigned to a store, a
+          // warehouse, both or neither, and none of it grants access. /team renders these in
+          // one "Store · Warehouse" column.
+          store: { select: { id: true, code: true, name: true } },
+          warehouse: { select: { id: true, code: true, name: true } },
           isActive: true,
           createdAt: true,
           updatedAt: true,
@@ -51,7 +61,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN"]);
+    await requireFeature("team", "create");
     const body = await req.json();
     const data = userSchema.parse(body);
 
@@ -68,6 +78,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // The role must exist and be usable. Permissions are never set on the user — they come
+    // from whatever the role holds, which is what makes access editable after the fact.
+    const role = await prisma.role.findUnique({
+      where: { id: data.roleId },
+      select: { id: true, isActive: true },
+    });
+    if (!role) return errorResponse("Role not found", 400);
+    if (!role.isActive) return errorResponse("That role is deactivated", 400);
+
+    // The store/warehouse pair must hold. The select on /team/new filters warehouses to the
+    // chosen store, but that is cosmetic — a hand-rolled request can send any pair.
+    const siteError = await validateSiteAssignment({
+      storeId: data.storeId,
+      warehouseId: data.warehouseId,
+    });
+    if (siteError) return errorResponse(siteError, 400);
+
     // Access code IS the login credential — hash it as the password
     const hashedPassword = await bcrypt.hash(data.accessCode.toUpperCase(), 10);
 
@@ -76,19 +103,18 @@ export async function POST(req: NextRequest) {
         name: data.name,
         email: data.email,
         password: hashedPassword,
-        role: data.role,
+        roleId: role.id,
         accessCode: data.accessCode.toUpperCase(),
-        ...(data.role === "CUSTOM" ? {
-          customRoleName: data.customRoleName || "Custom",
-          permissions: (data.permissions || {}) as object,
-        } : {}),
+        storeId: data.storeId ?? null,
+        warehouseId: data.warehouseId ?? null,
       },
       select: {
         id: true,
         name: true,
         email: true,
-        role: true,
-        customRoleName: true,
+        role: { select: { id: true, key: true, name: true } },
+        store: { select: { id: true, code: true, name: true } },
+        warehouse: { select: { id: true, code: true, name: true } },
         isActive: true,
         createdAt: true,
       },

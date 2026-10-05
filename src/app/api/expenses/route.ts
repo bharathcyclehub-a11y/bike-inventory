@@ -4,11 +4,11 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse, paginatedResponse, parseSearchParams } from "@/lib/api-utils";
 import { expenseSchema } from "@/lib/validations";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER"]);
+    await requireFeature("expenses", "view");
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const category = searchParams.get("category") || undefined;
     const dateFrom = searchParams.get("dateFrom");
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "ACCOUNTS_MANAGER", "SUPERVISOR"]);
+    const user = await requireFeature("expenses", "create");
     const body = await req.json();
     const data = expenseSchema.parse(body);
 
@@ -48,10 +48,12 @@ export async function POST(req: NextRequest) {
         date: new Date(data.date),
         amount: data.amount,
         category: data.category,
-        description: data.description,
-        paidBy: data.paidBy,
+        description: data.description?.trim() || data.category.replace(/_/g, " "),
+        // D2: the payer is the signed-in user, derived here, never taken from the body.
+        paidBy: user.name,
         paymentMode: data.paymentMode,
         referenceNo: data.referenceNo,
+        receiptUrl: data.receiptUrl ?? null,
         notes: data.notes,
         recordedById: user.id,
       },

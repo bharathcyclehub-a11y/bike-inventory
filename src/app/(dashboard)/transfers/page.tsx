@@ -1,64 +1,34 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { Plus, ArrowRightLeft, ArrowRight, CheckCircle2, XCircle, Clock, Loader2, Package } from "lucide-react";
-import { stockLocationLabel } from "@/lib/inventory-config";
-import { getStatusColor, getStatusLabel } from "@/lib/status-colors";
+import { Plus, ArrowRightLeft } from "lucide-react";
+// No warehouse lookup needed: the API now returns the warehouse names on each line, so
+// the page renders what it was given instead of translating a code through a table.
 import { type DateRangeKey } from "@/components/date-filter";
 import { FilterSheet } from "@/components/filter-sheet";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { SkeletonList } from "@/components/ui/skeleton";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { usePermissions } from "@/lib/use-permissions";
+import { apiTry } from "@/lib/api-client";
+import { createLogger } from "@/lib/logger";
+import { endpointLabel, type TransferOrder, type TransferRowContext } from "./_components/transfer-row";
+import { TransferTable } from "./_components/transfer-table";
+import { TransferCard } from "./_components/transfer-card";
 
-interface TransferOrderItem {
-  id: string;
-  quantity: number;
-  product: { name: string; sku: string; currentStock: number };
-  fromBin: { code: string; name: string; location: string } | null;
-  toBin: { code: string; name: string; location: string } | null;
-  fromLocation: string | null;
-  toLocation: string | null;
-}
+const log = createLogger("transfers:list");
 
-// Display label for an endpoint: bin code in bin mode, location name in location mode.
-function endpointLabel(bin: { code: string } | null, loc: string | null): string {
-  if (bin) return bin.code;
-  if (loc) return stockLocationLabel(loc);
-  return "—";
-}
-
-interface TransferOrder {
-  id: string;
-  orderNo: string;
-  status: "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
-  notes: string | null;
-  rejectionNote: string | null;
-  createdAt: string;
-  createdBy: { name: string };
-  reviewedBy: { name: string } | null;
-  reviewedAt: string | null;
-  items: TransferOrderItem[];
-  _count: { items: number };
-}
-
-type StatusFilter = "all" | "PENDING" | "APPROVED" | "REJECTED";
+type StatusFilter = "all" | "PENDING" | "APPROVED" | "RETURNED" | "IN_TRANSIT" | "RECEIVED" | "REJECTED" | "CANCELLED";
 
 export default function TransfersPage() {
-  const { data: session } = useSession();
-  const role = (session?.user as { role?: string })?.role || "";
-  const { canApprove: canApproveCheck } = usePermissions(role);
+  const { canApprove: canApproveCheck } = usePermissions();
   const canApprove = canApproveCheck("transfers");
   const [orders, setOrders] = useState<TransferOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [approving, setApproving] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
@@ -70,43 +40,77 @@ export default function TransfersPage() {
     details?: string;
   } | null>(null);
   const [dataError, setDataError] = useState<string | null>(null);
+  // Reject asks for a note before it sends anything (R25).
+  const [rejectTarget, setRejectTarget] = useState<TransferOrder | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
 
-  const fetchData = useCallback(() => {
-    setLoading(true);
+  // apiTry, not a raw fetch. An expired session answers a bare fetch with a 307 to /login and
+  // 200 HTML, so `res.ok` is true and `.json()` throws "Unexpected token <" — which surfaced
+  // here as "Failed to load data" and sent people looking for a server fault instead of
+  // signing back in.
+  const fetchData = useCallback(async () => {
     const params = new URLSearchParams({ limit: "50" });
     if (filter !== "all") params.set("status", filter);
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
 
-    fetch(`/api/transfer-orders?${params}`)
-      .then((r) => r.json())
-      .then((res) => { if (res.success) setOrders(res.data); })
-      .catch((e) => {
-        if (typeof navigator !== "undefined" && !navigator.onLine) {
-          setDataError("You're offline. Check your connection and retry.");
-        } else {
-          setDataError(e instanceof Error ? e.message : "Failed to load data. Tap retry.");
-        }
-      })
-      .finally(() => setLoading(false));
+    const { data, error } = await apiTry<TransferOrder[]>(`/api/transfer-orders?${params}`);
+    if (error) {
+      log.warn("transfer list failed", { message: error });
+      setDataError(
+        typeof navigator !== "undefined" && !navigator.onLine
+          ? "You’re offline. Check your connection and retry."
+          : error
+      );
+    } else {
+      setOrders(data ?? []);
+      setDataError(null);
+    }
+    return true;
   }, [filter, dateFrom, dateTo]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // The load runs INSIDE the effect behind a `cancelled` guard — P7 `inbound/[id]`. The old
+  // shape called a loader from the effect body, which set `loading` synchronously on every
+  // filter change and tripped react-hooks/set-state-in-effect. The guard also stops a slow
+  // response for the previous filter overwriting the current one.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await fetchData();
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [fetchData]);
 
-  async function handleAction(id: string, action: "approve" | "reject") {
+  // Reject sends the transfer BACK with a note (R25), so it asks for one first. An empty
+  // "sent back" is what this replaced: the creator saw a dead record and no idea what to fix.
+  async function handleAction(id: string, action: "approve" | "reject", rejectionNote?: string) {
     setApproving(id);
-    try {
-      const res = await fetch(`/api/transfer-orders/${id}/approve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
-      });
-      const data = await res.json();
-      if (data.success) {
+    {
+      const { data: ok, error } = await apiTry<{ message: string }>(
+        `/api/transfer-orders/${id}/approve`,
+        { method: "POST", json: action === "reject" ? { action, rejectionNote } : { action } }
+      );
+      if (!ok) {
+        // The refusal used to be swallowed by a bare `catch {}` and the button simply
+        // stopped spinning, which reads as "nothing happened" for a 403, a 409 and a
+        // network fault alike.
+        log.warn("transfer review failed", { action, message: error });
+        setDataError(error ?? `Could not ${action} this transfer`);
+        setApproving(null);
+        return;
+      }
+      {
         const order = orders.find((o) => o.id === id);
         setOrders((prev) =>
           prev.map((o) =>
-            o.id === id ? { ...o, status: action === "approve" ? "APPROVED" : "REJECTED" } : o
+            o.id === id
+              ? {
+                  ...o,
+                  status: action === "approve" ? "APPROVED" : "RETURNED",
+                  rejectionNote: action === "reject" ? rejectionNote ?? null : o.rejectionNote,
+                }
+              : o
           )
         );
         if (order) {
@@ -119,35 +123,42 @@ export default function TransfersPage() {
                 { label: "Items", value: `${order._count.items} item${order._count.items !== 1 ? "s" : ""}` },
                 ...order.items.slice(0, 3).map((item) => ({
                   label: item.product.name,
-                  value: `${endpointLabel(item.fromBin, item.fromLocation)} → ${endpointLabel(item.toBin, item.toLocation)} (Qty: ${item.quantity})`,
+                  value: `${endpointLabel(item.fromBin, item.fromWarehouse?.name ?? null)} → ${endpointLabel(item.toBin, item.toWarehouse?.name ?? null)} (Qty: ${item.quantity})`,
                 })),
               ],
-              details: order.notes || undefined,
+              // NOT "stock moved". Approval agrees to the transfer; dispatch is what moves
+              // it. Saying otherwise sends somebody to look for goods still in the other
+              // building — which is exactly what the old auto-approve copy did.
+              details: order.notes
+                ? `${order.notes} — approved, not yet dispatched.`
+                : "Approved — nothing has moved yet. Dispatch it when the van leaves.",
             });
           } else {
             setConfirmation({
               type: "warning",
-              title: "Transfer Rejected",
+              title: "Sent back for correction",
               referenceId: order.orderNo,
               items: [
                 { label: "Items", value: `${order._count.items} item${order._count.items !== 1 ? "s" : ""}` },
-                { label: "Created by", value: order.createdBy.name },
+                { label: "Back with", value: order.createdBy.name },
               ],
-              details: order.rejectionNote || "No reason provided",
+              details: rejectionNote || "No reason provided",
             });
           }
         }
       }
-    } catch { /* ignore */ }
-    finally { setApproving(null); }
+    }
+    setApproving(null);
   }
 
-  const statusBadge = (status: string) => {
-    const icon = status === "APPROVED" ? <CheckCircle2 className="h-3 w-3 mr-0.5" />
-      : status === "PENDING" ? <Clock className="h-3 w-3 mr-0.5" />
-      : status === "REJECTED" ? <XCircle className="h-3 w-3 mr-0.5" />
-      : null;
-    return <Badge className={`text-xs ${getStatusColor(status)}`}>{icon}{getStatusLabel(status)}</Badge>;
+  // What the table and the cards need besides the order itself (plan 2209). The whole row or
+  // card opens the transfer; Approve / Reject call back here and never navigate (R1, R5).
+  const rowCtx: TransferRowContext = {
+    canApprove,
+    approvingId: approving,
+    onApprove: (order) => { void handleAction(order.id, "approve"); },
+    onReject: (order) => { setRejectTarget(order); setRejectNote(""); },
+    hrefFor: (order) => `/transfers/${order.id}`,
   };
 
   return (
@@ -155,7 +166,7 @@ export default function TransfersPage() {
       <div className="flex items-center justify-between mb-3">
         <div>
           <h1 className="text-lg font-bold text-slate-900">Transfer Orders</h1>
-          <p className="text-xs text-slate-500">Multi-item bin transfers</p>
+          <p className="text-xs text-slate-500">Stock moves between warehouses</p>
         </div>
         <Link href="/transfers/new">
           <Button size="sm" className="h-12 px-4 bg-purple-600 hover:bg-purple-700 text-sm">
@@ -176,7 +187,17 @@ export default function TransfersPage() {
             { key: "all", label: "All" },
             { key: "PENDING", label: "Pending" },
             { key: "APPROVED", label: "Approved" },
+            // Sent back to its creator (R25). Without a chip a returned transfer would be
+            // invisible on every tab but All — the mistake CANCELLED made for months.
+            { key: "RETURNED", label: "Returned" },
+            // Filterable from today even though P14 is what starts writing them. An order
+            // that reaches one of these states must not be invisible on every tab.
+            { key: "IN_TRANSIT", label: "In Transit" },
+            { key: "RECEIVED", label: "Received" },
             { key: "REJECTED", label: "Rejected" },
+            // Without this a cancelled transfer was invisible on every tab except All —
+            // the status has existed since 0_init and has never had a chip.
+            { key: "CANCELLED", label: "Cancelled" },
           ],
           onChange: (key) => setFilter(key as StatusFilter),
         }]}
@@ -187,7 +208,7 @@ export default function TransfersPage() {
         <ErrorBanner
           message={dataError}
           type={typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error"}
-          onRetry={() => { setDataError(null); fetchData(); }}
+          onRetry={() => { setDataError(null); void fetchData(); }}
           onDismiss={() => setDataError(null)}
         />
       )}
@@ -203,92 +224,57 @@ export default function TransfersPage() {
           </Link>
         </div>
       ) : (
-        <div className="space-y-2">
-          {orders.map((order) => {
-            const accent = order.status === "APPROVED"
-              ? "border-l-green-500"
-              : order.status === "REJECTED"
-              ? "border-l-red-500"
-              : order.status === "PENDING"
-              ? "border-l-amber-400"
-              : "border-l-slate-200";
-            return (
-            <Card key={order.id} className={`overflow-hidden border-l-4 ${accent}`}>
-              <CardContent className="p-3">
-                {/* Header */}
-                <div className="flex items-start justify-between mb-2">
-                  <div className="flex-1 min-w-0 mr-2">
-                    <div className="flex items-center gap-2">
-                      <p className="text-base font-semibold text-slate-900 tabular-nums truncate">{order.orderNo}</p>
-                      {statusBadge(order.status)}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      <span className="tabular-nums">{order._count.items}</span> item{order._count.items !== 1 ? "s" : ""} | By {order.createdBy.name} | <span className="tabular-nums">{new Date(order.createdAt).toLocaleDateString("en-IN")}</span>
-                    </p>
-                  </div>
-                </div>
+        <>
+          {/* One list, two layouts (R2/R3): the table from 1024 px, cards below it. */}
+          <div className="hidden lg:block">
+            <TransferTable orders={orders} ctx={rowCtx} />
+          </div>
+          <div className="lg:hidden space-y-2">
+            {orders.map((order) => (
+              <TransferCard key={order.id} order={order} ctx={rowCtx} />
+            ))}
+          </div>
+        </>
+      )}
 
-                {/* Compact item preview (first 2 items) */}
-                <div className="space-y-1 mb-2">
-                  {order.items.slice(0, expandedId === order.id ? undefined : 2).map((item) => (
-                    <div key={item.id} className="bg-slate-50 rounded-lg px-2.5 py-1.5 flex items-center gap-2">
-                      <Package className="h-3 w-3 text-slate-400 shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-800 truncate">{item.product.name}</p>
-                        <div className="flex items-center gap-1 text-xs text-slate-500">
-                          <span className="tabular-nums">Qty: {item.quantity}</span>
-                          <span>|</span>
-                          <span>{endpointLabel(item.fromBin, item.fromLocation)}</span>
-                          <ArrowRight className="h-2.5 w-2.5 text-purple-500" />
-                          <span>{endpointLabel(item.toBin, item.toLocation)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {order.items.length > 2 && (
-                    <button onClick={() => setExpandedId(expandedId === order.id ? null : order.id)}
-                      className="text-xs text-purple-600 font-medium pl-2">
-                      {expandedId === order.id ? "Show less" : `+${order.items.length - 2} more items`}
-                    </button>
-                  )}
-                </div>
-
-                {/* Notes */}
-                {order.notes && <p className="text-xs text-slate-400 mb-2">{order.notes}</p>}
-                {order.rejectionNote && (
-                  <p className="text-xs text-red-500 mb-2">Rejected: {order.rejectionNote}</p>
-                )}
-
-                {/* Actions */}
-                <div className="flex items-center justify-between">
-                  {order.reviewedBy && (
-                    <p className="text-xs text-slate-400">
-                      {order.status === "APPROVED" ? "Approved" : "Reviewed"} by {order.reviewedBy.name}
-                    </p>
-                  )}
-                  {!order.reviewedBy && <div />}
-
-                  {canApprove && order.status === "PENDING" && (
-                    <div className="flex gap-1.5">
-                      <Button size="sm" variant="outline"
-                        className="h-10 px-4 py-2 text-sm text-green-600 border-green-200 hover:bg-green-50"
-                        onClick={() => handleAction(order.id, "approve")}
-                        disabled={approving === order.id}>
-                        {approving === order.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Approve"}
-                      </Button>
-                      <Button size="sm" variant="outline"
-                        className="h-10 px-4 py-2 text-sm text-red-600 border-red-200 hover:bg-red-50"
-                        onClick={() => handleAction(order.id, "reject")}
-                        disabled={approving === order.id}>
-                        Reject
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-            );
-          })}
+      {rejectTarget && (
+        <div
+          className="fixed inset-0 bg-black/50 z-[60] flex items-end sm:items-center justify-center p-4"
+          onClick={() => setRejectTarget(null)}
+        >
+          <div
+            className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-5 space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="text-base font-bold text-slate-900">Send {rejectTarget.orderNo} back?</h2>
+            <p className="text-xs text-slate-500">
+              {rejectTarget.createdBy.name} gets your note and fixes this same transfer.
+            </p>
+            <textarea
+              value={rejectNote}
+              onChange={(e) => setRejectNote(e.target.value)}
+              rows={3}
+              maxLength={1000}
+              placeholder="What needs correcting?"
+              className="w-full rounded-lg border border-slate-200 p-2.5 text-sm focus-ring"
+            />
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setRejectTarget(null)} className="flex-1 min-h-[44px]">
+                Keep it
+              </Button>
+              <Button
+                onClick={() => {
+                  const target = rejectTarget;
+                  setRejectTarget(null);
+                  void handleAction(target.id, "reject", rejectNote.trim());
+                }}
+                disabled={rejectNote.trim().length === 0 || approving !== null}
+                className="flex-1 min-h-[44px] bg-red-600 hover:bg-red-700"
+              >
+                Send back
+              </Button>
+            </div>
+          </div>
         </div>
       )}
 

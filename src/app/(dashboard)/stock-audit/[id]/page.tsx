@@ -1,7 +1,9 @@
 "use client";
+import { useDebounce } from "@/hooks/use-debounce";
 
 import { useState, useEffect, useCallback, useRef, use } from "react";
 import { useSession } from "next-auth/react";
+import { usePermissions } from "@/lib/use-permissions";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -14,22 +16,26 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { useDebounce, fuzzyMatch } from "@/lib/utils";
+import { fuzzyMatch } from "@/lib/utils";
+import { apiTry } from "@/lib/api-client";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("stock-audit:detail");
 
 interface StockCountItemData {
   id: string;
   systemQty: number;
   countedQty: number | null;
+  /** The unit-level split (plan 1709, R11, Q42). Null on lines counted before it. */
+  assembledQty: number | null;
+  unassembledQty: number | null;
   variance: number | null;
-  suggestedBrand: string | null;
   notes: string | null;
   countedAt: string | null;
   product: {
     name: string;
     sku: string;
     currentStock: number;
-    type: string;
-    size: string | null;
     category: { name: string } | null;
     brand: { name: string } | null;
     bin: { code: string; location: string } | null;
@@ -48,11 +54,75 @@ interface StockCountSummary {
   rejectionReason: string | null;
   notes: string | null;
   assignedTo: { name: string };
-  bin: { code: string; name: string; location: string } | null;
+  assignedToId: string;
+  /** `nonAssemblable` decides how a line is counted (plan 2109, R32). */
+  bin: { id: string; code: string; name: string; location: string | null; directions: string | null; floor: string | null; zone: string | null; nonAssemblable?: boolean } | null;
+  // Scope (R2). scopeLabel is built by the API so every screen words it identically;
+  // canCorrectStock is false for a whole-store or legacy audit — see section 5.1.
+  scopeLabel: string;
+  canCorrectStock: boolean;
   totalItems: number;
   countedItems: number;
   totalVariance: number;
   itemsWithVariance: number;
+}
+
+interface Split {
+  assembled: number;
+  unassembled: number;
+}
+
+/** A row of `/api/products/search` — the "add a product to this count" typeahead (Q26). */
+interface ProductHit {
+  id: string;
+  sku: string;
+  name: string;
+  brand: { name: string } | null;
+  category: { name: string } | null;
+}
+
+/**
+ * One half of a line's count — Assembled or Unassembled — as a big-thumb stepper. The number
+ * opens a prompt for typing a large count.
+ */
+function SplitStepper({ label, value, onChange, compact }: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  compact?: boolean;
+}) {
+  const h = compact ? "h-9" : "h-10";
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`shrink-0 text-xs font-medium text-slate-600 ${compact ? "w-[74px]" : "w-[88px]"}`}>{label}</span>
+      <div className="flex items-center flex-1">
+        <button
+          onClick={() => { if (value > 0) onChange(value - 1); }}
+          aria-label={`${label}: one less`}
+          className={`${h} w-11 flex items-center justify-center bg-slate-100 rounded-l-lg border border-slate-200 active:bg-slate-200`}>
+          <Minus className="h-4 w-4 text-slate-600" />
+        </button>
+        <button
+          onClick={() => {
+            const input = prompt(`${label} count:`, String(value));
+            if (input !== null) {
+              const n = parseInt(input, 10);
+              if (!isNaN(n) && n >= 0) onChange(n);
+            }
+          }}
+          aria-label={`${label}: type a count`}
+          className={`${h} flex-1 min-w-[48px] flex items-center justify-center bg-white border-y border-slate-200 ${compact ? "text-sm" : "text-lg"} font-bold text-slate-900 tabular-nums`}>
+          {value}
+        </button>
+        <button
+          onClick={() => onChange(value + 1)}
+          aria-label={`${label}: one more`}
+          className={`${h} w-11 flex items-center justify-center bg-blue-50 rounded-r-lg border border-blue-200 active:bg-blue-100`}>
+          <Plus className="h-4 w-4 text-blue-600" />
+        </button>
+      </div>
+    </div>
+  );
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -63,28 +133,32 @@ const STATUS_STYLE: Record<string, string> = {
   REJECTED: "danger",
 };
 
-// Baseline mode: until July 31 2026, counted stock IS actual stock
-const BASELINE_END = new Date("2026-07-31T23:59:59+05:30");
-
 export default function StockAuditDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const { data: session } = useSession();
-  const userRole = (session?.user as { role?: string } | undefined)?.role;
-  const canApprove = userRole === "ADMIN" || userRole === "SUPERVISOR" || userRole === "ACCOUNTS_MANAGER";
-  const isAdmin = userRole === "ADMIN";
+  const { canApprove: canApproveCheck, canDelete } = usePermissions();
+  // Approving — and choosing whether the counts become system stock — happens on the review
+  // table, gated on stock_audit.approve alone (plan Q11). This screen only points there.
+  const canApprove = canApproveCheck("stock_audit");
+  const canDeleteAudit = canDelete("stock_audit");
+  // WHOSE audit is this. Every start/count/complete gate keys off THIS, not off a
+  // permission: the buttons used to be hidden by `!isAdmin`, so anyone holding stock.edit —
+  // the owner, typically — opened their own assigned audit and found no way to begin it.
+  const currentUserId = (session?.user as { userId?: string } | undefined)?.userId;
   const [summary, setSummary] = useState<StockCountSummary | null>(null);
   // Screenshot receipt shown when a count is completed (WhatsApp verification gate)
   const [receipt, setReceipt] = useState<{ referenceId: string; items: Array<{ label: string; value: string }> } | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [brands, setBrands] = useState<Record<string, string>>({});
-  const [brandList, setBrandList] = useState<string[]>([]);
   const [items, setItems] = useState<StockCountItemData[]>([]);
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [loadingItems, setLoadingItems] = useState(false);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
   const [counts, setCounts] = useState<Record<string, number | null>>({});
+  // The condition split per line (Q42). `counts` keeps the TOTAL, which every variance, tab
+  // and save path already reads; this holds the two halves it is the sum of.
+  const [splits, setSplits] = useState<Record<string, Split>>({});
   const [saving, setSaving] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -98,22 +172,35 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // "Record 0 for all uncounted" (R4) — the sheet and its in-flight flag.
+  const [showZeroSheet, setShowZeroSheet] = useState(false);
+  const [zeroing, setZeroing] = useState(false);
+  // "Add a product" (plan 2109, Q26): an empty bin's audit starts with no lines, and anything
+  // found that is not listed is searched and added here.
+  const [addQuery, setAddQuery] = useState("");
+  const debouncedAddQuery = useDebounce(addQuery);
+  const [addHits, setAddHits] = useState<ProductHit[]>([]);
+  const [addSearching, setAddSearching] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
   const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dirtyRef = useRef<Set<string>>(new Set());
 
-  const isBaseline = new Date() < BASELINE_END;
-
-  // Fetch summary
+  // Fetch summary. Returns its promise so a caller that needs fresh data can await it.
   const fetchSummary = useCallback(() => {
-    fetch(`/api/stock-counts/${id}`)
-      .then((r) => r.json())
-      .then((res) => { if (res.success) setSummary(res.data); })
-      .catch(() => {})
+    return apiTry<StockCountSummary>(`/api/stock-counts/${id}`)
+      .then(({ data, error }) => {
+        if (error || !data) {
+          log.error("summary load failed", { countId: id, message: error ?? "empty response" });
+          return;
+        }
+        setSummary(data);
+      })
       .finally(() => setLoadingSummary(false));
   }, [id]);
 
-  // Fetch items with tab filter
+  // Fetch items with tab filter. Returns its promise: the bulk-zero flow awaits it so the
+  // count it shows in the confirm sheet is the one the server will be asked to match.
   const fetchItems = useCallback(() => {
     setLoadingItems(true);
     const params = new URLSearchParams();
@@ -122,52 +209,55 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
     } else {
       params.set("filter", tab);
     }
+    type ItemsPayload = {
+      items: StockCountItemData[];
+      totalCount?: number;
+      countedCount?: number;
+      uncountedCount?: number;
+      staleCount?: number;
+    };
 
-    fetch(`/api/stock-counts/${id}/items?${params}`)
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.success) {
-          let fetchedItems: StockCountItemData[] = res.data.items || res.data;
-          // Client-side fuzzy fallback if API returns 0 results and we have a search term
-          if (debouncedSearch && fetchedItems.length === 0) {
-            // Re-fetch all items and filter client-side
-            fetch(`/api/stock-counts/${id}/items?filter=all`)
-              .then((r2) => r2.json())
-              .then((res2) => {
-                if (res2.success) {
-                  const allItems: StockCountItemData[] = res2.data.items || res2.data;
-                  const fuzzyResults = allItems.filter((item) =>
-                    fuzzyMatch(debouncedSearch, item.product.name) ||
-                    fuzzyMatch(debouncedSearch, item.product.sku) ||
-                    fuzzyMatch(debouncedSearch, item.product.brand?.name) ||
-                    fuzzyMatch(debouncedSearch, item.product.category?.name) ||
-                    fuzzyMatch(debouncedSearch, item.product.size)
-                  );
-                  setItems(fuzzyResults);
-                  mergeServerCounts(fuzzyResults);
-                }
-              })
-              .catch(() => {})
-              .finally(() => setLoadingItems(false));
-            return;
-          }
-
-          setItems(fetchedItems);
-          mergeServerCounts(fetchedItems);
-          // Update tab counts
-          if (res.data.totalCount !== undefined) {
-            setTabCounts({
-              total: res.data.totalCount,
-              counted: res.data.countedCount,
-              uncounted: res.data.uncountedCount,
+    return apiTry<ItemsPayload>(`/api/stock-counts/${id}/items?${params}`)
+      .then(({ data, error }) => {
+        if (error || !data) {
+          log.error("items load failed", { countId: id, tab, message: error ?? "empty response" });
+          return;
+        }
+        const fetchedItems: StockCountItemData[] = data.items;
+        // Client-side fuzzy fallback if API returns 0 results and we have a search term
+        if (debouncedSearch && fetchedItems.length === 0) {
+          // Re-fetch all items and filter client-side
+          return apiTry<ItemsPayload>(`/api/stock-counts/${id}/items?filter=all`)
+            .then(({ data: all, error: allError }) => {
+              if (allError || !all) {
+                log.error("items fallback load failed", { countId: id, message: allError ?? "empty response" });
+                return;
+              }
+              const fuzzyResults = all.items.filter((item) =>
+                fuzzyMatch(debouncedSearch, item.product.name) ||
+                fuzzyMatch(debouncedSearch, item.product.sku) ||
+                fuzzyMatch(debouncedSearch, item.product.brand?.name) ||
+                fuzzyMatch(debouncedSearch, item.product.category?.name)
+              );
+              setItems(fuzzyResults);
+              mergeServerCounts(fuzzyResults);
             });
-          }
-          if (res.data.staleCount !== undefined) {
-            setStaleCount(res.data.staleCount);
-          }
+        }
+
+        setItems(fetchedItems);
+        mergeServerCounts(fetchedItems);
+        // Update tab counts
+        if (data.totalCount !== undefined) {
+          setTabCounts({
+            total: data.totalCount,
+            counted: data.countedCount ?? 0,
+            uncounted: data.uncountedCount ?? 0,
+          });
+        }
+        if (data.staleCount !== undefined) {
+          setStaleCount(data.staleCount);
         }
       })
-      .catch(() => {})
       .finally(() => setLoadingItems(false));
   }, [id, debouncedSearch, tab]);
 
@@ -181,15 +271,70 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       });
       return merged;
     });
+    setSplits((prev) => {
+      const merged = { ...prev };
+      fetchedItems.forEach((item) => {
+        if (!(item.id in merged) && item.assembledQty !== null && item.unassembledQty !== null) {
+          merged[item.id] = { assembled: item.assembledQty, unassembled: item.unassembledQty };
+        }
+      });
+      return merged;
+    });
   }
 
   useEffect(() => { fetchSummary(); }, [fetchSummary]);
   useEffect(() => { fetchItems(); }, [fetchItems]);
+
+  // "Add a product" typeahead (Q26). Hits and the spinner are cleared in the input's onChange,
+  // so this effect only sets state after its await (react-hooks/set-state-in-effect).
   useEffect(() => {
-    fetch("/api/brands").then((r) => r.json()).then((res) => {
-      if (res.success) setBrandList(res.data.map((b: { name: string }) => b.name));
-    }).catch(() => {});
-  }, []);
+    const q = debouncedAddQuery.trim();
+    if (q.length < 2) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await apiTry<ProductHit[]>(`/api/products/search?q=${encodeURIComponent(q)}`);
+      if (cancelled) return;
+      setAddSearching(false);
+      if (error) {
+        log.warn("product search failed", { countId: id, message: error });
+        setAddHits([]);
+        return;
+      }
+      setAddHits(data ?? []);
+    })();
+    return () => { cancelled = true; };
+  }, [debouncedAddQuery, id]);
+
+  const handleAddProduct = async (hit: ProductHit) => {
+    setAdding(hit.id);
+    setActionError("");
+    const { error } = await apiTry(`/api/stock-counts/${id}/items`, {
+      method: "POST",
+      json: { productId: hit.id },
+    });
+    setAdding(null);
+    if (error) {
+      // The API's sentence verbatim — "already on this count", "not active", and so on.
+      log.warn("add product failed", { countId: id, productId: hit.id, message: error });
+      setActionError(error);
+      return;
+    }
+    log.info("product added to count", { countId: id, productId: hit.id });
+    setAddQuery("");
+    setAddHits([]);
+    // Land on the new line: it is uncounted, and searching its SKU shows exactly it.
+    setTab("uncounted");
+    setSearch(hit.sku);
+    fetchSummary();
+  };
+
+  // R32: a non-assemblable bin is counted as one number — no condition is sent, and the
+  // approval books it all as unassembled. An assemblable bin sends the two halves.
+  const nonAssemblableBin = summary?.bin?.nonAssemblable === true;
+  const splitFields = (itemId: string) =>
+    !nonAssemblableBin && splits[itemId]
+      ? { assembledQty: splits[itemId].assembled, unassembledQty: splits[itemId].unassembled }
+      : {};
 
   // Auto-save: whenever counts change, debounce 2s then save
   useEffect(() => {
@@ -210,26 +355,31 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       .map((itemId) => ({
         id: itemId,
         countedQty: counts[itemId]!,
-        ...(brands[itemId] ? { suggestedBrand: brands[itemId] } : {}),
+        ...splitFields(itemId),
       }));
 
     if (batch.length === 0) return;
 
     setAutoSaveStatus("saving");
-    try {
-      const res = await fetch(`/api/stock-counts/${id}/items`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: batch }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        dirtyRef.current = new Set();
-        setAutoSaveStatus("saved");
-        setTimeout(() => setAutoSaveStatus("idle"), 2000);
-        fetchSummary();
-      }
-    } catch (e) { setActionError(e instanceof Error ? e.message : "Auto-save failed"); }
+    // A FAILED AUTO-SAVE MUST BE LOUD. This was `if (data.success) { … }` with no else, so a
+    // rejected save left the indicator on "Auto-saving…" and the counter carried on believing
+    // their numbers were stored. `dirtyRef` is deliberately NOT cleared on failure, so the
+    // next tick retries the same batch.
+    const { error } = await apiTry(`/api/stock-counts/${id}/items`, {
+      method: "PUT",
+      json: { items: batch },
+      timeoutMs: 30_000,
+    });
+    if (error) {
+      log.error("auto-save failed", { countId: id, items: batch.length, message: error });
+      setAutoSaveStatus("idle");
+      setActionError(`Auto-save failed: ${error}. Your counts are not saved yet — press Save.`);
+      return;
+    }
+    dirtyRef.current = new Set();
+    setAutoSaveStatus("saved");
+    setTimeout(() => setAutoSaveStatus("idle"), 2000);
+    fetchSummary();
   };
 
   const handleManualSave = async () => {
@@ -238,40 +388,48 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       .map(([itemId, val]) => ({
         id: itemId,
         countedQty: val!,
-        ...(brands[itemId] ? { suggestedBrand: brands[itemId] } : {}),
+        ...splitFields(itemId),
       }));
 
-    if (batch.length === 0) return;
+    if (batch.length === 0) {
+      // Nothing to send — every dirty row was cleared back to no count.
+      dirtyRef.current = new Set();
+      return;
+    }
     setSaving(true);
-    try {
-      const res = await fetch(`/api/stock-counts/${id}/items`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: batch }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        dirtyRef.current = new Set();
-        setAutoSaveStatus("saved");
-        setTimeout(() => setAutoSaveStatus("idle"), 2000);
-        fetchSummary();
-        fetchItems();
-      }
-    } catch (e) { setActionError(e instanceof Error ? e.message : "Save failed"); }
-    finally { setSaving(false); }
+    setActionError("");
+    const { error } = await apiTry(`/api/stock-counts/${id}/items`, {
+      method: "PUT",
+      json: { items: batch },
+      timeoutMs: 30_000,
+    });
+    if (error) {
+      log.error("manual save failed", { countId: id, items: batch.length, message: error });
+      setActionError(error);
+    } else {
+      dirtyRef.current = new Set();
+      setAutoSaveStatus("saved");
+      setTimeout(() => setAutoSaveStatus("idle"), 2000);
+      // Awaited, so whoever called Save sees the reloaded counts before the button re-enables.
+      await Promise.all([fetchSummary(), fetchItems()]);
+    }
+    setSaving(false);
   };
 
   const handleStatusChange = async (newStatus: string, extras?: Record<string, unknown>) => {
     setActionLoading(true);
+    setActionError("");
     try {
-      const res = await fetch(`/api/stock-counts/${id}`, {
+      const { error } = await apiTry(`/api/stock-counts/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus, ...extras }),
+        json: { status: newStatus, ...extras },
+        timeoutMs: 60_000,
       });
-      const data = await res.json();
-      if (!data.success) {
-        setActionError(data.error || `Failed to change status to ${newStatus}`);
+      if (error) {
+        // The API's sentence, verbatim — it is the one that explains WHY, e.g. "This audit
+        // covers the whole store. Approve as verify-only, or raise one audit per warehouse."
+        log.error("status change failed", { countId: id, newStatus, message: error });
+        setActionError(error);
       } else if (newStatus === "COMPLETED" && summary) {
         // Screenshottable receipt for the WhatsApp group to verify/approve.
         setReceipt({
@@ -295,28 +453,75 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
   const handleRefreshSystemQty = async () => {
     setRefreshing(true);
     try {
-      await fetch(`/api/stock-counts/${id}/items`, { method: "PATCH" });
-      setStaleCount(0);
-      fetchItems();
+      const { error } = await apiTry(`/api/stock-counts/${id}/items`, { method: "PATCH", timeoutMs: 30_000 });
+      if (error) {
+        log.error("refresh failed", { countId: id, message: error });
+        setActionError(error);
+      } else {
+        setStaleCount(0);
+        fetchItems();
+      }
     } catch (e) { setActionError(e instanceof Error ? e.message : "Refresh failed"); }
     finally { setRefreshing(false); }
   };
 
   const handleDelete = async () => {
     setDeleting(true);
-    try {
-      const res = await fetch(`/api/stock-counts/${id}`, { method: "DELETE" });
-      const data = await res.json();
-      if (data.success) router.push("/stock-audit");
-      else setActionError(data.error || "Failed to delete");
-    } catch { setActionError("Failed to delete"); }
-    finally { setDeleting(false); }
+    setActionError("");
+    const { error } = await apiTry(`/api/stock-counts/${id}`, { method: "DELETE" });
+    if (error) {
+      log.error("delete failed", { countId: id, message: error });
+      setActionError(error);
+      setDeleting(false);
+      return;
+    }
+    router.push("/stock-audit");
   };
 
   const handleReject = () => {
     handleStatusChange("REJECTED", { rejectionReason: rejectReason });
     setShowRejectModal(false);
     setRejectReason("");
+  };
+
+  // "Record 0 for all uncounted" (R4). Typed-but-unsaved counts are flushed FIRST: the
+  // server zeroes whatever is still null, and a number sitting in local state two seconds
+  // short of auto-save would otherwise be zeroed under the counter's fingers.
+  const openZeroSheet = async () => {
+    setActionError("");
+    if (dirtyRef.current.size > 0) {
+      await handleManualSave();
+      // A failed save leaves dirtyRef populated and the error line already says why.
+      if (dirtyRef.current.size > 0) return;
+    } else {
+      // Nothing to flush, but the number the sheet shows is the one the server must match —
+      // reload it rather than trust a count that may be minutes old.
+      await fetchItems();
+    }
+    setShowZeroSheet(true);
+  };
+
+  const handleZeroUncounted = async () => {
+    setZeroing(true);
+    setActionError("");
+    const expected = tabCounts.uncounted;
+    const { data, error, status } = await apiTry<{ zeroed: number }>(`/api/stock-counts/${id}/zero-uncounted`, {
+      method: "POST",
+      json: { expected },
+      timeoutMs: 60_000,
+    });
+    if (error) {
+      // The API's sentence, verbatim — a 409 says the list changed and names both counts.
+      log.error("zero uncounted failed", { countId: id, expected, status, message: error });
+      setActionError(error);
+    } else {
+      log.info("uncounted zeroed", { countId: id, zeroed: data?.zeroed ?? 0 });
+      setShowZeroSheet(false);
+    }
+    // Either way the counts on screen may be stale now — reload both.
+    fetchSummary();
+    fetchItems();
+    setZeroing(false);
   };
 
   const setCount = (itemId: string, value: number | null) => {
@@ -326,14 +531,20 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
     }
   };
 
-  const increment = (itemId: string) => {
-    const current = counts[itemId] ?? 0;
-    setCount(itemId, current + 1);
+  // The split a line shows. A line counted before the split existed (total only) shows its
+  // total as Unassembled — the condition every inward starts in — until the counter corrects it.
+  const splitOf = (item: StockCountItemData): Split => {
+    if (splits[item.id]) return splits[item.id];
+    if (item.assembledQty !== null && item.unassembledQty !== null) {
+      return { assembled: item.assembledQty, unassembled: item.unassembledQty };
+    }
+    const total = counts[item.id] ?? item.countedQty;
+    return { assembled: 0, unassembled: total ?? 0 };
   };
 
-  const decrement = (itemId: string) => {
-    const current = counts[itemId] ?? 0;
-    if (current > 0) setCount(itemId, current - 1);
+  const setSplit = (itemId: string, next: Split) => {
+    setSplits((prev) => ({ ...prev, [itemId]: next }));
+    setCount(itemId, next.assembled + next.unassembled);
   };
 
 
@@ -352,6 +563,13 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
 
   const progress = summary.totalItems > 0 ? Math.round((summary.countedItems / summary.totalItems) * 100) : 0;
   const remaining = summary.totalItems - summary.countedItems;
+
+  // Counting is the assignee's job. Approving is a grant, not a different person (R23).
+  const isAssignee = summary.assignedToId === currentUserId;
+  // `!isAssignee` dropped (plan 1709, R23, Q15): anyone whose role holds `approve` may approve,
+  // including their own audit. The API dropped the same block, and every approval is recorded as
+  // an ApprovalEvent naming who signed it off.
+  const showApproveActions = summary.status === "COMPLETED" && canApprove;
 
   return (
     <div>
@@ -372,27 +590,38 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
           <p className="text-xs text-slate-500 tabular-nums truncate">
             {summary.countNo && <span className="font-mono text-slate-400">{summary.countNo} | </span>}
             {summary.assignedTo.name} | Due: {new Date(summary.dueDate).toLocaleDateString("en-IN")}
-            {summary.bin && ` | ${summary.bin.name} (${summary.bin.location})`}
+            {/* WHERE to count. An assigned audit used to say only who and when. */}
+            {summary.scopeLabel && ` | ${summary.scopeLabel}`}
+            {summary.bin && ` | Bin ${summary.bin.code} (${summary.bin.name})${summary.bin.floor ? ` Fl ${summary.bin.floor}` : ""}${summary.bin.zone ? ` Zone ${summary.bin.zone}` : ""}`}
           </p>
+          {summary.bin?.directions && (
+            <p className="text-[11px] text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-0.5 mt-1 inline-block">
+              📍 Landmark & Directions: {summary.bin.directions}
+            </p>
+          )}
         </div>
         <Badge variant={STATUS_STYLE[summary.status] as "warning" | "info" | "success" | "danger"}>
           {summary.status === "IN_PROGRESS" ? "In Progress" : summary.status.charAt(0) + summary.status.slice(1).toLowerCase()}
         </Badge>
-        <button onClick={() => setShowDeleteConfirm(true)} disabled={deleting} aria-label="Delete stock count"
-          className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg disabled:opacity-50 focus-ring">
-          <Trash2 className="h-4 w-4" />
-        </button>
+        {/* This had NO permission gate: anyone who could open an audit could delete it. */}
+        {canDeleteAudit && (
+          <button onClick={() => setShowDeleteConfirm(true)} disabled={deleting} aria-label="Delete stock count"
+            className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg disabled:opacity-50 focus-ring">
+            <Trash2 className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
-      {/* Baseline / Verification Banner */}
+      {/* What counting does — nothing, until the approver decides. */}
       {summary.status === "IN_PROGRESS" && (
-        <Card className={`mb-3 ${isBaseline ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-slate-50"}`}>
+        <Card className="mb-3 border-slate-200 bg-slate-50">
           <CardContent className="p-2.5 flex items-center gap-2">
-            <Info className={`h-4 w-4 shrink-0 ${isBaseline ? "text-blue-600" : "text-slate-500"}`} />
-            <p className={`text-xs ${isBaseline ? "text-blue-800" : "text-slate-600"}`}>
-              {isBaseline
-                ? "Baseline Count — only count items you physically find. Uncounted items will be set to 0."
-                : "Audit Count — only variances will create stock adjustments"}
+            <Info className="h-4 w-4 shrink-0 text-slate-500" />
+            <p className="text-xs text-slate-600">
+              Audit count — stock does not change until the approver applies the counts.
+              {nonAssemblableBin
+                ? " This is a non-assemblable bin: just count each item."
+                : " Count each item as Assembled or Unassembled."}
             </p>
           </CardContent>
         </Card>
@@ -476,7 +705,7 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       )}
 
       {/* Action Buttons */}
-      {(summary.status === "COMPLETED" || summary.status === "APPROVED") && (
+      {(summary.status === "COMPLETED" || summary.status === "APPROVED") && !showApproveActions && (
         <Link href={`/stock-audit/${id}/review`}>
           <button className="w-full flex items-center justify-center gap-2 bg-slate-900 text-white min-h-[48px] rounded-lg text-sm font-medium mb-3 focus-ring">
             <Table className="h-4 w-4" /> Review Table View
@@ -484,39 +713,34 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         </Link>
       )}
 
-      {summary.status === "COMPLETED" && canApprove && (
+      {/* APPROVAL LIVES ON THE REVIEW TABLE (plan Q12). The two approve buttons that sat here
+          — "verify only" and "correct stock levels" — fired on a tap with no preview of what
+          they would do. The review table lists every difference, offers the choice, and
+          confirms it. This screen points there and keeps Reject, which needs no preview. */}
+      {showApproveActions && (
         <div className="mb-3 space-y-2">
-          <div className="flex gap-2">
-            <button onClick={() => handleStatusChange("APPROVED")} disabled={actionLoading}
-              className="flex-1 flex items-center justify-center gap-2 bg-green-600 text-white min-h-[48px] rounded-lg text-sm font-medium disabled:opacity-50 focus-ring">
-              <ShieldCheck className="h-4 w-4" /> {actionLoading ? "..." : "Approve (verify only)"}
-            </button>
-            <button onClick={() => setShowRejectModal(true)}
-              className="flex-1 flex items-center justify-center gap-2 bg-red-600 text-white min-h-[48px] rounded-lg text-sm font-medium focus-ring">
-              <XCircle className="h-4 w-4" /> Reject
-            </button>
-          </div>
-          {isAdmin && (
-            <button onClick={() => handleStatusChange("APPROVED", { applyToStock: true })} disabled={actionLoading}
-              className="w-full flex items-center justify-center gap-2 border border-amber-300 bg-amber-50 text-amber-800 min-h-[48px] rounded-lg text-sm font-medium disabled:opacity-50 focus-ring">
-              <ShieldCheck className="h-4 w-4" /> Approve &amp; correct stock levels
-            </button>
-          )}
+          <Link href={`/stock-audit/${id}/review`}
+            className="w-full flex items-center justify-center gap-2 bg-green-600 text-white min-h-[48px] rounded-lg text-sm font-medium focus-ring">
+            <ShieldCheck className="h-4 w-4" /> Review differences &amp; approve →
+          </Link>
+          <button onClick={() => setShowRejectModal(true)} disabled={actionLoading}
+            className="w-full flex items-center justify-center gap-2 bg-red-600 text-white min-h-[48px] rounded-lg text-sm font-medium disabled:opacity-50 focus-ring">
+            <XCircle className="h-4 w-4" /> Reject
+          </button>
           <p className="text-[11px] text-slate-500">
-            <span className="font-medium">Verify only</span> records the count without changing stock (Inwards adds stock).
-            {isAdmin ? " Correct stock levels overwrites each item's stock at this location with the counted quantity — admin only." : ""}
+            The review table lists every difference between counted and system stock, and is where you choose whether the counts become system stock or are only recorded.
           </p>
         </div>
       )}
 
-      {summary.status === "REJECTED" && !isAdmin && (
+      {summary.status === "REJECTED" && isAssignee && (
         <button onClick={() => handleStatusChange("IN_PROGRESS")} disabled={actionLoading}
           className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white min-h-[48px] rounded-lg text-sm font-medium mb-3 disabled:opacity-50 focus-ring">
           <Play className="h-4 w-4" /> {actionLoading ? "Starting..." : "Re-start Counting"}
         </button>
       )}
 
-      {summary.status === "PENDING" && !isAdmin && (
+      {summary.status === "PENDING" && isAssignee && (
         <button onClick={() => handleStatusChange("IN_PROGRESS")} disabled={actionLoading}
           className="w-full flex items-center justify-center gap-2 bg-blue-600 text-white min-h-[48px] rounded-lg text-sm font-medium mb-3 disabled:opacity-50 focus-ring">
           <Play className="h-4 w-4" /> {actionLoading ? "Starting..." : "Start Counting"}
@@ -532,12 +756,18 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
           </button>
           <button onClick={async () => {
             if (dirtyRef.current.size > 0) await handleManualSave();
+            // INLINE, not `confirm()`. The browser dialog is unstyled, unreadable on a phone,
+            // and it was asking the counter to accept a silent outcome on rows they simply
+            // had not reached. Naming the count and pointing at the two ways to record a zero
+            // turns it into something they can act on instead of a yes/no they will always
+            // answer yes to.
             if (remaining > 0) {
-              const msg = isBaseline
-                ? `You've counted ${summary.countedItems} item(s). The remaining ${remaining} uncounted item(s) will be set to 0 stock. Continue?`
-                : `${remaining} item(s) haven't been counted yet. Their stock will remain unchanged. Complete anyway?`;
-              if (!confirm(msg)) return;
+              setActionError(
+                `${remaining} item${remaining === 1 ? "" : "s"} still uncounted. Tap "0 ✓" on any shelf that is genuinely empty, or "Record 0 for all uncounted" on the Uncounted tab, then Complete.`
+              );
+              return;
             }
+            setActionError("");
             handleStatusChange("COMPLETED");
           }} disabled={actionLoading || saving}
             className="flex-1 flex items-center justify-center gap-2 bg-green-600 text-white min-h-[48px] rounded-lg text-sm font-medium disabled:opacity-50 focus-ring">
@@ -554,7 +784,11 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
       )}
 
       {/* Tabs, Search, Items — only show after counting starts */}
-      {summary.status !== "PENDING" && (<>
+      {/* Tabs, Search, Items.
+          NO LONGER hidden while PENDING. The list used to be wrapped in `status !== "PENDING"`,
+          so an assigned audit opened on a title, a due date and nothing else — the screen the
+          owner described as doing nothing when clicked. The rows render read-only until Start
+          is pressed; seeing WHAT you are about to count is the point of opening it. */}
       <div className="flex bg-slate-100 rounded-lg p-0.5 mb-2">
         {(["uncounted", "counted", "all"] as const).map((t) => {
           const count = t === "uncounted" ? tabCounts.uncounted : t === "counted" ? tabCounts.counted : tabCounts.total;
@@ -568,6 +802,17 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
           );
         })}
       </div>
+
+      {/* RECORD 0 FOR ALL UNCOUNTED (R4). One tap for the shelves the counter walked past
+          empty, instead of a `0 ✓` per row. Whole audit, server-side — the list here is capped
+          at 500 and a search hides rows, so an on-screen version would silently miss lines.
+          Hidden while a search is active so it never reads as "zero the rows I am looking at". */}
+      {tab === "uncounted" && !debouncedSearch && isAssignee && summary.status === "IN_PROGRESS" && tabCounts.uncounted > 0 && (
+        <button onClick={() => void openZeroSheet()} disabled={zeroing || saving || actionLoading}
+          className="w-full flex items-center justify-center gap-2 border border-slate-300 bg-white text-slate-700 min-h-[44px] rounded-lg text-sm font-medium mb-2 disabled:opacity-50 focus-ring tabular-nums">
+          <CheckCircle2 className="h-4 w-4" /> Record 0 for all {tabCounts.uncounted} uncounted
+        </button>
+      )}
 
       {/* Search + Quick Mode Toggle */}
       <div className="flex gap-2 mb-2">
@@ -622,44 +867,51 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
             const isCounted = displayVal !== null && displayVal !== undefined;
 
             if (quickMode && summary.status === "IN_PROGRESS") {
-              // Quick Count Mode — compact row with +/- buttons
+              // Quick Count Mode — compact row: the two halves of the count, stacked.
+              const qSplit = splitOf(item);
               return (
                 <div key={item.id} ref={(el) => { itemRefs.current[item.id] = el; }}
-                  className={`flex items-center gap-2 p-2 rounded-lg border ${isCounted ? "border-green-200 bg-green-50/50" : "border-slate-200"}`}>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-slate-900 truncate">{item.product.name}</p>
-                    <p className="text-[11px] text-slate-400 tabular-nums">{item.product.sku} {item.product.brand ? `| ${item.product.brand.name}` : ""}</p>
+                  className={`p-2 rounded-lg border ${isCounted ? "border-green-200 bg-green-50/50" : "border-slate-200"}`}>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-slate-900 truncate">{item.product.name}</p>
+                      <p className="text-[11px] text-slate-400 tabular-nums">{item.product.sku} {item.product.brand ? `| ${item.product.brand.name}` : ""}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-[11px] text-slate-400">Sys</p>
+                      <p className="text-xs font-semibold text-slate-600 tabular-nums">{item.systemQty}</p>
+                    </div>
+                    {variance !== null && (
+                      <p className={`text-xs font-bold shrink-0 min-w-[30px] text-right tabular-nums ${variance === 0 ? "text-green-600" : "text-red-600"}`}>
+                        {variance > 0 ? "+" : ""}{variance}
+                      </p>
+                    )}
                   </div>
-                  <div className="text-right shrink-0 mr-1">
-                    <p className="text-[11px] text-slate-400">Sys</p>
-                    <p className="text-xs font-semibold text-slate-600 tabular-nums">{item.systemQty}</p>
+                  <div className="space-y-1">
+                    {nonAssemblableBin ? (
+                      // R32: a non-assemblable bin has no condition to record — one number.
+                      <SplitStepper compact label="Count" value={displayVal ?? 0}
+                        onChange={(n) => setCount(item.id, n)} />
+                    ) : (
+                      <>
+                        <SplitStepper compact label="Assembled" value={qSplit.assembled}
+                          onChange={(n) => setSplit(item.id, { ...qSplit, assembled: n })} />
+                        <SplitStepper compact label="Unassembled" value={qSplit.unassembled}
+                          onChange={(n) => setSplit(item.id, { ...qSplit, unassembled: n })} />
+                      </>
+                    )}
+                    {/* EXPLICIT ZERO: "I looked and there are none" — both halves 0, and the
+                        line counts as counted. The steppers alone cannot say it. */}
+                    {!isCounted && (
+                      <button
+                        onClick={() => nonAssemblableBin ? setCount(item.id, 0) : setSplit(item.id, { assembled: 0, unassembled: 0 })}
+                        title="Record zero — none found"
+                        className="w-full h-9 flex items-center justify-center rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-600 active:bg-slate-100"
+                      >
+                        0 ✓ None found
+                      </button>
+                    )}
                   </div>
-                  <div className="flex items-center gap-0 shrink-0">
-                    <button onClick={() => decrement(item.id)}
-                      className="h-9 w-9 flex items-center justify-center bg-slate-100 rounded-l-lg border border-slate-200 active:bg-slate-200">
-                      <Minus className="h-4 w-4 text-slate-600" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        const input = prompt("Enter count:", String(displayVal ?? 0));
-                        if (input !== null) {
-                          const n = parseInt(input, 10);
-                          if (!isNaN(n) && n >= 0) setCount(item.id, n);
-                        }
-                      }}
-                      className="h-9 min-w-[44px] flex items-center justify-center bg-white border-y border-slate-200 text-sm font-bold text-slate-900 tabular-nums">
-                      {displayVal ?? 0}
-                    </button>
-                    <button onClick={() => increment(item.id)}
-                      className="h-9 w-9 flex items-center justify-center bg-blue-50 rounded-r-lg border border-blue-200 active:bg-blue-100">
-                      <Plus className="h-4 w-4 text-blue-600" />
-                    </button>
-                  </div>
-                  {variance !== null && (
-                    <p className={`text-xs font-bold shrink-0 min-w-[30px] text-right tabular-nums ${variance === 0 ? "text-green-600" : "text-red-600"}`}>
-                      {variance > 0 ? "+" : ""}{variance}
-                    </p>
-                  )}
                 </div>
               );
             }
@@ -687,78 +939,60 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
 
                   {summary.status === "IN_PROGRESS" ? (
                     <div className="space-y-2 mt-2">
-                      {/* Plus/Minus Counter */}
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center flex-1">
-                          <button onClick={() => decrement(item.id)}
-                            className="h-10 w-12 flex items-center justify-center bg-slate-100 rounded-l-lg border border-slate-200 active:bg-slate-200">
-                            <Minus className="h-5 w-5 text-slate-600" />
-                          </button>
-                          <button
-                            onClick={() => {
-                              const input = prompt("Enter count:", String(displayVal ?? 0));
-                              if (input !== null) {
-                                const n = parseInt(input, 10);
-                                if (!isNaN(n) && n >= 0) setCount(item.id, n);
-                              }
-                            }}
-                            className="h-10 flex-1 flex items-center justify-center bg-white border-y border-slate-200 text-lg font-bold text-slate-900 min-w-[60px] tabular-nums">
-                            {displayVal ?? 0}
-                          </button>
-                          <button onClick={() => increment(item.id)}
-                            className="h-10 w-12 flex items-center justify-center bg-blue-50 rounded-r-lg border border-blue-200 active:bg-blue-100">
-                            <Plus className="h-5 w-5 text-blue-600" />
-                          </button>
-                        </div>
-                        {variance !== null && (
-                          <div className={`text-right shrink-0 min-w-[50px] ${variance === 0 ? "text-green-600" : "text-red-600"}`}>
-                            <p className="text-xs">Var</p>
-                            <p className="text-sm font-bold tabular-nums">{variance > 0 ? "+" : ""}{variance}</p>
+                      {/* The count, in two halves (plan 1709, R11, Q42): what is built and what
+                          is still boxed. The total — what "System" and the variance compare
+                          against — is their sum. */}
+                      {(() => {
+                        const cSplit = splitOf(item);
+                        return (
+                          <div className="space-y-1.5">
+                            {nonAssemblableBin ? (
+                              // R32: a non-assemblable bin — no Assembled / Unassembled, just
+                              // the count. Its items are non-assembly because the bin is.
+                              <SplitStepper label="Count" value={displayVal ?? 0}
+                                onChange={(n) => setCount(item.id, n)} />
+                            ) : (
+                              <>
+                                <SplitStepper label="Assembled" value={cSplit.assembled}
+                                  onChange={(n) => setSplit(item.id, { ...cSplit, assembled: n })} />
+                                <SplitStepper label="Unassembled" value={cSplit.unassembled}
+                                  onChange={(n) => setSplit(item.id, { ...cSplit, unassembled: n })} />
+                              </>
+                            )}
+                            <div className="flex items-center gap-2">
+                              {/* EXPLICIT ZERO. Complete needs every line counted, and "counted"
+                                  means countedQty is not null — the steppers cannot say "I looked
+                                  and there are none". */}
+                              {!isCounted ? (
+                                <button
+                                  onClick={() => nonAssemblableBin ? setCount(item.id, 0) : setSplit(item.id, { assembled: 0, unassembled: 0 })}
+                                  title="Record zero — none found"
+                                  className="h-10 flex-1 flex items-center justify-center rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-600 active:bg-slate-100"
+                                >
+                                  0 ✓ None found
+                                </button>
+                              ) : (
+                                <p className="flex-1 text-xs text-slate-600 tabular-nums">
+                                  Total <span className="font-semibold text-slate-900">{displayVal}</span>
+                                </p>
+                              )}
+                              {variance !== null && (
+                                <div className={`text-right shrink-0 min-w-[50px] ${variance === 0 ? "text-green-600" : "text-red-600"}`}>
+                                  <p className="text-xs">Var</p>
+                                  <p className="text-sm font-bold tabular-nums">{variance > 0 ? "+" : ""}{variance}</p>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        )}
-                      </div>
-                      <div className="mt-1">
-                        <label className="text-[11px] text-slate-500 mb-0.5 block">
-                          Brand {item.product.brand ? `(current: ${item.product.brand.name})` : ""}
-                        </label>
-                        <select
-                          value={brands[item.id] ?? item.suggestedBrand ?? ""}
-                          onChange={async (e) => {
-                            if (e.target.value === "__custom__") {
-                              const custom = prompt("Enter new brand name:");
-                              if (custom && custom.trim()) {
-                                const brandName = custom.trim();
-                                // Create brand in DB
-                                try {
-                                  await fetch("/api/brands", {
-                                    method: "POST",
-                                    headers: { "Content-Type": "application/json" },
-                                    body: JSON.stringify({ name: brandName }),
-                                  });
-                                } catch { /* ignore — will still work locally */ }
-                                // Add to dropdown if not already there
-                                setBrandList((prev) =>
-                                  prev.includes(brandName) ? prev : [...prev, brandName].sort()
-                                );
-                                setBrands((prev) => ({ ...prev, [item.id]: brandName }));
-                                dirtyRef.current.add(item.id);
-                              }
-                            } else {
-                              setBrands((prev) => ({ ...prev, [item.id]: e.target.value }));
-                              if (e.target.value) dirtyRef.current.add(item.id);
-                            }
-                          }}
-                          className="w-full rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
-                        >
-                          <option value="">— Keep current —</option>
-                          {brandList.map((b) => <option key={b} value={b}>{b}</option>)}
-                          <option value="__custom__">+ Add new brand...</option>
-                        </select>
-                      </div>
+                        );
+                      })()}
                     </div>
                   ) : item.countedQty !== null ? (
                     <div className="flex items-center gap-2 mt-2 text-xs tabular-nums">
                       <span className="text-slate-700">Counted <span className="font-semibold">{item.countedQty}</span></span>
+                      {!nonAssemblableBin && item.assembledQty !== null && item.unassembledQty !== null && (
+                        <span className="text-slate-500">({item.assembledQty} assembled · {item.unassembledQty} unassembled)</span>
+                      )}
                       {item.variance === 0 ? (
                         <span className="text-green-600">· matches</span>
                       ) : item.variance !== null ? (
@@ -776,7 +1010,11 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
 
           {items.length === 0 && !loadingItems && (
             <p className="text-sm text-slate-400 text-center py-8">
-              {search ? "No items match — try a different spelling" : tab === "counted" ? "No items counted yet — tap + on items you find" : tab === "uncounted" ? "All items have been counted!" : "No items in this count"}
+              {search
+                ? "No items match — try a different spelling"
+                : tabCounts.total === 0 && summary.bin
+                  ? `Nothing is recorded in bin ${summary.bin.code} yet. Add what you find below.`
+                  : tab === "counted" ? "No items counted yet — tap + on items you find" : tab === "uncounted" ? "All items have been counted!" : "No items in this count"}
             </p>
           )}
 
@@ -788,7 +1026,93 @@ export default function StockAuditDetailPage({ params }: { params: Promise<{ id:
         </div>
       )}
 
-      </>)}
+      {/* ADD A PRODUCT (plan 2109, Q26). A bin audit lists only what the bin is recorded to
+          hold — nothing, for an empty bin — so anything found that is not listed is searched
+          and added here. It starts at what the bin holds of it (0 when new to the bin). */}
+      {summary.status === "IN_PROGRESS" && isAssignee && summary.bin && (
+        <Card className="mt-4">
+          <CardContent className="p-3">
+            <p className="text-xs font-semibold text-slate-800 mb-0.5">Found something not in this list?</p>
+            <p className="text-[11px] text-slate-500 mb-2">
+              Search any product and add it to this count of bin {summary.bin.code}.
+            </p>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <Input
+                placeholder="Search name or SKU to add..."
+                value={addQuery}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setAddQuery(v);
+                  if (v.trim().length < 2) {
+                    setAddHits([]);
+                    setAddSearching(false);
+                  } else {
+                    setAddSearching(true);
+                  }
+                }}
+                className="pl-9"
+              />
+            </div>
+            {addSearching && <p className="text-[11px] text-slate-400 mt-2">Searching…</p>}
+            {!addSearching && addQuery.trim().length >= 2 && addHits.length === 0 && (
+              <p className="text-[11px] text-slate-400 mt-2">No product matches &quot;{addQuery}&quot;.</p>
+            )}
+            {addHits.length > 0 && (
+              <div className="mt-2 space-y-1.5 max-h-60 overflow-y-auto">
+                {addHits.map((hit) => (
+                  <button
+                    key={hit.id}
+                    onClick={() => void handleAddProduct(hit)}
+                    disabled={adding !== null}
+                    className="w-full min-h-[44px] text-left p-2.5 border border-slate-200 rounded-lg bg-white hover:border-blue-400 active:bg-blue-50 disabled:opacity-50 focus-ring"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-medium text-slate-900 truncate">{hit.name}</p>
+                        <p className="text-[11px] text-slate-400 truncate">
+                          {hit.sku} · {hit.brand?.name || "No brand"} · {hit.category?.name || "No category"}
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-[11px] font-medium text-blue-600">
+                        {adding === hit.id ? "Adding…" : "+ Add"}
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+
+
+      {/* Record-zero Bottom Sheet (R4) */}
+      {showZeroSheet && (
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40" onClick={() => { if (!zeroing) setShowZeroSheet(false); }}>
+          <div className="w-full max-w-lg bg-white rounded-t-2xl p-4 pb-8 safe-bottom" onClick={(e) => e.stopPropagation()}>
+            <div className="w-10 h-1 bg-slate-300 rounded-full mx-auto mb-4" />
+            <h3 className="text-base font-bold text-slate-900 mb-2">Record 0 for all uncounted?</h3>
+            <p className="text-sm text-slate-700 mb-2 tabular-nums">
+              <span className="font-semibold">{tabCounts.uncounted}</span> item{tabCounts.uncounted === 1 ? "" : "s"} you have not counted will be recorded as <span className="font-semibold">0 — none found</span>.
+            </p>
+            <p className="text-xs text-slate-500 mb-4">
+              You can still change any line afterwards. Complete will then be allowed. This is recorded in the activity log under your name.
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => setShowZeroSheet(false)} disabled={zeroing}
+                className="flex-1 min-h-[44px] rounded-lg text-sm font-medium bg-slate-100 text-slate-700 disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={() => void handleZeroUncounted()} disabled={zeroing}
+                className="flex-1 min-h-[44px] rounded-lg text-sm font-medium bg-slate-900 text-white disabled:opacity-50 tabular-nums">
+                {zeroing ? "Recording..." : `Record 0 for ${tabCounts.uncounted}`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Rejection Bottom Sheet Modal */}
       {showRejectModal && (

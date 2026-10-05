@@ -1,0 +1,298 @@
+// AWS S3 provider.
+//
+// This is a direct descendant of the old src/lib/r2.ts: R2 was already S3-compatible, so
+// aws4fetch and SigV4 signing carry over unchanged. Only two things actually differ from
+// the R2 version — the endpoint host, and a real region instead of "auto".
+//
+// Server-side only. Keys must never reach the browser; the browser uploads via short-lived
+// presigned PUT URLs issued by /api/media/presign.
+import { createHash } from "node:crypto";
+import { AwsClient } from "aws4fetch";
+import { createLogger } from "@/lib/logger";
+import {
+  IMMUTABLE_CACHE_CONTROL,
+  type StorageProvider,
+  type StorageSettings,
+} from "./types";
+
+const log = createLogger("storage:s3");
+
+export class S3Provider implements StorageProvider {
+  readonly key = "S3" as const;
+
+  private client: AwsClient;
+  private bucket: string;
+  private region: string;
+  private base: string;
+
+  constructor(private settings: StorageSettings) {
+    const { bucket, region, accessKeyId, secretAccessKey } = settings;
+    if (!bucket || !region || !accessKeyId || !secretAccessKey) {
+      throw new Error("S3 storage is missing bucket, region, accessKeyId or secretAccessKey");
+    }
+    this.bucket = bucket;
+    this.region = region;
+    this.client = new AwsClient({ accessKeyId, secretAccessKey, service: "s3", region });
+    // publicBaseUrl is what gets STORED in the database with every file, so prefer it: it
+    // lets CloudFront (or any custom domain) be put in front later without rewriting a
+    // single row. Falling back to the bucket endpoint keeps things working before then.
+    this.base = (settings.publicBaseUrl || this.bucketEndpoint()).replace(/\/+$/, "");
+  }
+
+  private bucketEndpoint(): string {
+    return `https://${this.bucket}.s3.${this.region}.amazonaws.com`;
+  }
+
+  /** The signing target. Always the real bucket endpoint, never the CDN alias. */
+  private objectUrl(key: string): string {
+    return `${this.bucketEndpoint()}/${encodeKey(key)}`;
+  }
+
+  publicUrl(key: string): string {
+    return `${this.base}/${encodeKey(key)}`;
+  }
+
+  keyFromUrl(url: string): string | null {
+    if (!url) return null;
+    // Accept either the CDN alias or the raw bucket endpoint — a file stored before a
+    // custom domain was configured still has to be deletable afterwards.
+    for (const prefix of [this.base, this.bucketEndpoint()]) {
+      const p = prefix.replace(/\/+$/, "") + "/";
+      if (url.startsWith(p)) {
+        const raw = url.slice(p.length).split("?")[0];
+        return raw ? decodeKey(raw) : null;
+      }
+    }
+    return null;
+  }
+
+  async presignPut(key: string, _contentType: string, expiresSeconds = 600): Promise<string> {
+    const url = new URL(this.objectUrl(key));
+    url.searchParams.set("X-Amz-Expires", String(expiresSeconds));
+    const signed = await this.client.sign(new Request(url.toString(), { method: "PUT" }), {
+      aws: { signQuery: true },
+    });
+    log.debug("presigned PUT issued", { key, expiresSeconds });
+    return signed.url;
+  }
+
+  async put(key: string, body: ArrayBuffer | Buffer | Blob, contentType: string): Promise<string> {
+    // S3 REQUIRES Content-Length on a PUT and refuses Transfer-Encoding: chunked with
+    //
+    //   501 NotImplemented — "A header you provided implies functionality that is not
+    //   implemented"   <Header>Transfer-Encoding</Header>
+    //
+    // Chunked is what undici falls back to when it cannot determine the body's length. The
+    // caller always passes something whose length IS known, so the length is lost in
+    // between: aws4fetch re-wraps the body in a `new Request()` to compute the SigV4 payload
+    // hash, and a known-length body does not survive that rebuild.
+    //
+    // Normalising to a Uint8Array and stating the length explicitly is what keeps it a sized
+    // body. Do not "simplify" this back to passing `body` straight through.
+    const bytes = await toBytes(body);
+
+    log.debug("-> PUT object", { key, contentType, bytes: bytes.byteLength });
+    const res = await this.client.fetch(this.objectUrl(key), {
+      method: "PUT",
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": IMMUTABLE_CACHE_CONTROL,
+        "Content-Length": String(bytes.byteLength),
+      },
+      body: bytes,
+    });
+    if (!res.ok) {
+      const detail = (await res.text()).slice(0, 200);
+      log.error("S3 upload failed", { key, status: res.status });
+      throw new Error(`S3 upload failed (${res.status}): ${detail}`);
+    }
+    return this.publicUrl(key);
+  }
+
+  async exists(key: string): Promise<boolean> {
+    const res = await this.client.fetch(this.objectUrl(key), { method: "HEAD" });
+    return res.ok;
+  }
+
+  async delete(key: string): Promise<void> {
+    const res = await this.client.fetch(this.objectUrl(key), { method: "DELETE" });
+    // S3 answers 204 whether or not the object was there. A 404 is equally fine: a caller
+    // retrying a delete must not see a failure.
+    if (!res.ok && res.status !== 404) {
+      const detail = (await res.text()).slice(0, 200);
+      log.error("S3 delete failed", { key, status: res.status });
+      throw new Error(`S3 delete failed (${res.status}): ${detail}`);
+    }
+  }
+
+  async read(key: string): Promise<ArrayBuffer | null> {
+    log.debug("-> GET object", { key });
+    try {
+      const res = await this.client.fetch(this.objectUrl(key), { method: "GET" });
+      if (res.status === 404) {
+        log.debug("object not found", { key });
+        return null;
+      }
+      if (!res.ok) {
+        log.warn("S3 read failed", { key, status: res.status });
+        return null;
+      }
+      const buf = await res.arrayBuffer();
+      log.debug("<- GET object", { key, bytes: buf.byteLength });
+      return buf;
+    } catch (e) {
+      log.warn("S3 read error", { key, reason: e instanceof Error ? e.message : String(e) });
+      return null;
+    }
+  }
+
+  /**
+   * The origins the bucket currently allows, or null when that cannot be determined.
+   *
+   * `null` and `[]` are different answers and callers must not conflate them: `[]` means
+   * S3 answered and the bucket allows nothing (404 NoSuchCORSConfiguration — the state a
+   * fresh bucket is in), while `null` means we were not allowed to look (no
+   * s3:GetBucketCors) and know nothing either way. Reporting "no CORS configured" for the
+   * second case would send someone to fix a bucket that may be perfectly fine.
+   *
+   * Origins are parsed with a regex rather than an XML parser on purpose: the response is
+   * a fixed, machine-generated shape from S3, and this file has no XML dependency.
+   */
+  async readCorsOrigins(): Promise<string[] | null> {
+    const res = await this.client.fetch(`${this.bucketEndpoint()}/?cors`, { method: "GET" });
+
+    if (res.status === 404) {
+      log.debug("bucket has no CORS configuration", { bucket: this.bucket });
+      return [];
+    }
+    if (!res.ok) {
+      log.warn("could not read the bucket CORS policy", { bucket: this.bucket, status: res.status });
+      return null;
+    }
+
+    const xml = await res.text();
+    const origins = [...xml.matchAll(/<AllowedOrigin>([^<]*)<\/AllowedOrigin>/g)].map((m) => m[1]);
+    log.debug("bucket CORS read", { bucket: this.bucket, origins: origins.length });
+    return origins;
+  }
+
+  /**
+   * Allow `origins` to upload to this bucket from a browser.
+   *
+   * Without a matching rule every presigned PUT dies at the preflight, and the browser
+   * reports it as an opaque network error rather than anything that names CORS — which is
+   * exactly why this is offered as a button instead of a documentation step.
+   *
+   * **Merges rather than replaces.** The first version wrote one rule with one origin, so
+   * applying it from localhost silently revoked production's access, and applying it from
+   * production revoked localhost's. Whoever clicked last won and the other environment
+   * started failing with the same unreadable network error. The union of what the bucket
+   * already allows and what is passed in is written back as a single rule; that rule's
+   * methods and headers are a superset of what a browser upload needs.
+   *
+   * Needs s3:PutBucketCors (and s3:GetBucketCors to merge; without it the existing origins
+   * cannot be read and only `origins` survives). If PutBucketCors is absent this throws,
+   * and the UI falls back to showing the policy for the user to paste into the console.
+   *
+   * @returns every origin the bucket allows after the write.
+   */
+  async applyCors(origins: string[]): Promise<string[]> {
+    const existing = (await this.readCorsOrigins()) ?? [];
+    const merged = [...new Set([...existing, ...origins.filter(Boolean)])];
+
+    const xml =
+      `<?xml version="1.0" encoding="UTF-8"?>` +
+      `<CORSConfiguration><CORSRule>` +
+      merged.map((o) => `<AllowedOrigin>${escapeXml(o)}</AllowedOrigin>`).join("") +
+      `<AllowedMethod>GET</AllowedMethod>` +
+      `<AllowedMethod>PUT</AllowedMethod>` +
+      `<AllowedMethod>HEAD</AllowedMethod>` +
+      `<AllowedHeader>*</AllowedHeader>` +
+      `<ExposeHeader>ETag</ExposeHeader>` +
+      `<MaxAgeSeconds>86400</MaxAgeSeconds>` +
+      `</CORSRule></CORSConfiguration>`;
+
+    // Same Content-Length requirement as put() — see the note there. A string body happens
+    // to survive aws4fetch's rebuild more often than a Buffer does, but relying on that is
+    // relying on an implementation detail of a library we do not control.
+    const bytes = new TextEncoder().encode(xml);
+
+    // PutBucketCors REQUIRES an integrity header. Without one S3 answers:
+    //
+    //   400 InvalidRequest — "Missing required header for this request:
+    //                         Content-MD5 OR x-amz-checksum-*"
+    //
+    // This is a bucket-configuration API rule, not a signing one, so SigV4 being correct does
+    // not help — and it applies to a handful of other bucket PUTs (lifecycle, tagging,
+    // DeleteObjects) but NOT to a normal object PUT, which is why put() above needs nothing
+    // like this. It is also why this button had never actually worked: the request was well
+    // formed and correctly signed, and S3 rejected it anyway.
+    //
+    // MD5 here is a transport checksum, not a security claim — S3 defines the header that
+    // way. x-amz-checksum-sha256 is the modern alternative if md5 is ever unavailable (a
+    // FIPS-restricted Node build would reject it).
+    const contentMd5 = createHash("md5").update(bytes).digest("base64");
+
+    // `origins: merged.length`, not the old single `allowedOrigin` — this method now takes a
+    // list and writes the union with what the bucket already allowed, so there is no one
+    // origin to name.
+    log.debug("-> PUT bucket CORS", {
+      bucket: this.bucket,
+      origins: merged.length,
+      bytes: bytes.byteLength,
+    });
+    const res = await this.client.fetch(`${this.bucketEndpoint()}/?cors`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/xml",
+        "Content-Length": String(bytes.byteLength),
+        "Content-MD5": contentMd5,
+      },
+      body: bytes,
+    });
+    if (!res.ok) {
+      const detail = (await res.text()).slice(0, 300);
+      log.error("CORS policy could not be applied", { status: res.status });
+      throw new Error(`Could not apply the CORS policy (${res.status}): ${detail}`);
+    }
+    log.info("bucket CORS policy applied", { bucket: this.bucket, origins: merged.length });
+    return merged;
+  }
+}
+
+/**
+ * Normalise an upload body to a Uint8Array whose byte length is knowable.
+ *
+ * This exists for one reason: S3 rejects `Transfer-Encoding: chunked` with 501
+ * NotImplemented, and undici sends chunked whenever it cannot size the body. A Buffer is
+ * already a Uint8Array, but aws4fetch re-wraps the body in a `Request` to sign it and the
+ * length does not survive — so the size is asserted explicitly by the callers instead.
+ *
+ * A Blob has to be read into memory to be measured. Uploads here are photos and small
+ * documents, so that is acceptable; a genuinely large file would want a multipart upload,
+ * which this provider does not implement.
+ */
+async function toBytes(body: ArrayBuffer | Buffer | Blob): Promise<Uint8Array<ArrayBuffer>> {
+  if (body instanceof Blob) return new Uint8Array(await body.arrayBuffer());
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  // Copies. A Buffer can be a view onto a pooled or shared ArrayBuffer, and a view carrying
+  // `ArrayBufferLike` is not accepted as a `BodyInit`. Copying yields a Uint8Array backed by
+  // a plain ArrayBuffer, and also detaches the upload from Node's shared Buffer pool — worth
+  // it for the photo-sized payloads this handles.
+  return new Uint8Array(body);
+}
+
+/** Encode each path segment but keep the slashes — the key's shape is part of its identity. */
+function encodeKey(key: string): string {
+  return key.split("/").map(encodeURIComponent).join("/");
+}
+
+function decodeKey(key: string): string {
+  return key.split("/").map(decodeURIComponent).join("/");
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/[<>&"']/g, (c) =>
+    ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" })[c] as string
+  );
+}

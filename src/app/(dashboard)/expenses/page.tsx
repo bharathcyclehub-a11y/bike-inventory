@@ -3,16 +3,17 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
-import { Plus, Receipt, Search } from "lucide-react";
+import { Paperclip, Plus, Receipt, Search } from "lucide-react";
 import { type DateRangeKey } from "@/components/date-filter";
 import { FilterSheet } from "@/components/filter-sheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { ErrorBanner } from "@/components/ui/error-banner";
 import { DesktopTable } from "@/components/desktop-table";
 import { usePermissions } from "@/lib/use-permissions";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { apiTry } from "@/lib/api-client";
 
 interface ExpenseItem {
   id: string;
@@ -22,7 +23,27 @@ interface ExpenseItem {
   description: string;
   paidBy: string;
   paymentMode: string;
+  /** The receipt photo, when one was attached at entry. */
+  receiptUrl?: string | null;
   recordedBy: { name: string };
+}
+
+/** A paperclip that opens the receipt photo; nothing when the row has none. */
+function ReceiptLink({ url, className = "" }: { url?: string | null; className?: string }) {
+  if (!url) return null;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      aria-label="View receipt photo"
+      title="View receipt photo"
+      className={`inline-flex items-center justify-center rounded-md text-blue-600 hover:bg-blue-50 ${className}`}
+    >
+      <Paperclip className="h-4 w-4" />
+    </a>
+  );
 }
 
 const CATEGORY_FILTERS = ["ALL", "DELIVERY", "TRANSPORT", "SHOP_MAINTENANCE", "UTILITIES", "SALARY_ADVANCE", "FOOD_TEA", "STATIONERY", "MISCELLANEOUS"];
@@ -43,38 +64,52 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 export default function ExpensesPage() {
-  const { data: session, status: sessionStatus } = useSession();
-  const role = (session?.user as { role?: string })?.role || "";
-  const { canView } = usePermissions(role);
+  const { status: sessionStatus } = useSession();
+  const { canView } = usePermissions();
   const canAccess = canView("expenses");
 
   const [expenses, setExpenses] = useState<ExpenseItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState("ALL");
   const [totalAmount, setTotalAmount] = useState(0);
   const [searchText, setSearchText] = useState("");
   const [dateFilter, setDateFilter] = useState<DateRangeKey>("all");
   const [dateFrom, setDateFrom] = useState<string | undefined>();
   const [dateTo, setDateTo] = useState<string | undefined>();
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  // `loading` is derived, not set: the list is loading whenever the filters (or a retry) name
+  // a request whose answer has not landed yet. Keeps every setState inside the response
+  // callback, where the react-hooks lint wants it, instead of at the top of the effect.
+  const requestKey = `${filter}|${dateFrom ?? ""}|${dateTo ?? ""}|${reloadKey}`;
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
+  const loading = loadedFor !== requestKey;
 
   useEffect(() => {
-    setLoading(true);
+    let cancelled = false;
     const params = new URLSearchParams({ limit: "50" });
     if (filter !== "ALL") params.set("category", filter);
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
 
-    fetch(`/api/expenses?${params}`)
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.success) {
-          setExpenses(res.data);
-          setTotalAmount(res.data.reduce((sum: number, e: ExpenseItem) => sum + e.amount, 0));
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [filter, dateFrom, dateTo]);
+    // apiTry, not fetch().json(): an expired session answers with the login page as HTML and
+    // status 200, which res.json() turns into "Unexpected token '<'" (CLAUDE.md).
+    apiTry<ExpenseItem[]>(`/api/expenses?${params}`).then(({ data, error }) => {
+      if (cancelled) return;
+      if (error || !data) {
+        setLoadError(error || "Failed to load expenses");
+        setExpenses([]);
+        setTotalAmount(0);
+      } else {
+        setLoadError(null);
+        setExpenses(data);
+        setTotalAmount(data.reduce((sum, e) => sum + e.amount, 0));
+      }
+      setLoadedFor(requestKey);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filter, dateFrom, dateTo, requestKey]);
 
   if (sessionStatus === "loading") {
     return (
@@ -96,7 +131,11 @@ export default function ExpensesPage() {
   const visibleExpenses = expenses.filter((exp) => {
     if (!searchText) return true;
     const q = searchText.toLowerCase();
-    return exp.description.toLowerCase().includes(q) || exp.paidBy.toLowerCase().includes(q);
+    return (
+      (exp.description && exp.description.toLowerCase().includes(q)) ||
+      exp.category.toLowerCase().includes(q) ||
+      exp.paidBy.toLowerCase().includes(q)
+    );
   });
 
   return (
@@ -144,6 +183,10 @@ export default function ExpensesPage() {
         }]}
       />
 
+      {loadError && !loading && (
+        <ErrorBanner message={loadError} onRetry={() => setReloadKey((k) => k + 1)} />
+      )}
+
       {loading ? (
         <SkeletonList count={6} type="card" />
       ) : (
@@ -154,11 +197,12 @@ export default function ExpensesPage() {
           rowKey={(exp) => exp.id}
           emptyText="No expenses found"
           columns={[
-            { header: "Description", cell: (exp) => <span className="font-medium text-slate-900">{exp.description}</span> },
+            { header: "Description", cell: (exp) => <span className="font-medium text-slate-900">{exp.description || exp.category.replace(/_/g, " ")}</span> },
             { header: "Date", cell: (exp) => new Date(exp.date).toLocaleDateString("en-IN"), className: "whitespace-nowrap text-slate-500" },
             { header: "Paid By", cell: (exp) => exp.paidBy },
             { header: "Mode", cell: (exp) => <span className="text-slate-500">{exp.paymentMode}</span> },
             { header: "Category", cell: (exp) => <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${CATEGORY_COLORS[exp.category] || "bg-slate-100 text-slate-700"}`}>{exp.category.replace(/_/g, " ")}</span> },
+            { header: "Receipt", cell: (exp) => <ReceiptLink url={exp.receiptUrl} className="h-8 w-8" />, className: "text-center" },
             { header: "Amount", cell: (exp) => <span className="font-semibold text-slate-900 tabular-nums">{formatCurrency(exp.amount)}</span>, className: "text-right whitespace-nowrap" },
           ]}
         />
@@ -171,7 +215,7 @@ export default function ExpensesPage() {
               <div className="p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-slate-900 truncate">{exp.description}</p>
+                    <p className="text-sm font-semibold text-slate-900 truncate">{exp.description || exp.category.replace(/_/g, " ")}</p>
                     <p className="text-xs text-slate-500 tabular-nums mt-0.5 truncate">
                       {new Date(exp.date).toLocaleDateString("en-IN")} · {exp.paidBy} · {exp.paymentMode}
                     </p>
@@ -179,7 +223,10 @@ export default function ExpensesPage() {
                       {exp.category.replace(/_/g, " ")}
                     </span>
                   </div>
-                  <p className="text-sm font-bold text-slate-900 tabular-nums shrink-0">{formatCurrency(exp.amount)}</p>
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <p className="text-sm font-bold text-slate-900 tabular-nums">{formatCurrency(exp.amount)}</p>
+                    <ReceiptLink url={exp.receiptUrl} className="h-11 w-11 -mr-2 -mb-2" />
+                  </div>
                 </div>
               </div>
             </div>

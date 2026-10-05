@@ -3,12 +3,12 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useSession } from "next-auth/react";
+import { usePermissions } from "@/lib/use-permissions";
 import { Search, AlertCircle, Plus, Trash2, Share2, Building2, Users, CalendarCheck, MessagesSquare, X, Loader2, Copy, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { SkeletonList } from "@/components/ui/skeleton";
-import { useDebounce } from "@/lib/utils";
+import { useDebounce } from "@/hooks/use-debounce";
 import { type DateRangeKey } from "@/components/date-filter";
 import { FilterSheet } from "@/components/filter-sheet";
 import { DesktopTable } from "@/components/desktop-table";
@@ -99,9 +99,9 @@ function fmtGroupCode(code: string | null | undefined): string {
 }
 
 export default function VendorIssuesPage() {
-  const { data: session } = useSession();
-  const role = (session?.user as { role?: string })?.role || "";
-  const isAdmin = role === "ADMIN" || role === "CEO";
+  const { canDelete } = usePermissions();
+  // Both uses are the delete button and the delete column.
+  const isAdmin = canDelete("vendor_issues");
 
   const urlParams = useSearchParams();
   const vendorIdParam = urlParams.get("vendorId") || "";

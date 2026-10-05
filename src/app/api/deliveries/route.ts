@@ -4,22 +4,27 @@ import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse, paginatedResponse, parseSearchParams } from "@/lib/api-utils";
 import { deliveryCreateSchema } from "@/lib/validations";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { parseZoneFilter } from "@/lib/deliveries/zone";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("deliveries:list");
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "CEO", "SUPERVISOR", "OUTWARDS_EXECUTIVE", "STORE_MANAGER", "SALES_MANAGER", "INWARDS_EXECUTIVE", "ACCOUNTS_MANAGER"]);
+    await requireFeature("deliveries", "view");
     const { page, limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status") || undefined;
     const area = searchParams.get("area") || undefined;
     const date = searchParams.get("date") || undefined;
     const search = searchParams.get("search") || undefined;
     const outstation = searchParams.get("outstation") || undefined;
+    const zoneParam = searchParams.get("zone");
     const sortBy = searchParams.get("sortBy") || undefined;
 
     const dateRange = searchParams.get("dateRange") || undefined;
     const includeService = searchParams.get("includeService") === "true";
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const where: Record<string, unknown> = {};
     // By default, exclude service invoices from delivery pages
     // NOTE: Must use OR with null check — Prisma's NOT filter excludes NULL rows in PostgreSQL
@@ -38,8 +43,12 @@ export async function GET(req: NextRequest) {
       }
     }
     if (area) where.customerArea = area;
-    if (outstation === "true") where.isOutstation = true;
-    if (outstation === "false") where.isOutstation = false;
+    // Zone (plan 1609-deliveries, A22): BANGALORE | OUTSTATION | NONE (not chosen). The legacy
+    // `?outstation=true|false` still works and means OUTSTATION / BANGALORE when `zone` is absent.
+    const zone =
+      parseZoneFilter(zoneParam) ??
+      (outstation === "true" ? "OUTSTATION" : outstation === "false" ? "BANGALORE" : null);
+    if (zone) where.deliveryZone = zone === "NONE" ? null : zone;
     if (dateRange) {
       const now = new Date();
       const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -86,7 +95,10 @@ export async function GET(req: NextRequest) {
     const [deliveries, total] = await Promise.all([
       prisma.delivery.findMany({
         where,
-        include: { verifiedBy: { select: { name: true } } },
+        include: {
+          verifiedBy: { select: { name: true } },
+          warehouse: { select: { id: true, name: true } },
+        },
         orderBy: sortBy === "scheduledDate" ? { scheduledDate: "asc" } : { createdAt: "desc" },
         skip,
         take: limit,
@@ -96,14 +108,18 @@ export async function GET(req: NextRequest) {
 
     return paginatedResponse(deliveries, total, page, limit);
   } catch (error) {
-    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    if (error instanceof AuthError) {
+      log.warn("delivery list refused", { status: error.status });
+      return errorResponse(error.message, error.status);
+    }
+    log.error("delivery list failed", { error: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch deliveries", 500);
   }
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "OUTWARDS_EXECUTIVE", "INWARDS_EXECUTIVE"]);
+    const user = await requireFeature("deliveries", "create");
     const body = await req.json();
     const data = deliveryCreateSchema.parse(body);
 
@@ -130,7 +146,11 @@ export async function POST(req: NextRequest) {
 
     return successResponse(delivery, 201);
   } catch (error) {
-    if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    if (error instanceof AuthError) {
+      log.warn("delivery create refused", { status: error.status });
+      return errorResponse(error.message, error.status);
+    }
+    log.warn("delivery create failed", { reason: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed to create delivery", 400);
   }
 }

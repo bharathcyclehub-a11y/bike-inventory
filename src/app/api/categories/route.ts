@@ -1,38 +1,79 @@
-export const revalidate = 300; // cache 5 min
+// `revalidate = 300` used to sit here and did nothing: both handlers call requireFeature,
+// which reads cookies, so the route is dynamic and was never cached. It read as a promise
+// of caching that no request ever got.
+export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
 import { categorySchema } from "@/lib/validations";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { createLogger } from "@/lib/logger";
 
-export async function GET() {
+const log = createLogger("api:categories");
+
+// `stock.view`, NOT `categories.view`, and deliberately so: every product form reads this
+// for its category dropdown. Re-guarding it on the taxonomy module would empty those
+// dropdowns for anyone who is not a taxonomy admin — a silent empty list rather than an
+// honest 403, which is a worse failure than the one it would prevent.
+//
+// Active rows by default (plan 0809-brand-category-inactive). Every picker reads this list,
+// so filtering HERE is what makes "inactive" mean anything. `/categories` passes
+// `includeInactive` (`1` or `true` — the vendor list spells it the second way) to show the
+// retired rows with a badge.
+export async function GET(req: NextRequest) {
   try {
-    await requireAuth();
+    await requireFeature("stock", "view");
+    const flag = req.nextUrl.searchParams.get("includeInactive");
+    const includeInactive = flag === "1" || flag === "true";
     const categories = await prisma.category.findMany({
+      where: includeInactive ? {} : { isActive: true },
       include: {
-        children: true,
-        _count: { select: { products: true } },
+        children: { select: { id: true, name: true, isActive: true } },
+        parent: { select: { id: true, name: true } },
+        _count: { select: { products: true, children: true } },
       },
       orderBy: { name: "asc" },
     });
     return successResponse(categories);
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    log.error("category list failed", { message: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed to fetch categories", 500);
   }
 }
 
+// Creating a category IS a taxonomy change, so unlike GET this moves to the new module.
+// Nothing in the UI called this before /more/categories existed.
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
+    await requireFeature("categories", "create");
     const body = await req.json();
     const data = categorySchema.parse(body);
 
-    const category = await prisma.category.create({ data });
+    // Category.name is @unique — answer with the name that already holds it rather than a
+    // raw constraint violation.
+    const clash = await prisma.category.findFirst({
+      where: { name: { equals: data.name.trim(), mode: "insensitive" } },
+      select: { name: true },
+    });
+    if (clash) return errorResponse(`"${clash.name}" already exists`, 409);
+
+    // The /categories create form sends a parent (plan 1709, R43). A new row has no subtree,
+    // so the only check is that the parent exists — otherwise the FK error is the answer.
+    if (data.parentId) {
+      const parent = await prisma.category.findUnique({ where: { id: data.parentId }, select: { id: true } });
+      if (!parent) return errorResponse("The chosen parent category does not exist", 404);
+    }
+
+    const category = await prisma.category.create({
+      data: { ...data, name: data.name.trim(), parentId: data.parentId || null },
+    });
+    log.info("category created", { categoryId: category.id, parentId: category.parentId });
     return successResponse(category, 201);
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    log.error("category create failed", { message: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed to create category", 400);
   }
 }

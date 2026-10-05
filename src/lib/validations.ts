@@ -1,4 +1,23 @@
 import { z } from "zod";
+import {
+  lmsBuyerPsychologySchema,
+  lmsChecklistDoneSchema,
+  lmsChecklistItemSchema,
+  lmsCompetitorSchema,
+  lmsFaqSchema,
+  lmsObjectionSchema,
+  lmsOptionsSchema,
+  lmsReviewsSchema,
+  lmsSourceSchema,
+  lmsSpecsSchema,
+  lmsAnswersSchema,
+} from "@/lib/staff-lms/content-schemas";
+import {
+  LMS_ACHIEVEMENT_CRITERIA,
+  LMS_DIFFICULTIES,
+  LMS_QUIZ_TYPES,
+  LMS_SCENARIO_TYPES,
+} from "@/lib/staff-lms/constants";
 
 export const productSchema = z.object({
   sku: z.string().min(1, "SKU is required").max(50),
@@ -6,14 +25,6 @@ export const productSchema = z.object({
   description: z.string().optional(),
   categoryId: z.string().min(1, "Category is required"),
   brandId: z.string().min(1, "Brand is required"),
-  type: z.enum([
-    "BICYCLE",
-    "SPARE_PART",
-    "ACCESSORY",
-    "BOX_PIECE",
-    "WIP",
-    "FINISHED_GOOD",
-  ]),
   status: z.enum(["ACTIVE", "INACTIVE", "DISCONTINUED"]).optional(),
   condition: z
     .enum([
@@ -33,7 +44,11 @@ export const productSchema = z.object({
   maxStock: z.number().int().min(0).optional(),
   reorderLevel: z.number().int().min(0).optional(),
   reorderQty: z.number().int().min(0).optional(),
-  size: z.string().optional(),
+  // Nullable, not just optional: "" and null both mean "no reorder vendor", and clearing the
+  // field is how a wrong one gets undone. The column has been there since MIG-1a
+  // (schema.prisma:514) — only this schema was missing, so a reorderVendorId sent to
+  // PUT /api/products/[id] was silently STRIPPED by productUpdateSchema.partial().
+  reorderVendorId: z.string().nullable().optional(),
   color: z.string().optional(),
   imageUrls: z.array(z.string().url()).optional(),
   tags: z.array(z.string()).optional(),
@@ -41,6 +56,47 @@ export const productSchema = z.object({
 });
 
 export const productUpdateSchema = productSchema.partial();
+
+/**
+ * The three columns the reorder sheet writes, and nothing else.
+ *
+ * This exists so the sheet does NOT post to PUT /api/products/[id]. That route parses the
+ * whole `productUpdateSchema` and spreads it into `prisma.product.update` behind a bare
+ * `stock.edit` grant (api/products/[id]/route.ts:65-74), so wiring a reorder sheet to it
+ * would hand every `stock.edit` holder a write on `costPrice`, `sellingPrice` and `sku` —
+ * while READING cost price needs `cost_price.view`. A narrow schema on a narrow route is
+ * what keeps the sheet from being an accidental price editor.
+ */
+export const reorderSettingsSchema = z.object({
+  reorderLevel: z.number().int().min(0, "Reorder level cannot be negative"),
+  reorderQty: z.number().int().min(0, "Reorder quantity cannot be negative"),
+  reorderVendorId: z.string().nullable().optional(),
+});
+
+/**
+ * The /reorder screen's batch save (PUT /api/reorder/update-levels).
+ *
+ * The route had NO validation at all: it read `body.items`, checked `Array.isArray`, and
+ * looped. That meant an unbounded array — one request could open a transaction over every
+ * product in the catalogue — and a `reorderVendorId` written straight through, where a bad
+ * id surfaced as a raw foreign-key violation instead of a sentence.
+ *
+ * The 500 cap matches `api/products/bulk` (bulk/route.ts:32), which is the other route that
+ * rewrites many product rows at once.
+ */
+export const reorderLevelsSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.string().min(1, "Product id is required"),
+        reorderLevel: z.number().int().min(0, "Reorder level cannot be negative"),
+        reorderQty: z.number().int().min(0, "Reorder quantity cannot be negative").optional(),
+        reorderVendorId: z.string().nullable().optional(),
+      })
+    )
+    .min(1, "Nothing to update")
+    .max(500, "Too many products in one request (max 500)"),
+});
 
 export const inwardSchema = z.object({
   productId: z.string().min(1, "Product is required"),
@@ -54,18 +110,43 @@ export const outwardSchema = z.object({
   quantity: z.number().int().min(1, "Quantity must be at least 1"),
   referenceNo: z.string().optional(),
   notes: z.string().optional(),
+  // WHICH STORE the stock leaves (R12). Optional, because no caller sends it today and this
+  // route has never had a location field of any kind — the route defaults to the primary
+  // store. It is here so a caller that knows the store can say so, rather than having the
+  // deduction silently attributed to whichever store sorts first.
+  storeId: z.string().optional(),
 });
 
 export const categorySchema = z.object({
   name: z.string().min(1, "Name is required").max(100),
   description: z.string().optional(),
   parentId: z.string().optional(),
-  movingLevel: z.enum(["FAST", "NORMAL", "SLOW"]).optional(),
   reorderLevel: z.number().int().min(0).optional(),
 });
 
+/**
+ * PATCH sends only what changed, so every field is optional — but `.partial()` alone would
+ * accept `{}` and turn an empty body into a no-op 200. The refine makes that a 400.
+ *
+ * `parentId` accepts null explicitly: detaching a child from its parent is a real edit, and
+ * `undefined` (absent) has to keep meaning "leave it alone".
+ */
+export const categoryUpdateSchema = categorySchema
+  .partial()
+  .extend({
+    parentId: z.string().nullable().optional(),
+    // Active / inactive replaces delete (plan 0809-brand-category-inactive). Deactivating
+    // takes the whole subtree and its ACTIVE products with it; activating is the row only,
+    // plus its INACTIVE products when `reactivateProducts` is sent.
+    isActive: z.boolean().optional(),
+    reactivateProducts: z.boolean().optional(),
+  })
+  .refine((d) => Object.keys(d).length > 0, { message: "Nothing to update" });
+
 export const brandSchema = z.object({
-  name: z.string().min(1, "Name is required").max(100),
+  // Trimmed BEFORE min(1): "   " is refused as empty, and " Hero" can never become a row
+  // distinct from "Hero". The database enforces the same key (lower(btrim(name))).
+  name: z.string().trim().min(1, "Name is required").max(100),
   contactName: z.string().optional(),
   contactPhone: z.string().optional(),
   whatsappNumber: z.string().optional(),
@@ -76,63 +157,252 @@ export const brandSchema = z.object({
 export const binSchema = z.object({
   code: z.string().min(1, "Code is required").max(20),
   name: z.string().min(1, "Name is required").max(100),
-  location: z.string().min(1, "Location is required"),
+  warehouseId: z.string().min(1, "Warehouse is required"),
+  location: z.string().optional(),
+  directions: z.string().optional(),
+  floor: z.string().optional(),
   zone: z.string().optional(),
   capacity: z.number().int().min(0).optional(),
+  isAssemblyArea: z.boolean().optional(),
   isActive: z.boolean().optional(),
 });
 
+/**
+ * A stock audit's SCOPE (R2). Replaces the free-text `location` plus a product type — an
+ * assigned audit used to open on an empty page because neither told the counter where to go.
+ *
+ * Two fields, three states (§5.1):
+ *
+ *   storeId set, warehouseId null  -> the whole store. VERIFY ONLY: a whole-store count
+ *                                     yields one number per product while StockLevel is per
+ *                                     warehouse, so any split of the variance would invent a
+ *                                     location.
+ *   both set                       -> that one warehouse. Corrections allowed.
+ *   both null                      -> a legacy audit whose old `location` did not resolve.
+ *                                     Verify only. Not reachable from this schema — it exists
+ *                                     only for rows that predate MIG-1a.
+ *
+ * `storeId` is REQUIRED for a new audit. That is the point of the phase: an audit with no
+ * scope is the bug being fixed, so the API refuses to create another one.
+ */
 export const stockCountSchema = z.object({
   title: z.string().min(1, "Title is required"),
   assignedToId: z.string().optional(),
   dueDate: z.string().min(1, "Due date is required"),
   notes: z.string().optional(),
   productIds: z.array(z.string()).optional(),
-  productType: z.enum(["BICYCLE", "SPARE_PART", "ACCESSORY"]).optional(),
+  // `error` on the base type as well as on `.min`: `.min`'s message only covers an EMPTY
+  // string. A MISSING field fails the type check first and fell through to zod's default
+  // ("Invalid input: expected string, received undefined"), which is what reached the screen.
+  storeId: z.string({ error: "Choose a store" }).min(1, "Choose a store"),
+  /**
+   * Required since plan 1509-stock-count-scope-by-warehouse (D1): every new count is one
+   * warehouse — a Floor or a Godown — of `storeId`, which the route checks. Whole-store
+   * audits saved before then still exist and still approve; they just cannot be created.
+   */
+  warehouseId: z.string({ error: "Choose a warehouse" }).min(1, "Choose a warehouse"),
+  /**
+   * Required since plan 2109 (R36): every new audit is for exactly one bin inside `warehouseId`
+   * (the route checks). It was optional from 1509, and a bin-less count could not say which
+   * bin a difference belonged to. Audits saved without one still open and approve, verify-only.
+   */
+  binId: z.string({ error: "Choose a bin" }).min(1, "Choose a bin"),
 });
 
 export const stockCountUpdateSchema = z.object({
   status: z.enum(["PENDING", "IN_PROGRESS", "COMPLETED", "APPROVED", "REJECTED"]).optional(),
   notes: z.string().optional(),
   rejectionReason: z.string().optional(),
-  // Admin-only: when approving, also overwrite stock with the counted quantities.
+  // Approver's choice: when approving, also set system stock to the counted quantities.
   // Default (absent/false) = verify-only — records the count/variance without changing stock.
+  // Only a bin audit can be applied: it corrects that bin, and the warehouse by its difference
+  // (plan 2109, R33, R36). `correctionWarehouseId` — the surplus warehouse of a whole-store
+  // audit — was removed with the whole-store apply path; an old client sending it is ignored.
   applyToStock: z.boolean().optional(),
   items: z
     .array(
       z.object({
         id: z.string(),
         countedQty: z.number().int().min(0),
-        suggestedBrand: z.string().optional(),
         notes: z.string().optional(),
       })
     )
     .optional(),
 });
 
+// Roles are rows now, not an enum — the client sends the role's id and the API verifies it
+// exists. Permissions are never accepted on a user; they belong to the role.
 export const userSchema = z.object({
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email"),
-  password: z.string().min(6, "Password must be at least 6 characters"),
-  role: z.enum([
-    "ADMIN",
-    "SUPERVISOR",
-    "PURCHASE_MANAGER",
-    "ACCOUNTS_MANAGER",
-    "INWARDS_EXECUTIVE",
-    "OUTWARDS_EXECUTIVE",
-    "CUSTOM",
+  roleId: z.string().min(1, "Role is required"),
+  // The access code is the ONLY credential in this app — no username, no second factor — and
+  // /api/auth/* is excluded from the middleware, so the login endpoint is reachable from the
+  // open internet. min(1) accepted a one-character code. 8 characters is the floor, not a
+  // recommendation; see docs/code-review-2026-09-02.md for the rate limiting that is still owed.
+  accessCode: z.string().min(8, "Access code must be at least 8 characters"),
+  isActive: z.boolean().optional(),
+  // Where this person works. Both optional, and `null` is meaningful — it is how the client
+  // clears an assignment, which `undefined` cannot express (undefined means "leave alone").
+  //
+  // These are NOT permissions. Assigning someone to BCH does not restrict what they can see;
+  // a BCH user still sees BCC stock. Storing and displaying the assignment is the whole
+  // scope — see the plan's Phase 3, "Not in scope".
+  storeId: z.string().min(1).nullable().optional(),
+  warehouseId: z.string().min(1).nullable().optional(),
+});
+
+export const userUpdateSchema = userSchema.partial().extend({
+  accessCode: z.string().min(1).optional(),
+});
+
+// ─── Brand ledger ────────────────────────────────────────────────────────────
+
+export const ledgerEntrySchema = z.object({
+  entryDate: z.string().min(1, "Date is required"),
+  type: z.enum([
+    "OPENING", "INVOICE", "PAYMENT", "CREDIT_NOTE", "DEBIT_NOTE", "DISCOUNT", "ADJUSTMENT", "NOTE",
   ]),
-  accessCode: z.string().min(1, "Access code is required"),
-  customRoleName: z.string().optional(),
-  permissions: z.record(z.string(), z.object({
-    view: z.boolean(),
-    create: z.boolean(),
-    edit: z.boolean(),
-    delete: z.boolean(),
-    approve: z.boolean(),
-    fetch: z.boolean(),
-  })).optional(),
+  ref: z.string().max(80).optional(),
+  // A NOTE row carries no money (direction 0); every other type must.
+  amount: z.number().positive("Amount must be greater than zero").nullable().optional(),
+  // Omitted means "derive from the type". Sent explicitly for the rare case of a credit
+  // posted on a sales voucher, where the label and the sign disagree.
+  direction: z.union([z.literal(1), z.literal(-1)]).optional(),
+  note: z.string().max(500).optional(),
+  brandId: z.string().optional(),
+  // MANUAL is the escape hatch for a real payment not yet recorded in Accounts.
+  source: z.enum(["STATEMENT_PDF", "STATEMENT_XLSX", "STATEMENT_CSV", "BCH_BOOKS", "MANUAL"]).optional(),
+});
+
+export const ledgerEntryReviewSchema = z.object({
+  matchStatus: z.enum([
+    "UNMATCHED", "MATCHED", "NEEDS_REVIEW", "THEY_MISSING", "WE_MISSING", "DISPUTED", "IGNORED",
+  ]),
+  reviewNote: z.string().max(500).optional(),
+  billId: z.string().nullable().optional(),
+  paymentId: z.string().nullable().optional(),
+  creditId: z.string().nullable().optional(),
+  gapId: z.string().nullable().optional(),
+});
+
+export const ledgerGapSchema = z.object({
+  title: z.string().min(1, "Title is required").max(300),
+  gapType: z.enum([
+    "DISCOUNT_PENDING", "CREDIT_NOTE_PENDING", "SHORT_CREDIT", "DISPUTE",
+    "RECONCILIATION_DIFFERENCE", "DOCUMENTATION_GAP", "BALANCE_UNCONFIRMED",
+    "SCHEME_ENTITLEMENT", "COMMITMENT_PENDING", "OPERATIONAL_WARRANTY",
+    "INVOICE_DISCREPANCY", "REIMBURSEMENT_PENDING",
+  ]),
+  tier: z.enum(["FIRM", "LEVERAGE", "VERIFY", "CONDITIONAL"]).nullable().optional(),
+  status: z.enum(["OPEN", "PROMISED", "VERIFY", "RESOLVED", "REJECTED"]).optional(),
+  amount: z.number().nullable().optional(),
+  amountNote: z.string().max(200).optional(),
+  promisedBy: z.string().max(120).optional(),
+  promisedOn: z.string().optional(),
+  evidenceText: z.string().max(2000).optional(),
+  action: z.string().max(1000).optional(),
+  result: z.string().max(2000).optional(),
+  brandId: z.string().optional(),
+});
+
+export const ledgerGapUpdateSchema = ledgerGapSchema.partial();
+
+// ─── Ledger screen writes — the shapes in src/lib/brand-ledger/view-types.ts ─────────────
+// The screen is a verbatim port of the ledger app, so its forms send the app's own
+// lower-case vocabulary; the routes map it onto the enums. Kept beside the enum-shaped
+// schemas above, which the JSON import and the AI accept step still use server-side.
+
+const LEDGER_VIEW_ENTRY_TYPES = [
+  "payment", "invoice", "credit-note", "debit-note", "discount", "adjustment", "note",
+] as const;
+const LEDGER_VIEW_GAP_TYPES = [
+  "discount-pending", "credit-note-pending", "short-credit", "dispute",
+  "reconciliation-difference", "documentation-gap", "balance-unconfirmed",
+  "operational-warranty", "commitment-pending", "invoice-discrepancy",
+  "scheme-entitlement", "reimbursement-pending",
+] as const;
+const LEDGER_VIEW_GAP_STATUSES = ["open", "promised", "verify", "resolved", "rejected"] as const;
+
+const ledgerBalanceSchema = z.object({
+  amount: z.number().nullable(),
+  label: z.string().max(200),
+});
+
+export const ledgerProfileWriteSchema = z
+  .object({
+    theirBal: ledgerBalanceSchema.optional(),
+    ourBal: ledgerBalanceSchema.optional(),
+    reviewed: z.boolean().optional(),
+  })
+  .refine((v) => v.theirBal !== undefined || v.ourBal !== undefined || v.reviewed === true, {
+    message: "Nothing to update",
+  });
+
+export const ledgerNoteWriteSchema = z.object({
+  text: z.string().trim().min(1, "Note is required").max(1000),
+});
+
+export const ledgerEntryWriteSchema = z
+  .object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
+    type: z.enum(LEDGER_VIEW_ENTRY_TYPES),
+    ref: z.string().max(80).default(""),
+    amount: z.number().nullable(),
+    note: z.string().max(500).default(""),
+  })
+  .refine((v) => v.type === "note" || (v.amount !== null && v.amount > 0), {
+    message: "Amount is required",
+    path: ["amount"],
+  });
+
+export const ledgerGapWriteSchema = z.object({
+  title: z.string().trim().min(1, "Title is required").max(300),
+  type: z.enum(LEDGER_VIEW_GAP_TYPES),
+  amt: z.number().nullable(),
+  amtText: z.string().max(200).default(""),
+  status: z.enum(LEDGER_VIEW_GAP_STATUSES),
+  evidence: z.string().max(2000).default(""),
+  action: z.string().max(1000).default(""),
+});
+
+export const ledgerGapWriteUpdateSchema = ledgerGapWriteSchema.partial();
+
+export const discountTermSchema = z.object({
+  kind: z.enum(["CASH", "TRADE", "VOLUME", "TRANSPORT_SUPPORT", "MARKETING", "INCENTIVE", "OTHER"]),
+  percentage: z.number().min(0).max(100).nullable().optional(),
+  perUnitAmount: z.number().min(0).nullable().optional(),
+  appliesTo: z.string().max(200).optional(),
+  effectiveFrom: z.string().optional(),
+  effectiveTo: z.string().optional(),
+  withinDays: z.number().int().min(0).nullable().optional(),
+  agreedBy: z.string().max(120).optional(),
+  agreedOn: z.string().optional(),
+  isProven: z.boolean().optional(),
+  evidenceUrl: z.string().url().optional().or(z.literal("")),
+  notes: z.string().max(1000).optional(),
+  brandId: z.string().optional(),
+});
+
+// ─── RBAC ────────────────────────────────────────────────────────────────────
+
+export const roleCreateSchema = z.object({
+  key: z
+    .string()
+    .min(2, "Key is required")
+    .max(40)
+    .regex(/^[A-Za-z][A-Za-z0-9_ -]*$/, "Key must start with a letter"),
+  name: z.string().min(1, "Name is required").max(60),
+  description: z.string().max(300).optional(),
+  permissionIds: z.array(z.string()).optional(),
+});
+
+export const roleUpdateSchema = z.object({
+  name: z.string().min(1).max(60).optional(),
+  description: z.string().max(300).nullable().optional(),
+  isActive: z.boolean().optional(),
+  // The complete desired grant set. Omit to leave grants untouched.
+  permissionIds: z.array(z.string()).optional(),
 });
 
 export const vendorSchema = z.object({
@@ -148,6 +418,10 @@ export const vendorSchema = z.object({
   phone: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
   whatsappNumber: z.string().optional(),
+  // The vendor's one contact person (plan 2109 R28, Q17a) — replaces the VendorContact list.
+  // Nullable so the vendor screen can clear them; the route stores "" as null.
+  contactPerson: z.string().max(120).nullable().optional(),
+  contactDesignation: z.string().max(120).nullable().optional(),
   waGroupName: z.string().optional(),
   waGroupCode: z.string().optional(),
   paymentTermDays: z.number().int().min(0).optional(),
@@ -175,12 +449,140 @@ export const purchaseOrderSchema = z.object({
   expectedDate: z.string().optional(),
   deliveryAddress: z.string().optional(),
   notes: z.string().optional(),
+  /**
+   * true (the default) submits for approval; false saves a draft.
+   *
+   * Defaulting to true is deliberate: a PO nobody submits is invisible work, and the previous
+   * behaviour — every PO landing in DRAFT with no way to advance it except an Approve button
+   * that skipped the review step entirely — is what made the approval state meaningless.
+   */
+  submit: z.boolean().default(true),
+  /**
+   * The quotation import's review row this order was built from (plan 0909-po-ai-upload).
+   * Optional: the manual search path has none. After the PO is created the extraction and
+   * its stored file are deleted — nothing from the upload outlives the PO (owner, 9 Sep 2026).
+   */
+  extractionId: z.string().min(1).optional(),
   items: z.array(z.object({
-    productId: z.string().min(1, "Product is required"),
+    /**
+     * The item name as ordered — what the PDF's Description column prints. A line raised
+     * from the vendor's sheet is this name and nothing from the products table (plan
+     * 0909-po-sheet-ai-extraction, D2); `productId` is optional and never sent by that flow.
+     * It stays accepted so an older caller that links a catalogue product still works.
+     */
+    name: z.string().trim().min(1, "Item name is required").max(300, "Item name is too long"),
+    productId: z.string().min(1).optional(),
     quantity: z.number().int().min(1, "Quantity must be at least 1"),
-    unitPrice: z.number().min(0, "Price must be positive"),
-    gstRate: z.number().min(0).max(100).optional(),
+    // No unitPrice, gstRate or extractionItemId since 15 Sep 2026 (plan 1509-po-product-and-
+    // quantity-only, R4): a purchase order is the product and the quantity, and carries no
+    // money. z.object strips unknown keys, so a rate an old tab still sends is dropped here —
+    // this is the gate, not the screen.
   })).min(1, "At least one item is required"),
+});
+
+/**
+ * The non-file fields of the multipart body POST /api/purchase-orders/extract receives.
+ *
+ * `hint` is the one optional free-text box of the column step ("items are in column C").
+ * Length-capped here; the real sanitising — newlines and brackets stripped, instruction
+ * words refused — is `sanitizeHint` in po-extraction/sheet.ts (plan 0909, §3.6). It is data
+ * for the model, never an instruction, which is why it is bounded twice.
+ */
+export const poExtractRequestSchema = z.object({
+  vendorId: z.string().min(1, "Vendor is required"),
+  hint: z.string().max(500, "The hint is too long").optional(),
+});
+
+/**
+ * One review row's edit: tick or untick. Nothing else — a row is what the sheet said, and
+ * the product match and order quantity the old PATCH accepted are gone (plan 0909, D2/Q10).
+ */
+export const poExtractionItemPatchSchema = z.object({
+  selected: z.boolean(),
+});
+
+const columnRoleSchema = z.enum([
+  "itemName", "quantity", "itemCode", "price", "mrp", "size", "uom", "hsn", "category", "brand", "other", "ignore",
+]);
+
+/**
+ * The person's confirmation of the column step: for every sheet, the header row and a role
+ * per column. `rescue` skips the deterministic read and sends the whole sheet to the model
+ * (plan 0909, §3.2 step 5) — the path for a sheet whose header the model cannot find.
+ *
+ * A sheet with no `itemName` column is refused here rather than in the extractor: without it
+ * there is nothing to put on a PO line, and the screen already blocks the button.
+ */
+export const poExtractionColumnsSchema = z.object({
+  sheets: z
+    .array(
+      z.object({
+        sheet: z.string().min(1).max(200),
+        headerRow: z.number().int().min(0).max(100_000),
+        columns: z
+          .array(z.object({ index: z.number().int().min(0).max(1000), role: columnRoleSchema }))
+          .max(1000),
+      })
+    )
+    .max(50),
+  rescue: z.boolean().optional(),
+}).superRefine((v, ctx) => {
+  if (v.rescue) return;
+  if (v.sheets.length === 0) {
+    ctx.addIssue({ code: "custom", message: "Confirm the columns of at least one sheet", path: ["sheets"] });
+    return;
+  }
+  v.sheets.forEach((s, i) => {
+    if (!s.columns.some((c) => c.role === "itemName")) {
+      ctx.addIssue({
+        code: "custom",
+        message: `Choose which column of "${s.sheet}" holds the item name`,
+        path: ["sheets", i, "columns"],
+      });
+    }
+  });
+});
+
+/** Select-all-shown for a 400-row review: one request, not four hundred. */
+export const poExtractionSelectSchema = z.object({
+  itemIds: z.array(z.string().min(1)).min(1, "Choose at least one row").max(2000, "Too many rows in one request"),
+  selected: z.boolean(),
+});
+
+/**
+ * The header fields a PO's PUT may change.
+ *
+ * `status` is accepted but heavily constrained by PO_TRANSITIONS: APPROVED and
+ * SENT_TO_VENDOR are refused here with a sentence pointing at the route that owns them,
+ * because both have side effects (an authoriser on record; the send columns) that a bare
+ * status write would skip.
+ */
+export const purchaseOrderUpdateSchema = z.object({
+  status: z.enum([
+    "DRAFT",
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "SENT_TO_VENDOR",
+    "PARTIALLY_RECEIVED",
+    "RECEIVED",
+    "CANCELLED",
+  ]).optional(),
+  notes: z.string().optional(),
+  expectedDate: z.string().nullable().optional(),
+}).refine((v) => Object.keys(v).length > 0, { message: "Nothing to update" });
+
+/** The query filter on GET /api/purchase-orders. Exists because that param used to be cast
+ *  with `as never` and passed to Prisma unvalidated. */
+export const purchaseOrderListQuerySchema = z.object({
+  status: z.enum([
+    "DRAFT",
+    "PENDING_APPROVAL",
+    "APPROVED",
+    "SENT_TO_VENDOR",
+    "PARTIALLY_RECEIVED",
+    "RECEIVED",
+    "CANCELLED",
+  ]).optional(),
 });
 
 export const vendorBillSchema = z.object({
@@ -218,14 +620,56 @@ export const vendorCreditSchema = z.object({
   notes: z.string().optional(),
 });
 
+// ---- Expenses ----
+
+// Mirrors the Prisma enums (schema.prisma ExpenseCategory / PaymentMode). All six payment
+// modes are listed: CREDIT_ADJUSTMENT was always in the enum but unreachable from the old
+// flat form, which offered five.
+export const EXPENSE_CATEGORIES = [
+  "DELIVERY", "TRANSPORT", "SHOP_MAINTENANCE", "UTILITIES",
+  "SALARY_ADVANCE", "FOOD_TEA", "STATIONERY", "MISCELLANEOUS",
+] as const;
+export const EXPENSE_PAYMENT_MODES = ["CASH", "CHEQUE", "NEFT", "RTGS", "UPI", "CREDIT_ADJUSTMENT"] as const;
+
+/**
+ * One expense as the stepped entry flow sends it (0909-expense-multi-entry-flow-plan, Part B).
+ *
+ * `paidBy` is deliberately absent. The batch route stamps it from the session (decision D2), so
+ * a client cannot record an expense under someone else's name — the server derives it, the
+ * client never supplies it. `date` is absent too: it is shared by the whole batch (D6).
+ */
+export const expenseRowSchema = z.object({
+  amount: z.number().min(0.01, "Amount must be positive"),
+  category: z.enum(EXPENSE_CATEGORIES),
+  description: z.string().max(500).optional().default(""),
+  paymentMode: z.enum(EXPENSE_PAYMENT_MODES),
+  /** One receipt photo, already uploaded through /api/media/presign. Null when none. */
+  receiptUrl: z.string().url().optional().nullable(),
+  referenceNo: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+/** The body of POST /api/expenses/batch: one date and one payer, many rows (D6). */
+export const expenseBatchSchema = z.object({
+  date: z.string().min(1, "Date is required"),
+  expenses: z
+    .array(expenseRowSchema)
+    .min(1, "Add at least one expense")
+    .max(50, "A batch can hold at most 50 expenses"),
+});
+
+// Single-row shape, kept for PUT /api/expenses/[id]. `paidBy` is optional here only because
+// PUT still edits historical rows that carry a typed name; POST /api/expenses no longer reads
+// it from the body and stamps the session user instead (D2).
 export const expenseSchema = z.object({
   date: z.string().min(1, "Date is required"),
   amount: z.number().min(0.01, "Amount must be positive"),
-  category: z.enum(["DELIVERY", "TRANSPORT", "SHOP_MAINTENANCE", "UTILITIES", "SALARY_ADVANCE", "FOOD_TEA", "STATIONERY", "MISCELLANEOUS"]),
-  description: z.string().min(1, "Description is required"),
-  paidBy: z.string().min(1, "Paid by is required"),
-  paymentMode: z.enum(["CASH", "CHEQUE", "NEFT", "RTGS", "UPI", "CREDIT_ADJUSTMENT"]),
+  category: z.enum(EXPENSE_CATEGORIES),
+  description: z.string().optional().default(""),
+  paidBy: z.string().min(1, "Paid by is required").optional(),
+  paymentMode: z.enum(EXPENSE_PAYMENT_MODES),
   referenceNo: z.string().optional(),
+  receiptUrl: z.string().url().optional().nullable(),
   notes: z.string().optional(),
 });
 
@@ -236,9 +680,16 @@ export const billFollowUpSchema = z.object({
 
 // ---- Customers & Receivables ----
 
+// `phone` is the customer's identity: it is required and unique on the table, because the
+// service side looks a customer up by phone when a bike is dropped off. Ten digits, since
+// that is what the counter actually captures.
 export const customerSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
-  phone: z.string().optional(),
+  phone: z
+    .string()
+    .transform((v) => v.replace(/\D/g, "").slice(-10))
+    .refine((v) => v.length === 10, "Phone must be 10 digits"),
+  whatsapp: z.string().optional(),
   email: z.string().email().optional().or(z.literal("")),
   address: z.string().optional(),
   type: z.enum(["WALK_IN", "REGULAR", "DEALER"]).optional(),
@@ -320,12 +771,16 @@ export const deliveryUpdateSchema = z.object({
   customerPincode: z.string().regex(/^\d{6}$/, "Must be 6 digits").optional().or(z.literal("")),
   customerPhone: z.string().optional(),
   alternatePhone: z.string().optional(),
-  scheduledDate: z.string().optional(),
+  // "YYYY-MM-DD" (IST day) or an ISO moment; null clears it (plan 1609-deliveries, A28, A36).
+  scheduledDate: z.string().nullable().optional(),
   deliveryNotes: z.string().optional(),
   notes: z.string().optional(),
   flagReason: z.string().optional(),
   rejectionReason: z.string().optional(),
+  // Legacy: still accepted, written as the matching zone. `deliveryZone` wins when both are sent.
   isOutstation: z.boolean().optional(),
+  // Bangalore / Outstation; null = Not chosen (plan 1609-deliveries, A22, T6).
+  deliveryZone: z.enum(["BANGALORE", "OUTSTATION"]).nullable().optional(),
   courierName: z.string().optional(),
   courierTrackingNo: z.string().optional(),
   courierTrackingLink: z.string().optional(),
@@ -341,6 +796,33 @@ export const deliveryUpdateSchema = z.object({
 });
 
 // ─── Inbound Tracking ───────────────────────
+
+/**
+ * Receiving ONE line of a shipment (R3).
+ *
+ * `deliveredQty` must equal the line's billed quantity — the blue button means "receive the
+ * full bill qty" (owner decision D6) and shortages are raised through Report Issue instead.
+ * The route enforces the equality; this only guarantees a positive integer arrived.
+ *
+ * `warehouseId` is required. The old handler defaulted a missing warehouse through
+ * `resolveWarehouse(body.warehouseId ?? body.location)`, so stock could land somewhere nobody
+ * chose.
+ */
+export const inboundReceiveLineSchema = z.object({
+  lineItemId: z.string().min(1, "Line item is required"),
+  deliveredQty: z.number().int().min(1, "Quantity must be at least 1"),
+  warehouseId: z.string().min(1, "Choose where the stock is going"),
+});
+
+/**
+ * The Cycles / Spares / Accessories choice that gates receiving (R3).
+ *
+ * It lived in ONE phone's localStorage, so the shipment looked uncategorised to everybody
+ * else and lost the value when that browser cleared. It is a property of the shipment.
+ */
+export const inboundCategorySchema = z.object({
+  categoryId: z.string().min(1, "Choose a category"),
+});
 
 export const inboundShipmentSchema = z.object({
   brandId: z.string().min(1, "Brand is required"),
@@ -362,6 +844,46 @@ export const inboundShipmentSchema = z.object({
   })).min(1, "At least one line item is required"),
 });
 
+/**
+ * Report Issue on a receiving line (`POST /api/inbound/[id]/issues`).
+ *
+ * The person at the goods desk names the LINE, not the vendor: the route resolves the vendor
+ * from the shipment's bill (or its brand) itself. The old client-side call sent a `vendorId`
+ * read from `shipment.vendorBill`, so every shipment without a Zoho bill sent `undefined` and
+ * was refused with 400.
+ *
+ * `issueType` is the full `IssueType` enum from the schema, unchanged — this endpoint is one
+ * more way to raise the same VendorIssue, not a second vocabulary.
+ *
+ * `issueQty` is optional for the enum as a whole but required for SHORTAGE and DAMAGE, which
+ * are the two that read a count back to the brand ("Short by 3 of 10"). The refine keeps that
+ * rule in one place rather than in the route and the form separately.
+ */
+export const inboundIssueSchema = z
+  .object({
+    lineItemId: z.string().min(1, "Line item is required"),
+    issueType: z.enum([
+      "QUALITY",
+      "SHORTAGE",
+      "DAMAGE",
+      "WRONG_ITEM",
+      "BILLING_ERROR",
+      "DELIVERY_DELAY",
+      "OTHER",
+    ]),
+    issueQty: z.number().int().min(1, "Quantity must be at least 1").optional(),
+    notes: z.string().optional(),
+  })
+  .refine(
+    (d) =>
+      (d.issueType !== "SHORTAGE" && d.issueType !== "DAMAGE") ||
+      d.issueQty !== undefined,
+    {
+      message: "Quantity is required for a shortage or damage issue",
+      path: ["issueQty"],
+    }
+  );
+
 export const preBookingSchema = z.object({
   customerName: z.string().min(1, "Customer name is required"),
   customerPhone: z.string().optional(),
@@ -371,7 +893,455 @@ export const preBookingSchema = z.object({
   brandId: z.string().optional(),
 });
 
-export const storeUpdateSchema = z.object({
+// A StoreUpdate POST — the ops-hub noticeboard — not an update TO a store. Renamed from
+// `storeUpdateSchema` on 30 Aug 2026: every other schema here uses *UpdateSchema for a PATCH
+// body (productUpdateSchema, userUpdateSchema), so the old name collided with the real one
+// when Store became a table.
+export const storeUpdatePostSchema = z.object({
   text: z.string().min(1, "Text is required").max(2000),
   category: z.enum(["Sales", "Staff", "Ops", "Issue", "Win", "Other"]),
 });
+
+// ─── Store analytics ingest ──────────────────────────────────────────────────
+// These validate the ENVELOPE only. Per-event field validation deliberately stays in
+// src/lib/analytics/store.ts, because DAT-002 requires every bad event to be reported
+// individually with a reason — a zod schema over the item shape would reject the whole batch,
+// throwing away 199 good crossings because the 200th carried a bad timestamp. The agent
+// cannot repair a rejected event, so a batch-level 400 would just loop forever.
+
+export const countEventBatchSchema = z
+  .array(z.unknown())
+  .max(1000, "batch too large (max 1000)");
+
+// Unknown keys are stripped rather than rejected: the agent adds fields as it gains features
+// (`confidence` was added mid-pilot) and an older server must not start 400-ing a newer agent.
+export const heartbeatSchema = z.object({
+  agent_id: z.string().max(64).optional(),
+  queue_depth: z.number().int().min(0).nullable().optional(),
+  camera_ok: z.boolean().nullable().optional(),
+  last_frame_ts: z.number().nullable().optional(),
+  agent_version: z.string().max(32).nullable().optional(),
+});
+
+// Device registration.
+//
+// `storeId` used to be z.enum(["BCH_STORE", "BCC_STORE"]) — the two StockLocation members
+// that had a doorway to count through. That restriction is now expressed by the SCHEMA
+// itself: a camera is registered against a `Store`, and every Store is a shop with a door,
+// so there is no longer a set of location values to exclude. Warehouses cannot be named here
+// because they are a different table.
+//
+// The value must still be a real, active store, and that check is server-side rather than a
+// filtered <select> — see the route, which resolves it before writing.
+export const analyticsDeviceCreateSchema = z.object({
+  label: z.string().min(1, "Label is required").max(80),
+  storeId: z.string().min(1, "A store is required"),
+  agentId: z.string().min(1).max(64).default("edge-1"),
+});
+
+export const analyticsDeviceUpdateSchema = z
+  .object({
+    label: z.string().min(1).max(80).optional(),
+    isActive: z.boolean().optional(),
+  })
+  .refine((v) => v.label !== undefined || v.isActive !== undefined, {
+    message: "nothing to update",
+  });
+
+// ─── Staff LMS ───────────────────────────────────────────────────────────────
+// Request-body schemas for /api/staff-lms/*. The SHAPES of the Json columns these write
+// into live in src/lib/staff-lms/content-schemas.ts and are imported rather than restated,
+// so a change to a playbook's shape cannot drift between the writer and the reader.
+//
+// Naming: every export is `lms*`. A bare `productSchema` already exists at the top of this
+// file and means an inventory SKU — a different table, a different concept, and one of the
+// collisions the `Lms` prefix exists to prevent.
+
+
+const cuid = z.string().min(1);
+
+// ── Content: products ───────────────────────────────────────────────────────
+
+export const lmsProductSchema = z.object({
+  name: z.string().min(1, "Name is required").max(200),
+  brand: z.string().min(1, "Brand is required").max(100),
+  // Free text, not an enum. LMS_RIDING_STYLES is what the dropdown OFFERS; constraining it
+  // here would mean a redeploy to add a category, which is the wrong cost for a label.
+  category: z.string().min(1, "Category is required").max(60),
+  price: z.number().nonnegative().nullable().optional(),
+  imageUrl: z.string().url().nullable().optional(),
+  usps: z.array(z.string()).default([]),
+  features: z.array(z.string()).default([]),
+  talkingPoints: z.array(z.string()).default([]),
+  targetCustomer: z.string().nullable().optional(),
+  commonObjections: z.array(lmsObjectionSchema).default([]),
+  buyerPsychology: lmsBuyerPsychologySchema.nullable().optional(),
+  uniqueFact: z.string().nullable().optional(),
+  specs: lmsSpecsSchema.default({}),
+  competitors: z.array(lmsCompetitorSchema).default([]),
+  reviews: lmsReviewsSchema.default({ best: [], worst: [] }),
+  sources: z.array(lmsSourceSchema).default([]),
+  faqs: z.array(lmsFaqSchema).default([]),
+  isActive: z.boolean().optional(),
+  /** Optional soft link to an inventory SKU. See LmsProduct.stockProductId. */
+  stockProductId: cuid.nullable().optional(),
+});
+
+export const lmsProductUpdateSchema = lmsProductSchema.partial();
+
+// ── Content: playbooks (scenarios) ──────────────────────────────────────────
+
+export const lmsScenarioSchema = z.object({
+  title: z.string().min(1).max(200),
+  type: z.enum(LMS_SCENARIO_TYPES),
+  description: z.string().nullable().optional(),
+  checklist: z.array(lmsChecklistItemSchema).default([]),
+  tips: z.array(z.string()).default([]),
+  difficulty: z.enum(LMS_DIFFICULTIES).default("beginner"),
+  sortOrder: z.number().int().min(0).default(0),
+  isActive: z.boolean().optional(),
+});
+
+export const lmsScenarioUpdateSchema = lmsScenarioSchema.partial();
+
+// ── Content: videos ─────────────────────────────────────────────────────────
+
+export const lmsVideoCategorySchema = z.object({
+  name: z.string().min(1).max(120),
+  description: z.string().nullable().optional(),
+  sortOrder: z.number().int().min(0).default(0),
+});
+
+export const lmsVideoSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().nullable().optional(),
+  youtubeUrl: z.string().url("A valid YouTube URL is required"),
+  categoryId: cuid.nullable().optional(),
+  /** The LEARNING product this belongs to (lms_products), never a stock SKU. */
+  lmsProductId: cuid.nullable().optional(),
+  durationMinutes: z.number().int().positive().nullable().optional(),
+  sortOrder: z.number().int().min(0).default(0),
+  isActive: z.boolean().optional(),
+});
+
+export const lmsVideoUpdateSchema = lmsVideoSchema.partial();
+
+// ── Content: course tree ────────────────────────────────────────────────────
+
+export const lmsCourseSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const lmsCourseLevelSchema = z.object({
+  courseId: cuid,
+  title: z.string().min(1).max(200),
+  description: z.string().nullable().optional(),
+  sortOrder: z.number().int().min(0).default(0),
+  weekNumber: z.number().int().positive().nullable().optional(),
+  brandFocus: z.string().nullable().optional(),
+});
+
+export const lmsLessonSchema = z.object({
+  levelId: cuid,
+  title: z.string().min(1).max(200),
+  description: z.string().nullable().optional(),
+  sortOrder: z.number().int().min(0).default(0),
+  youtubeUrl: z.string().url().nullable().optional(),
+  keyPointers: z.array(z.string()).default([]),
+  checklist: z.array(lmsChecklistItemSchema).default([]),
+  xpReward: z.number().int().min(0).default(30),
+  isActive: z.boolean().optional(),
+});
+
+export const lmsCourseUpdateSchema = lmsCourseSchema.partial();
+export const lmsCourseLevelUpdateSchema = lmsCourseLevelSchema.partial();
+export const lmsLessonUpdateSchema = lmsLessonSchema.partial();
+
+// ── Content: questions ──────────────────────────────────────────────────────
+
+/**
+ * Shared by lesson, quiz and weekly-test questions — the three tables have identical
+ * question shapes and differ only in their parent FK, which the ROUTE supplies from the
+ * URL rather than the body.
+ *
+ * `correctIndex` is validated against the option count with a refine, because an
+ * out-of-range key is a question nobody can ever answer correctly, and it would only
+ * surface as a learner complaint weeks later.
+ */
+export const lmsQuestionSchema = z
+  .object({
+    question: z.string().min(1).max(1000),
+    options: lmsOptionsSchema.min(2, "A question needs at least two options"),
+    correctIndex: z.number().int().min(0),
+    explanation: z.string().nullable().optional(),
+    sortOrder: z.number().int().min(0).default(0),
+  })
+  .refine((q) => q.correctIndex < q.options.length, {
+    message: "correctIndex points past the last option",
+    path: ["correctIndex"],
+  });
+
+// ── Content: quizzes and weekly tests ───────────────────────────────────────
+
+export const lmsQuizSchema = z.object({
+  title: z.string().min(1).max(200),
+  description: z.string().nullable().optional(),
+  type: z.enum(LMS_QUIZ_TYPES).default("general"),
+  difficulty: z.enum(LMS_DIFFICULTIES).default("beginner"),
+  passingScore: z.number().int().min(0).max(100).default(70),
+  xpReward: z.number().int().min(0).default(50),
+  isActive: z.boolean().optional(),
+});
+
+export const lmsWeeklyTestSchema = z.object({
+  title: z.string().min(1).max(200),
+  weekNumber: z.number().int().positive(),
+  description: z.string().nullable().optional(),
+  passingScore: z.number().int().min(0).max(100).default(70),
+  xpReward: z.number().int().min(0).default(100),
+  scheduledFor: z.coerce.date().nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const lmsQuizUpdateSchema = lmsQuizSchema.partial();
+export const lmsWeeklyTestUpdateSchema = lmsWeeklyTestSchema.partial();
+
+// ── Content: announcements, tips, achievements ──────────────────────────────
+
+export const lmsAnnouncementSchema = z.object({
+  title: z.string().min(1).max(200),
+  content: z.string().min(1),
+  priority: z.enum(["low", "normal", "high"]).default("normal"),
+  expiresAt: z.coerce.date().nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const lmsDailyTipSchema = z.object({
+  content: z.string().min(1),
+  category: z.string().max(60).default("general"),
+  scheduledFor: z.coerce.date().nullable().optional(),
+  isActive: z.boolean().optional(),
+});
+
+export const lmsAchievementSchema = z.object({
+  name: z.string().min(1).max(120),
+  description: z.string().min(1),
+  icon: z.string().min(1).max(60),
+  // An enum, not free text: an unrecognised criteria type produces a badge nobody can ever
+  // earn, and checkAchievements can only warn about it after the fact.
+  criteriaType: z.enum(LMS_ACHIEVEMENT_CRITERIA),
+  criteriaValue: z.number().int().positive(),
+  xpReward: z.number().int().min(0).default(100),
+});
+
+export const lmsAnnouncementUpdateSchema = lmsAnnouncementSchema.partial();
+export const lmsDailyTipUpdateSchema = lmsDailyTipSchema.partial();
+export const lmsAchievementUpdateSchema = lmsAchievementSchema.partial();
+
+// ── Learner writes — THE SELF-PROGRESS CONTRACT ─────────────────────────────
+//
+// Read this before adding anything below it.
+//
+// These five schemas back the endpoints where a learner writes their OWN rows. Every one
+// is `.strict()`, and NONE of them declares `userId`.
+//
+// That is the single highest-severity rule in the module. The userId is taken from
+// `requireFeature(...)` — the session — and never from the request body. Zod 4 STRIPS
+// unknown keys silently by default, so a client sending `{"userId": "<someone else>"}`
+// would be quietly ignored: correct behaviour, but invisible. `.strict()` turns that
+// silence into a 400, which is the difference between a client bug you find in a week and
+// one you never find at all.
+//
+// A route that needs a target id — which lesson, which quiz — takes it from the URL, not
+// the body. If you find yourself wanting to add `userId` here, the answer is no.
+
+export const lmsQuizAttemptSchema = z
+  .object({
+    answers: lmsAnswersSchema,
+  })
+  .strict();
+
+export const lmsWeeklyTestAttemptSchema = z
+  .object({
+    answers: lmsAnswersSchema,
+  })
+  .strict();
+
+export const lmsLessonProgressSchema = z
+  .object({
+    videoWatched: z.boolean().optional(),
+    checklistDone: lmsChecklistDoneSchema.optional(),
+    answers: lmsAnswersSchema.optional(),
+  })
+  .strict();
+
+/**
+ * Marks a video watched or a playbook completed. One id at a time, from the body rather
+ * than the URL because this endpoint is not per-resource.
+ */
+export const lmsProgressSchema = z
+  .object({
+    videoId: cuid.optional(),
+    scenarioId: cuid.optional(),
+    productId: cuid.optional(),
+  })
+  .strict()
+  .refine((v) => !!(v.videoId || v.scenarioId || v.productId), {
+    message: "one of videoId, scenarioId or productId is required",
+  });
+
+/** The daily streak ping. Takes no input at all — the session is the whole request. */
+export const lmsHeartbeatSchema = z.object({}).strict();
+
+// ─── Store hierarchy ─────────────────────────────────────────────────────────
+
+// `code` is the stable handle: it reuses the old StockLocation enum strings and is what
+// /stock/by-location/[code] resolves against, so it is uppercase, alphanumeric + underscore,
+// and never contains a space. `name` is free display text and can be renamed at will.
+const SITE_CODE = z
+  .string()
+  .min(2, "Code is required")
+  .max(40)
+  .regex(/^[A-Za-z0-9_]+$/, "Code may use letters, numbers and underscores only");
+
+export const storeSchema = z.object({
+  code: SITE_CODE,
+  name: z.string().min(1, "Name is required").max(100),
+  address: z.string().max(300).optional(),
+  phone: z.string().max(30).optional(),
+  sortOrder: z.number().int().min(0).optional(),
+  // No `invoicePrefix` here since 16 Sep 2026 (plan 1609-deliveries, R30): the prefix belongs to
+  // the store's FLOOR warehouse — see `warehouseSchema`. `Store.invoicePrefix` is still a column
+  // but is no longer read or written; zod strips the key if an old client sends it.
+  /**
+   * The store's own GSTIN. Every store has one (owner) — BCH and BCC are separate registrations.
+   *
+   * Same regex as `vendorSchema.gstin` above, deliberately: one definition of what a GSTIN
+   * looks like, or the two forms will drift and a number valid on one screen will be refused
+   * on the other. It is uppercase-only, so the form upper-cases on input the way
+   * /vendors/new already does.
+   *
+   * "" is accepted and normalised to null by the route — a store that has not had its GSTIN
+   * entered yet is a real state, and P14 refuses an inter-store transfer while it is missing
+   * rather than guessing a document type.
+   */
+  gstin: z
+    .string()
+    .regex(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/, "That does not look like a GSTIN")
+    .optional()
+    .or(z.literal("")),
+  /**
+   * The first two digits of the GSTIN — "29" for Karnataka. Stored separately because P14
+   * compares state codes to decide TAX INVOICE vs DELIVERY CHALLAN, and reading two characters
+   * out of a nullable string at every comparison is how that check ends up wrong once.
+   */
+  stateCode: z
+    .string()
+    .regex(/^[0-9]{2}$/, "State code is the first two digits of the GSTIN, e.g. 29")
+    .optional()
+    .or(z.literal("")),
+});
+
+export const storeUpdateSchema = storeSchema.partial().extend({
+  isActive: z.boolean().optional(),
+});
+
+export const warehouseSchema = z.object({
+  storeId: z.string().min(1, "A store is required"),
+  code: SITE_CODE,
+  name: z.string().min(1, "Name is required").max(100),
+  /** FLOOR = the shop, GODOWN = storage. Optional: the column defaults to GODOWN (D2). */
+  kind: z.enum(["FLOOR", "GODOWN"]).optional(),
+  sortOrder: z.number().int().min(0).optional(),
+  /**
+   * The prefix this FLOOR warehouse's sales invoices carry — "INV/", "BCC/" (R30). An invoice
+   * whose number starts with it reduces this floor's stock. Optional here because a GODOWN has
+   * none; the route refuses a FLOOR without one (R32) and clears it on a GODOWN. "" means "no
+   * prefix" and is normalised to null — a stored "" would match every invoice.
+   */
+  invoicePrefix: z.string().trim().max(20).optional(),
+  /** The store's primary FLOOR when it has two or more (R33). Ignored on a GODOWN. */
+  isPrimary: z.boolean().optional(),
+});
+
+export const warehouseUpdateSchema = warehouseSchema.partial().extend({
+  isActive: z.boolean().optional(),
+});
+
+/**
+ * The body of POST /api/zoho/trigger-pull (R1).
+ *
+ * There was no schema here at all — the route did `const { step, pullId, fromDate, searchText }
+ * = body as {...}`, a bare cast. That is precisely why a client sending `days` or `toDate` was
+ * silently ignored: the cast named four fields, the other two fell on the floor, and the
+ * screen's date chips appeared to do nothing. A schema makes an unknown field a visible
+ * decision rather than an invisible drop.
+ */
+export const zohoPullSchema = z.object({
+  step: z.enum(["init", "bills", "invoices", "finalize"]),
+  pullId: z.string().optional(),
+  /** Rolling window INCLUDING today. Ignored when fromDate is given. */
+  days: z.number().int().min(1).max(400).optional(),
+  fromDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "From date must look like 2026-09-04").optional(),
+  toDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "To date must look like 2026-09-04").optional(),
+  /** Free-text search. When present the date window is not applied at all. */
+  searchText: z.string().max(100).optional(),
+
+  // finalize-only tallies, carried by the client across the steps.
+  itemsNew: z.number().int().min(0).optional(),
+  contactsNew: z.number().int().min(0).optional(),
+  billsNew: z.number().int().min(0).optional(),
+  invoicesNew: z.number().int().min(0).optional(),
+  apiCalls: z.number().int().min(0).optional(),
+  allErrors: z.array(z.string()).optional(),
+});
+
+// ─── Assembly & Cycle Complaints ─────────────────────────────────────────────
+
+export const complaintCreateSchema = z.object({
+  unitCode: z.string().min(1, "Bicycle unit code is required"),
+  customerName: z.string().min(1, "Customer name is required"),
+  customerPhone: z.string().min(1, "Customer phone is required"),
+  description: z.string().min(1, "Complaint description is required"),
+  photoUrl: z.string().optional().nullable(),
+});
+
+export const complaintAttributeSchema = z.object({
+  isAssemblyFault: z.boolean(),
+  faultMechanicId: z.string().optional().nullable(),
+  notes: z.string().optional(),
+});
+
+// ─── Assembly condition level (plan 1509-assembly-queue-single-bin-and-product-assembly-level) ──
+//
+// `enum AssemblyLevel { A50, A85, FULL }`. The labels live in src/lib/assembly-level.ts. The
+// literal list is repeated here rather than imported so this file keeps no dependency on it.
+const assemblyLevelEnum = z.enum(["A50", "A85", "FULL"], {
+  error: "Choose the assembly condition level",
+});
+
+/**
+ * PUT /api/products/[id]/assembly-level — the /stock row action and the product details (D4).
+ * `null` clears it: the product is "not set" again and the next Assign on /assembly asks.
+ */
+export const productAssemblyLevelSchema = z.object({
+  level: assemblyLevelEnum.nullable(),
+});
+
+/**
+ * POST /api/assembly/tasks — the Assign Bicycle to Mechanic modal.
+ *
+ * `level` is optional HERE because a product that already has `Product.assemblyLevel` is
+ * assigned at that level and a sent one is ignored (D4, no per-bicycle override). The route
+ * requires it when the product has none, and then saves it to the product (D3). Before this
+ * schema the body was destructured raw with a silent `level = "A85"` default.
+ */
+export const assemblyTaskCreateSchema = z.object({
+  unitId: z.string({ error: "Choose a bicycle" }).min(1, "Choose a bicycle"),
+  assignedToId: z.string({ error: "Choose a mechanic" }).min(1, "Choose a mechanic"),
+  level: assemblyLevelEnum.optional(),
+  notes: z.string().max(1000).optional(),
+});
+

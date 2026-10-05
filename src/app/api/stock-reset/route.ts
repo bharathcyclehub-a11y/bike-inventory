@@ -3,11 +3,15 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAuth(["ADMIN", "CEO"]);
+    // approve, NOT create: this zeroes currentStock and reservedStock on EVERY active product.
+    // `create` is the grant a junior counter needs to START a stock count; `approve` is the
+    // supervisory action on this module. The confirm string below is a typo guard, not a
+    // permission check.
+    await requireFeature("stock_audit", "approve");
     const body = await req.json();
     const { location, confirm } = body as { location?: string; confirm?: string };
 
@@ -33,13 +37,34 @@ export async function POST(req: NextRequest) {
       });
 
       const nonZero = products.filter((p) => p.currentStock > 0);
+      const ids = nonZero.map((p) => p.id);
+
+      // THE FIX (R12). Zeroing `currentStock` alone left every StockLevel row untouched, so
+      // the first receipt, applied audit or transfer after a reset recomputed the total from
+      // the old ledger and UNDID the reset. The ledger is the truth; it has to be zeroed too.
+      //
+      // updateMany rather than setWarehouseQty per row: this can touch thousands of products
+      // across every warehouse, and one statement is the difference between a reset that
+      // completes and one that blows the transaction budget. Both writes are absolute, so
+      // there is no per-row arithmetic to preserve.
+      // Holds too (plan 1609-deliveries, T4): `Product.reservedStock` is now only a cache of
+      // SUM(StockLevel.reservedQuantity), so zeroing the cache below without the ledger would
+      // bring every hold back at the next recomputeReservedStock.
+      const levelsReset = await tx.stockLevel.updateMany({
+        where: { productId: { in: ids }, OR: [{ quantity: { not: 0 } }, { reservedQuantity: { not: 0 } }] },
+        data: { quantity: 0, reservedQuantity: 0 },
+      });
 
       await tx.product.updateMany({
-        where: { id: { in: nonZero.map((p) => p.id) } },
+        where: { id: { in: ids } },
         data: { currentStock: 0, reservedStock: 0 },
       });
 
-      return { productsReset: nonZero.length, location: location || "ALL" };
+      return {
+        productsReset: nonZero.length,
+        stockLevelRowsReset: levelsReset.count,
+        location: location || "ALL",
+      };
     });
 
     return successResponse(result);

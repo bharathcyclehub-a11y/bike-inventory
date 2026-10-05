@@ -13,9 +13,7 @@ const SERVICE_LABEL: Record<string, string> = { IN_STORE: "In-Store Service", CU
 // to the issue's timeline (VendorIssueNote) so each ticket has a full record of actions taken.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const user = await requireFeature("vendor_issues", "view", [
-      "ADMIN", "CEO", "SUPERVISOR", "PURCHASE_MANAGER", "ACCOUNTS_MANAGER", "STORE_MANAGER", "SERVICE_MANAGER",
-    ]);
+    const user = await requireFeature("vendor_issues", "view");
     const { id } = await params;
     const body = await req.json();
 
@@ -69,13 +67,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       include: {
         vendor: {
           select: {
-            id: true, name: true, code: true, whatsappNumber: true, phone: true,
-            contacts: {
-              where: { OR: [{ whatsapp: { not: null } }, { phone: { not: null } }] },
-              orderBy: { isPrimary: "desc" },
-              take: 1,
-              select: { name: true, phone: true, whatsapp: true },
-            },
+            // The contact person lives on Vendor since plan 2109 (R28); VendorContact is no longer read.
+            id: true, name: true, code: true, whatsappNumber: true, phone: true, contactPerson: true,
           },
         },
         bill: { select: { id: true, billNo: true, amount: true } },

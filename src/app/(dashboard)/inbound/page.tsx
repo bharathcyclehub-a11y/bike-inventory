@@ -1,18 +1,23 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useSession } from "next-auth/react";
+import { Suspense, useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Search, Truck, Loader2, Calendar, Cloud, Download } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { useDebounce } from "@/lib/utils";
+import { useDebounce } from "@/hooks/use-debounce";
 import { type DateRangeKey } from "@/components/date-filter";
 import { FilterSheet } from "@/components/filter-sheet";
 import { usePermissions } from "@/lib/use-permissions";
 import { ErrorBanner } from "@/components/ui/error-banner";
 import { SkeletonList } from "@/components/ui/skeleton";
+import { apiFetch, apiTry } from "@/lib/api-client";
+import { createLogger } from "@/lib/logger";
+import { isInboundQuickFilter, type InboundQuickFilter } from "@/lib/inbound/filters";
+
+const log = createLogger("inbound");
 
 interface InboundShipment {
   id: string;
@@ -25,7 +30,7 @@ interface InboundShipment {
   totalItems: number;
   deliveredAt: string | null;
   createdAt: string;
-  brand: { name: string };
+
   createdBy: { name: string };
   lineItems: { productName: string; quantity: number; isDelivered: boolean }[];
   _count: { lineItems: number; preBookings: number };
@@ -51,7 +56,7 @@ interface ZohoBillPreview {
   };
 }
 
-type StatusFilter = "ALL" | "IN_TRANSIT" | "PARTIALLY_DELIVERED" | "arriving_this_week" | "DELIVERED" | "LEGACY";
+type StatusFilter = "ALL" | "IN_TRANSIT" | "LEGACY";
 
 interface LegacyInward {
   id: string;
@@ -81,32 +86,75 @@ function daysUntil(d: string) {
 
 const STATUS_BADGE: Record<string, { variant: "success" | "warning" | "info" | "default"; label: string }> = {
   IN_TRANSIT: { variant: "warning", label: "In Transit" },
-  DELIVERED: { variant: "success", label: "Delivered" },
+  // "Completed", not "Delivered" (plan 2109-inbound-bins-navigation-fixes, R30): a shipment
+  // whose every line is received. "Delivered" read like an outward to a customer.
+  DELIVERED: { variant: "success", label: "Completed" },
   PARTIALLY_DELIVERED: { variant: "info", label: "Partial" },
 };
 
+// The filter SHEET keeps what the chips do not cover: In Transit and the Pre-Merge history,
+// beside the date range. Partial / This week / Completed moved to the chip row (R30).
 const STATUS_OPTIONS: { key: StatusFilter; label: string }[] = [
   { key: "ALL", label: "All" },
   { key: "IN_TRANSIT", label: "In Transit" },
-  { key: "PARTIALLY_DELIVERED", label: "Partial" },
-  { key: "arriving_this_week", label: "This Week" },
-  { key: "DELIVERED", label: "Delivered" },
   { key: "LEGACY", label: "Pre-Merge" },
 ];
 
+// ── Quick filter chips (plan 2109-inbound-bins-navigation-fixes, R30, Q22a / Q23a) ──
+//
+// One tap each, kept in the URL as `?filter=` so a link can open a chip — the dashboard's
+// inbound-approvals card opens `/inbound?filter=not_approved`. The server owns what each chip
+// means (`src/lib/inbound/filters.ts`) and returns every chip's count in the list response.
+type QuickChip = "all" | InboundQuickFilter;
+
+const QUICK_CHIPS: { key: QuickChip; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "not_approved", label: "Not approved" },
+  { key: "returned", label: "Returned" },
+  { key: "approved_not_received", label: "Approved, not received" },
+  { key: "partial", label: "Partial" },
+  { key: "completed", label: "Completed" },
+  { key: "this_week", label: "This week" },
+];
 
 export default function InboundPage() {
-  const { data: session } = useSession();
-  const role = (session?.user as { role?: string })?.role || "";
-  const { canFetch } = usePermissions(role);
-  const canFetchBills = canFetch("inbound");
+  return (
+    <Suspense fallback={<SkeletonList count={6} type="card" />}>
+      <InboundScreen />
+    </Suspense>
+  );
+}
+
+// `useSearchParams` in a Client Component must sit under a Suspense boundary, or the production
+// build fails prerendering this page (node_modules/next/dist/docs … use-search-params.md,
+// "Prerendering") — the same shape as `purchase-orders/page.tsx`.
+function InboundScreen() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const rawChip = searchParams.get("filter");
+  const chip: QuickChip = isInboundQuickFilter(rawChip) ? rawChip : "all";
+
+  const { canFetch } = usePermissions();
+  const canFetchBills = canFetch("zoho");
 
   const [shipments, setShipments] = useState<InboundShipment[]>([]);
+  const [counts, setCounts] = useState<Partial<Record<QuickChip, number>>>({});
   const [legacyInwards, setLegacyInwards] = useState<LegacyInward[]>([]);
   const [isLegacy, setIsLegacy] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<StatusFilter>("ALL");
+  // A chip and a sheet status are one choice, never both: the server lets `filter` win, so a
+  // leftover sheet status would silently do nothing. Choosing one clears the other.
+  // `replace`, not `push`: flicking between chips should not fill the back button.
+  const selectChip = (next: QuickChip) => {
+    setFilter("ALL");
+    router.replace(next === "all" ? "/inbound" : `/inbound?filter=${next}`, { scroll: false });
+  };
+  const selectStatus = (next: StatusFilter) => {
+    setFilter(next);
+    if (chip !== "all") router.replace("/inbound", { scroll: false });
+  };
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search);
   const [showSearch, setShowSearch] = useState(false);
@@ -121,146 +169,175 @@ export default function InboundPage() {
   const [fetchPullId, setFetchPullId] = useState("");
   const [fetchDays, setFetchDays] = useState<number>(7);
   const [fetchCustomFrom, setFetchCustomFrom] = useState("");
+  const [fetchCustomTo, setFetchCustomTo] = useState("");
+  const [fetchSummary, setFetchSummary] = useState("");
+  // The bills this window found that are ALREADY in — rendered as a neutral card with a link
+  // to each shipment, not as errors. They used to be pushed into errors[] by the server and
+  // shown in a red banner, which made a normal re-fetch look like a failure.
+  const [alreadyImported, setAlreadyImported] = useState<Array<{ ref: string; where?: string; id?: string; no?: string; status?: string }>>([]);
+  // The fetch that produced the current error, so Retry re-runs THAT fetch. It used to call
+  // fetchData(), which reloads the local shipment list and does not retry anything.
+  const lastFetchRef = useRef<"search" | "range">("range");
+  const [listError, setListError] = useState("");
   const [billSearchNo, setBillSearchNo] = useState("");
   const [billPreviews, setBillPreviews] = useState<ZohoBillPreview[]>([]);
   const [selectedBills, setSelectedBills] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(() => {
     setLoading(true);
+    setListError("");
     const params = new URLSearchParams({ limit: "50" });
-    if (filter !== "ALL") params.set("status", filter);
+    if (chip !== "all") params.set("filter", chip);
+    else if (filter !== "ALL") params.set("status", filter);
     if (debouncedSearch.length >= 2) params.set("search", debouncedSearch);
     if (dateFrom) params.set("dateFrom", dateFrom);
     if (dateTo) params.set("dateTo", dateTo);
 
+    // `apiFetch`, not `fetch().then(r => r.json())` (CLAUDE.md): an expired session answers
+    // with the login page's HTML and the raw `.json()` threw "Unexpected token <".
     Promise.all([
-      fetch(`/api/inbound?${params}`).then((r) => r.json()),
-      fetch("/api/inbound/stats").then((r) => r.json()),
+      apiFetch<{
+        shipments: InboundShipment[] | LegacyInward[];
+        isLegacy?: boolean;
+        counts?: Partial<Record<QuickChip, number>>;
+      }>(`/api/inbound?${params}`),
+      apiFetch<Stats>("/api/inbound/stats"),
     ])
-      .then(([listRes, statsRes]) => {
-        if (listRes.success) {
-          if (listRes.data.isLegacy) {
-            setLegacyInwards(listRes.data.shipments || []);
-            setShipments([]);
-            setIsLegacy(true);
-          } else {
-            setShipments(listRes.data.shipments || []);
-            setLegacyInwards([]);
-            setIsLegacy(false);
-          }
+      .then(([list, statsData]) => {
+        if (list.isLegacy) {
+          setLegacyInwards((list.shipments as LegacyInward[]) || []);
+          setShipments([]);
+          setIsLegacy(true);
+        } else {
+          setShipments((list.shipments as InboundShipment[]) || []);
+          setLegacyInwards([]);
+          setIsLegacy(false);
+          // The Pre-Merge list has no chips of its own, so it leaves the last counts in place.
+          if (list.counts) setCounts(list.counts);
         }
-        if (statsRes.success) setStats(statsRes.data);
+        setStats(statsData);
       })
       .catch((e) => {
+        // listError, NOT fetchError. Failing to LOAD the shipment list is a different
+        // failure from a Zoho fetch going wrong, and sharing one banner meant a load error
+        // offered a Retry that re-ran a Zoho pull, and vice versa.
+        log.error("inbound list load failed", { message: e instanceof Error ? e.message : String(e) });
         if (typeof navigator !== "undefined" && !navigator.onLine) {
-          setFetchError("You're offline. Check your connection and retry.");
+          setListError("You are offline. Check your connection and retry.");
         } else {
-          setFetchError(e instanceof Error ? e.message : "Failed to load data. Tap retry.");
+          setListError(e instanceof Error ? e.message : "Failed to load data. Tap retry.");
         }
       })
       .finally(() => setLoading(false));
-  }, [filter, debouncedSearch, dateFrom, dateTo]);
+  }, [chip, filter, debouncedSearch, dateFrom, dateTo]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // ─── Zoho Bill Fetch ───
-  const fetchWithTimeout = async (url: string, options?: RequestInit, timeoutMs = 20000) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      return await fetch(url, { ...options, signal: controller.signal });
-    } catch (e) {
-      if (e instanceof DOMException && e.name === "AbortError") throw new Error("Request timed out — try again");
-      throw e;
-    } finally { clearTimeout(timer); }
-  };
+  //
+  // `fetchWithTimeout` is GONE. It was a hand-rolled AbortController wrapper that returned a
+  // raw Response, so every call site still did `.then(r => r.json())` — the exact pattern
+  // CLAUDE.md bans, and the reason an expired session showed up as
+  // "Unexpected token '<'" instead of "your session has expired". `apiFetch`'s `timeoutMs`
+  // does the same job and keeps the HTML guard.
 
-  const handleFetchBills = async () => {
+  /**
+   * MODE IS AN ARGUMENT, not read from state.
+   *
+   * The old version decided search-vs-range by reading `billSearchNo` at call time, so the
+   * Fetch button used the search text whenever the box happened to be non-empty — the range
+   * chips were silently ignored (D7, defect 1). Passing the mode explicitly makes the two
+   * buttons mean what they say and removes the stale-closure hazard entirely.
+   */
+  const handleFetchBills = useCallback(async (mode: "search" | "range") => {
+    lastFetchRef.current = mode;
     setFetchStep("fetching");
     setFetchError("");
-    setFetchProgress("Connecting to Zoho...");
+    setFetchSummary("");
+    setFetchProgress("Connecting to Zoho…");
     try {
-      const initRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "init" }),
-      }).then(r => r.json());
-      if (!initRes.success) throw new Error(initRes.error || "Init failed");
-      const pullId = initRes.data.pullId;
+      const init = await apiFetch<{ pullId: string }>("/api/zoho/trigger-pull", {
+        method: "POST", json: { step: "init" }, timeoutMs: 20_000,
+      });
+      const pullId = init.pullId;
       setFetchPullId(pullId);
 
-      const isBillSearch = billSearchNo.trim().length > 0;
-      let fromDate: string | undefined;
-      let searchText: string | undefined;
-      let label: string;
+      // No local date arithmetic. `new Date()` + `toISOString().slice(0,10)` on an IST
+      // browser rolls back a day before 05:30, so "3 days" fetched the wrong three days.
+      // The server resolves the window in IST and reports what it used.
+      const body: Record<string, unknown> =
+        mode === "search"
+          ? { searchText: billSearchNo.trim() }
+          : fetchDays === -1
+            ? { fromDate: fetchCustomFrom || undefined, toDate: fetchCustomTo || undefined }
+            : { days: fetchDays };
 
-      if (isBillSearch) {
-        searchText = billSearchNo.trim();
-        label = `"${searchText}"`;
-        setFetchProgress(`Searching for bill ${label}...`);
-      } else if (fetchDays === -1 && fetchCustomFrom) {
-        fromDate = fetchCustomFrom;
-        label = "custom range";
-        setFetchProgress(`Pulling bills (${label})...`);
-      } else {
-        const fromDateObj = new Date();
-        fromDateObj.setDate(fromDateObj.getDate() - fetchDays);
-        fromDate = fromDateObj.toISOString().slice(0, 10);
-        label = `last ${fetchDays} days`;
-        setFetchProgress(`Pulling bills (${label})...`);
-      }
+      setFetchProgress(
+        mode === "search" ? `Searching for bill "${billSearchNo.trim()}"…` : "Pulling bills…"
+      );
 
-      const billRes = await fetchWithTimeout("/api/zoho/trigger-pull", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ step: "bills", pullId, fromDate, searchText }),
-      }, 60000).then(r => r.json());
-      if (!billRes.success) throw new Error(billRes.error || "Bills fetch failed");
+      const billRes = await apiFetch<{
+        billsNew: number; apiCalls: number; errors: string[]; fetched: number;
+        window: { from: string; to: string; clampedToFy: boolean } | null;
+        skipped: { counts: { alreadyImported: number }; items: Array<{ ref: string; where?: string; id?: string; no?: string; status?: string }> };
+      }>("/api/zoho/trigger-pull", {
+        method: "POST", json: { step: "bills", pullId, ...body }, timeoutMs: 60_000,
+      });
 
-      const billsFound = billRes.data.billsNew || 0;
-      setFetchProgress(`Found ${billsFound} new bill${billsFound !== 1 ? "s" : ""}. Finalizing...`);
+      const billsFound = billRes.billsNew || 0;
+      const w = billRes.window;
+      const rangeLabel = w ? `${w.from} – ${w.to}` : `"${billSearchNo.trim()}"`;
+      setAlreadyImported(billRes.skipped?.items ?? []);
+      setFetchSummary(
+        `${billRes.fetched ?? 0} found in Zoho (${rangeLabel})` +
+        (billRes.skipped?.counts.alreadyImported ? ` · ${billRes.skipped.counts.alreadyImported} already imported` : "")
+      );
 
-      await fetchWithTimeout("/api/zoho/trigger-pull", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      setFetchProgress(`Found ${billsFound} new bill${billsFound !== 1 ? "s" : ""}. Finalizing…`);
+      await apiTry("/api/zoho/trigger-pull", {
+        method: "POST",
+        json: {
           step: "finalize", pullId,
-          billsNew: billRes.data.billsNew, apiCalls: billRes.data.apiCalls,
-          allErrors: billRes.data.errors || [],
-        }),
-      }).then(r => r.json()).catch(() => {});
+          billsNew: billRes.billsNew, apiCalls: billRes.apiCalls, allErrors: billRes.errors || [],
+        },
+        timeoutMs: 20_000,
+      }).then((r) => { if (r.error) log.warn("finalize failed", { pullId, error: r.error }); });
 
-      setFetchProgress("Loading preview...");
-      const previewRes = await fetchWithTimeout(`/api/zoho/pull-review?pullId=${pullId}`).then(r => r.json());
-      if (!previewRes.success) throw new Error(previewRes.error || "Failed to load preview");
-      const billItems = (previewRes.data.previews || []).filter(
-        (p: ZohoBillPreview & { entityType: string; status: string }) => p.entityType === "bill" && p.status === "PENDING"
+      setFetchProgress("Loading preview…");
+      const previewData = await apiFetch<{ previews: Array<ZohoBillPreview & { entityType: string; status: string }> }>(
+        `/api/zoho/pull-review?pullId=${pullId}`, { timeoutMs: 20_000 }
+      );
+      const billItems = (previewData.previews || []).filter(
+        (p) => p.entityType === "bill" && p.status === "PENDING"
       );
       setBillPreviews(billItems);
-      setSelectedBills(new Set(billItems.map((b: ZohoBillPreview) => b.id)));
+      setSelectedBills(new Set(billItems.map((b) => b.id)));
       setFetchStep(billItems.length > 0 ? "selecting" : "idle");
-      // Show dedup info (already imported bills)
-      const fetchErrors = billRes.data.errors || [];
+
       if (billItems.length === 0) {
-        if (fetchErrors.length > 0) {
-          setFetchError(fetchErrors.join("\n"));
-        } else {
-          setFetchError(billsFound > 0 ? `${billsFound} found but all already imported` : `No new bills found (${label})`);
-        }
-        if (isBillSearch) setBillSearchNo("");
-      } else if (fetchErrors.length > 0) {
-        // Some new + some already imported
-        setFetchError(fetchErrors.join("\n"));
+        // The already-imported list is NOT an error any more — it renders as its own neutral
+        // card. This message is only about the genuinely empty outcomes.
+        setFetchError(
+          billRes.skipped?.counts.alreadyImported
+            ? `${billRes.fetched} bill${billRes.fetched === 1 ? "" : "s"} dated ${rangeLabel}, all already imported.`
+            : `Zoho has no bills dated ${rangeLabel}.`
+        );
+        if (mode === "search") setBillSearchNo("");
       }
     } catch (e) {
+      log.error("bill fetch failed", { mode, message: e instanceof Error ? e.message : String(e) });
       setFetchError(e instanceof Error ? e.message : "Fetch failed");
       setFetchStep("idle");
     } finally {
       setFetchProgress("");
     }
-  };
+  }, [billSearchNo, fetchDays, fetchCustomFrom, fetchCustomTo]);
 
   const toggleBill = (id: string) => {
     setSelectedBills(prev => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
   };
@@ -269,17 +346,17 @@ export default function InboundPage() {
     if (selectedBills.size === 0) return;
     setFetchStep("importing");
     try {
-      const res = await fetch("/api/zoho/pull-review/approve", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      // `apiFetch` throws with the server's message on failure, and never parses HTML as JSON.
+      const res = await apiFetch<{ bills?: number; errors?: string[] }>("/api/zoho/pull-review/approve", {
+        method: "POST",
+        json: {
           pullId: fetchPullId, action: "approve",
           entityType: "bill", previewIds: Array.from(selectedBills),
           source: "inventory",
-        }),
-      }).then(r => r.json());
-      if (!res.success) throw new Error(res.error || "Import failed");
-      const imported = res.data?.bills || 0;
-      const errors = res.data?.errors || [];
+        },
+      });
+      const imported = res?.bills || 0;
+      const errors = res?.errors || [];
       setFetchStep("idle");
       setBillPreviews([]);
       setSelectedBills(new Set());
@@ -291,6 +368,11 @@ export default function InboundPage() {
         setFetchError(msgs.join("\n"));
       }
     } catch (e) {
+      log.error("bill import failed", {
+        pullId: fetchPullId,
+        bills: selectedBills.size,
+        message: e instanceof Error ? e.message : String(e),
+      });
       setFetchError(e instanceof Error ? e.message : "Import failed");
       setFetchStep("selecting");
     }
@@ -333,11 +415,11 @@ export default function InboundPage() {
                 placeholder="e.g. EB/10311/FY27"
                 value={billSearchNo}
                 onChange={(e) => setBillSearchNo(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter" && billSearchNo.trim()) handleFetchBills(); }}
+                onKeyDown={(e) => { if (e.key === "Enter" && billSearchNo.trim()) handleFetchBills("search"); }}
                 className="flex-1 text-xs h-8"
               />
               <button
-                onClick={handleFetchBills}
+                onClick={() => handleFetchBills("search")}
                 disabled={!billSearchNo.trim()}
                 className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white disabled:opacity-50 shrink-0"
               >
@@ -376,12 +458,19 @@ export default function InboundPage() {
                   <input type="date" value={fetchCustomFrom} onChange={(e) => setFetchCustomFrom(e.target.value)}
                     className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
                 </div>
+                {/* CREATED here — this screen never had a To date, so a custom range always
+                    ran to today whether or not that was wanted. */}
+                <div>
+                  <label className="text-[10px] text-slate-500 block mb-0.5">To (default today)</label>
+                  <input type="date" value={fetchCustomTo} onChange={(e) => setFetchCustomTo(e.target.value)}
+                    className="px-2 py-1.5 text-xs border border-slate-300 rounded-lg" />
+                </div>
               </div>
             )}
           </div>
           <div className="flex gap-2">
             <button
-              onClick={() => { setBillSearchNo(""); handleFetchBills(); }}
+              onClick={() => handleFetchBills("range")}
               disabled={fetchDays === -1 && !fetchCustomFrom}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-900 text-white disabled:opacity-50"
             >
@@ -405,14 +494,63 @@ export default function InboundPage() {
         </div>
       )}
 
+      {/* Loading the shipment LIST failed — a different failure from a Zoho fetch, with a
+          different retry. Sharing one banner meant Retry ran the wrong thing. */}
+      {listError && (
+        <ErrorBanner
+          message={listError}
+          type={typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error"}
+          onRetry={() => { setListError(""); fetchData(); }}
+          onDismiss={() => setListError("")}
+        />
+      )}
+
       {/* Fetch Error */}
       {fetchError && (
         <ErrorBanner
           message={fetchError}
           type={typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "error"}
-          onRetry={() => { setFetchError(""); fetchData(); }}
+          onRetry={() => { setFetchError(""); handleFetchBills(lastFetchRef.current); }}
           onDismiss={() => setFetchError("")}
         />
+      )}
+
+      {/* What the window found, including what is NOT in the selection panel below. */}
+      {fetchSummary && (
+        <div className="mb-3 bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-[11px] text-slate-600">
+          {fetchSummary}
+        </div>
+      )}
+
+      {/* ALREADY IMPORTED — a neutral card, not an error banner.
+          The server used to push these into `errors[]`, which turned an ordinary re-fetch of
+          a window into a red "partial pull" warning listing bills that were perfectly fine. */}
+      {alreadyImported.length > 0 && (
+        <Card className="mb-3">
+          <CardContent className="p-3">
+            <p className="text-xs font-semibold text-slate-700 mb-1.5">
+              Already imported ({alreadyImported.length})
+            </p>
+            <ul className="space-y-1">
+              {alreadyImported.map((it) => (
+                <li key={it.ref} className="text-[11px] text-slate-600 flex items-center gap-1.5 flex-wrap">
+                  <span className="font-mono">{it.ref}</span>
+                  {it.no && it.id ? (
+                    <>
+                      <span className="text-slate-400">→</span>
+                      <Link href={`/inbound/${it.id}`} className="text-blue-600 underline font-mono">
+                        {it.no}
+                      </Link>
+                      {it.status && <Badge variant="default" className="text-[10px]">{it.status}</Badge>}
+                    </>
+                  ) : (
+                    <span className="text-slate-400">→ in accounts</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
       )}
 
       {/* Bill Selection Panel */}
@@ -473,8 +611,8 @@ export default function InboundPage() {
         <div className="grid grid-cols-4 gap-2 mb-3">
           <button
             type="button"
-            onClick={() => setFilter(filter === "IN_TRANSIT" ? "ALL" : "IN_TRANSIT")}
-            className={`rounded-xl border p-2.5 text-center transition-colors min-h-[44px] ${filter === "IN_TRANSIT" ? "border-amber-400 bg-amber-50 ring-1 ring-amber-300" : "border-slate-200 bg-white hover:border-amber-300"}`}
+            onClick={() => selectStatus(filter === "IN_TRANSIT" && chip === "all" ? "ALL" : "IN_TRANSIT")}
+            className={`rounded-xl border p-2.5 text-center transition-colors min-h-[44px] ${filter === "IN_TRANSIT" && chip === "all" ? "border-amber-400 bg-amber-50 ring-1 ring-amber-300" : "border-slate-200 bg-white hover:border-amber-300"}`}
           >
             <p className="text-xl font-bold text-amber-600 tabular-nums leading-none">{stats.inTransit.items}</p>
             <p className="text-[11px] font-medium text-slate-600 mt-1">In Transit</p>
@@ -482,8 +620,8 @@ export default function InboundPage() {
           </button>
           <button
             type="button"
-            onClick={() => setFilter(filter === "arriving_this_week" ? "ALL" : "arriving_this_week")}
-            className={`rounded-xl border p-2.5 text-center transition-colors min-h-[44px] ${filter === "arriving_this_week" ? "border-blue-400 bg-blue-50 ring-1 ring-blue-300" : "border-slate-200 bg-white hover:border-blue-300"}`}
+            onClick={() => selectChip(chip === "this_week" ? "all" : "this_week")}
+            className={`rounded-xl border p-2.5 text-center transition-colors min-h-[44px] ${chip === "this_week" ? "border-blue-400 bg-blue-50 ring-1 ring-blue-300" : "border-slate-200 bg-white hover:border-blue-300"}`}
           >
             <p className="text-xl font-bold text-blue-600 tabular-nums leading-none">{stats.arrivingThisWeek.items}</p>
             <p className="text-[11px] font-medium text-slate-600 mt-1">This Week</p>
@@ -496,11 +634,11 @@ export default function InboundPage() {
           </div>
           <button
             type="button"
-            onClick={() => setFilter(filter === "DELIVERED" ? "ALL" : "DELIVERED")}
-            className={`rounded-xl border p-2.5 text-center transition-colors min-h-[44px] ${filter === "DELIVERED" ? "border-green-400 bg-green-50 ring-1 ring-green-300" : "border-slate-200 bg-white hover:border-green-300"}`}
+            onClick={() => selectChip(chip === "completed" ? "all" : "completed")}
+            className={`rounded-xl border p-2.5 text-center transition-colors min-h-[44px] ${chip === "completed" ? "border-green-400 bg-green-50 ring-1 ring-green-300" : "border-slate-200 bg-white hover:border-green-300"}`}
           >
             <p className="text-xl font-bold text-green-600 tabular-nums leading-none">{stats.deliveredThisMonth}</p>
-            <p className="text-[11px] font-medium text-slate-600 mt-1">Delivered</p>
+            <p className="text-[11px] font-medium text-slate-600 mt-1">Completed</p>
             <p className="text-[10px] text-slate-400">This Month</p>
           </button>
         </div>
@@ -510,7 +648,7 @@ export default function InboundPage() {
       {showSearch && (
         <div className="relative mb-2">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <Input placeholder="Search bill no, brand..." value={search}
+          <Input placeholder="Search bill no, shipment..." value={search}
             onChange={(e) => setSearch(e.target.value)} className="pl-9 pr-9" autoFocus />
           <button onClick={() => { setShowSearch(false); setSearch(""); }}
             className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600">
@@ -526,12 +664,45 @@ export default function InboundPage() {
         onDateChange={(key, from, to) => { setDateFilter(key); setDateFrom(from); setDateTo(to); }}
         groups={[{
           label: "Status",
-          value: filter,
+          value: chip === "all" ? filter : "ALL",
           defaultValue: "ALL",
           options: STATUS_OPTIONS,
-          onChange: (key) => setFilter(key as StatusFilter),
+          onChange: (key) => selectStatus(key as StatusFilter),
         }]}
       />
+
+      {/* Quick filters (R30). Horizontal, scrolls sideways on a phone rather than wrapping into
+          three rows; the page itself never scrolls horizontally. */}
+      <div
+        role="group"
+        aria-label="Quick filters"
+        className="mb-3 flex gap-2 overflow-x-auto pb-1"
+      >
+        {QUICK_CHIPS.map((c) => {
+          const active = chip === c.key && (c.key !== "all" || filter === "ALL");
+          const n = counts[c.key];
+          // "Not approved · 4" (Q23a) — the approver's to-do number. The other chips show a
+          // count too, but only when the server sent one.
+          return (
+            <button
+              key={c.key}
+              type="button"
+              aria-pressed={active}
+              onClick={() => selectChip(c.key)}
+              className={`shrink-0 min-h-[36px] rounded-full border px-3 text-xs font-medium whitespace-nowrap tabular-nums transition-colors focus-ring ${
+                active
+                  ? "bg-slate-900 text-white border-slate-900"
+                  : c.key === "not_approved" && (n ?? 0) > 0
+                    ? "bg-amber-50 text-amber-800 border-amber-300"
+                    : "bg-white text-slate-600 border-slate-200 hover:border-slate-300"
+              }`}
+            >
+              {c.label}
+              {n !== undefined && c.key !== "all" ? ` · ${n}` : ""}
+            </button>
+          );
+        })}
+      </div>
 
       {/* List */}
       {loading ? (
@@ -605,8 +776,8 @@ export default function InboundPage() {
                 <div className="p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-slate-900 truncate">{s.brand.name}</p>
-                      <p className="text-xs text-slate-500 tabular-nums truncate">Bill {s.billNo} · {s.shipmentNo}</p>
+                      <p className="text-sm font-semibold text-slate-900 truncate">{s.shipmentNo}</p>
+                      <p className="text-xs text-slate-500 tabular-nums truncate">Bill {s.billNo}</p>
                     </div>
                     <Badge variant={badge.variant} className="shrink-0">{badge.label}</Badge>
                   </div>

@@ -1,41 +1,47 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/db";
 import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { approveInbound } from "@/lib/approvals/actions/inbound";
+import { createLogger } from "@/lib/logger";
 
-// POST: Approve an inbound shipment (Supervisor or Accounts Manager)
+const log = createLogger("inbound:approve");
+
+/**
+ * POST: approve an inbound shipment — the gate that makes it receivable.
+ *
+ * The decision itself lives in `src/lib/approvals/actions/inbound.ts` (plan 1709, P17), because
+ * the Requests page and Wave 3's push-notification Approve button do the same act with no
+ * screen behind them, and one approval rule with three implementations is how they drift.
+ *
+ * NEW in R25: a shipment that was sent back for correction cannot be approved over the
+ * creator's head — `approveInbound` refuses while `rejectedAt` is set, and the creator's
+ * resubmit is what clears it.
+ */
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const user = await requireAuth(["ADMIN", "SUPERVISOR", "ACCOUNTS_MANAGER"]);
+    const user = await requireFeature("inbound", "approve");
     const { id } = await params;
 
-    const shipment = await prisma.inboundShipment.findUnique({
-      where: { id },
-      select: { id: true, approvedAt: true, status: true },
+    const result = await approveInbound({ id: user.id, name: user.name }, id);
+    if (!result.ok) {
+      log.warn("shipment approval refused", { shipmentId: id, status: result.httpStatus });
+      return errorResponse(result.error, result.httpStatus);
+    }
+
+    return successResponse({
+      message: result.message,
+      shipmentNo: result.recordRef,
+      status: result.newStatus,
     });
-
-    if (!shipment) return errorResponse("Shipment not found", 404);
-    if (shipment.approvedAt) return errorResponse("Already approved", 400);
-
-    const updated = await prisma.inboundShipment.update({
-      where: { id },
-      data: {
-        approvedAt: new Date(),
-        approvedById: user.id,
-      },
-      include: {
-        approvedBy: { select: { name: true } },
-      },
-    });
-
-    return successResponse(updated);
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
-    return errorResponse(error instanceof Error ? error.message : "Approval failed", 400);
+    const message = error instanceof Error ? error.message : "Approval failed";
+    log.error("approval failed", { message });
+    return errorResponse(message, 400);
   }
 }

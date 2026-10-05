@@ -1,28 +1,128 @@
 export const dynamic = "force-dynamic";
-export const maxDuration = 30; // Bill details now fetched in approve step
+export const runtime = "nodejs";
+// nodejs, explicitly: this route reaches SMTP (a raw socket on 587) and the FCM JWT signer
+// (node crypto) through notify(). Neither works on the edge runtime, and the failure there
+// is not self-explanatory. Node is the default today; this stops a later change from
+// silently breaking sends. See the notifications plan, Part C and D.1.
+// 60, not 30. Headroom for the bill and invoice steps, which fetch a page at a time and then
+// write their previews in a fixed number of queries rather than one round trip per record.
+export const maxDuration = 60;
 
-import { NextRequest } from "next/server";
+import { NextRequest, after } from "next/server";
 import { prisma } from "@/lib/db";
-import { ZohoClient } from "@/lib/zoho";
-import { ZakyaClient } from "@/lib/zakya";
-import { ZohoInventoryClient } from "@/lib/zoho-inventory";
-import { successResponse, errorResponse } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { successResponse, errorResponse, failure } from "@/lib/api-utils";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { usersWithPermission } from "@/lib/rbac";
+import { notify } from "@/lib/notify";
+import {
+  getBooks,
+  getInventory,
+  getZakya,
+  type IntegrationClient,
+  type IntegrationBill,
+  type IntegrationInvoice,
+} from "@/lib/integrations";
+import { createLogger } from "@/lib/logger";
+import { zohoPullSchema } from "@/lib/validations";
+import { resolveBillWindow, type ResolvedWindow } from "@/lib/zoho/date-window";
+import { getTodayIST } from "@/lib/services/timezone";
+import { logActivity } from "@/lib/activity-log";
+import { floorWarehouseForInvoice, listFloorWarehousesWithPrefix } from "@/lib/deliveries/zoho-invoice";
+import { toPlus91 } from "@/lib/phone";
+
+const log = createLogger("zoho:trigger-pull");
+
+/**
+ * Close the `running` SyncLog row this pull created (R1).
+ *
+ * THE WEDGE THIS REMOVES. `init` creates a `running` row BEFORE anything can fail, and only
+ * `finalize` ever cleared it. Any early return or throw in bills/invoices left the row behind,
+ * and the next `init` within two minutes answered 409 "Sync already in progress" — so the
+ * FIRST failure was invisible and the SECOND click reported a wedge that had nothing to do
+ * with what actually went wrong. Every early exit below calls this.
+ */
+async function closeRunningSync(reason: string) {
+  try {
+    const row = await prisma.syncLog.findFirst({
+      where: { status: "running", syncType: "cron-pull" },
+      orderBy: { startedAt: "desc" },
+    });
+    if (!row) return;
+    await prisma.syncLog.update({
+      where: { id: row.id },
+      data: { status: "failed", completedAt: new Date(), errors: JSON.stringify([reason]) },
+    });
+    log.info("running sync closed", { syncLogId: row.id, reason });
+  } catch (e) {
+    log.error("could not close the running sync row", {
+      reason,
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+}
+
+/**
+ * Why no client could be built, in words a person can act on.
+ *
+ * `init()` returns the same `false` for "never connected" and "the refresh token was
+ * refused", which is the root of "fetch does nothing": both looked like "no new invoices".
+ * `isConnected` plus `lastAuthErrorAt` (MIG-1a) separate them.
+ */
+async function noSourceMessage(): Promise<string> {
+  const configs = await prisma.integrationConfig.findMany({
+    select: { provider: true, isConnected: true, lastAuthErrorAt: true },
+  });
+  const refused = configs.find((c) => c.isConnected && c.lastAuthErrorAt);
+  if (refused) {
+    return `Zoho is connected but its token was refused — reconnect it on Settings › Integrations.`;
+  }
+  return "Zoho is not connected — connect it on Settings › Integrations.";
+}
+
+/** The §5.2 skip block, built once so bills and invoices cannot drift apart. */
+type SkipReason = "alreadyImported" | "void" | "centre";
+interface SkipItem {
+  ref: string;
+  reason: SkipReason;
+  where?: "inbound" | "accounts" | "deliveries";
+  id?: string;
+  no?: string;
+  status?: string;
+}
 
 /*
- * 3-SOURCE MANUAL PULL (step-by-step):
+ * MANUAL PULL (step-by-step):
  * ─────────────────────────
- * Items:     Zoho Inventory (fallback Books)
- * Contacts:  Zoho Books
  * Bills:     Zoho Books (fallback Zakya POS)
  * Invoices:  Zakya POS (fallback Books)
+ *
+ * ITEMS and CONTACTS are gone. Products no longer come from Zoho at all — the catalog is
+ * loaded by scripts/import-products.ts — and contacts had no caller once the central pull
+ * card was removed. Vendors still arrive from Zoho: the BILL branch of pull-review/approve
+ * find-or-creates one from the bill's vendor name.
  */
 
 export async function POST(req: NextRequest) {
+  // Captured for the catch. A 500 has to name WHICH step failed — init, items, bills and
+  // finalize are indistinguishable otherwise. Kept as a separate object rather than hoisting
+  // the destructured consts, so their type narrowing below is preserved.
+  const ctx: { step?: string; pullId?: string } = {};
+
   try {
-    await requireAuth(["ADMIN", "SUPERVISOR", "INWARDS_EXECUTIVE", "OUTWARDS_EXECUTIVE", "ACCOUNTS_MANAGER", "PURCHASE_MANAGER"]);
-    const body = await req.json();
-    const { step, pullId: existingPullId, fullImport, fromDate, searchText } = body as { step: string; pullId?: string; fullImport?: boolean; fromDate?: string; searchText?: string };
+    // The user is kept: both Zoho notifications below name the person who pressed the button
+    // in their body and leave them out of the recipients.
+    const user = await requireFeature("zoho", "fetch");
+
+    // Zod at the boundary. The old bare cast named four fields and dropped `days` and
+    // `toDate` on the floor, which is exactly why the date chips appeared to do nothing.
+    const parsed = zohoPullSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return errorResponse(parsed.error.issues[0]?.message ?? "Invalid request", 400);
+    }
+    const body = parsed.data;
+    const { step, pullId: existingPullId, days, fromDate, toDate, searchText } = body;
+    ctx.step = step;
+    ctx.pullId = existingPullId;
 
     // ─── INIT ───
     if (step === "init") {
@@ -38,25 +138,75 @@ export async function POST(req: NextRequest) {
       const runningSync = await prisma.syncLog.findFirst({
         where: { status: "running", syncType: "cron-pull" },
       });
-      if (runningSync) return errorResponse("Sync already in progress", 409);
+      if (runningSync) return errorResponse("A Zoho pull is already running. Wait for it to finish, or try again in two minutes.", 409);
 
-      await prisma.syncLog.create({
+      // SOURCE CHECK FIRST, ROW SECOND.
+      //
+      // This order is the fix, not a tidy-up. The create used to come first, so a "no source
+      // connected" refusal left a `running` row behind and the user's immediate retry got a
+      // 409 about a pull that never started — two different failures, one confusing message.
+      // Nothing is written until we know a pull can actually happen.
+      //
+      // In parallel, and through the factory: each is a config read plus a possible token
+      // refresh, and the answers are independent. The clients are discarded here (this step
+      // only reports which sources are usable) but they are request-scoped, so the later
+      // steps reuse what this call initialised.
+      const [books, zakya, inventory] = await Promise.all([
+        getBooks(),
+        getZakya(),
+        getInventory(),
+      ]);
+      const booksReady = !!books;
+      const posReady = !!zakya;
+      const inventoryReady = !!inventory;
+
+      if (!booksReady && !posReady && !inventoryReady) {
+        const message = await noSourceMessage();
+        log.warn("init refused — no usable Zoho source", { message });
+        // 409, not 400: nothing about the REQUEST is malformed. It is the system's state
+        // that makes the pull impossible, and the client shows this sentence verbatim.
+        return errorResponse(message, 409);
+      }
+
+      const syncLog = await prisma.syncLog.create({
         data: { syncType: "cron-pull", status: "running", triggeredBy: "manual" },
       });
 
-      // Check at least one source is connected
-      const zoho = new ZohoClient();
-      const booksReady = await zoho.init();
-      const zakya = new ZakyaClient();
-      const posReady = await zakya.init();
-      const inventory = new ZohoInventoryClient();
-      const inventoryReady = await inventory.init();
-
-      if (!booksReady && !posReady && !inventoryReady) {
-        return errorResponse("No Zoho sources connected", 400);
-      }
-
       const pullId = `pull-${Date.now()}`;
+
+      // zoho.pull_started (§F.4): tell everyone ELSE who can pull that a sync is running — it
+      // is also why they will get a 409 if they start their own. The SyncLog row above is
+      // committed (no transaction here) and the source check has passed, so this is a real pull.
+      // §F.0: after() sends once the response has gone out so the init step is not slowed.
+      const actorId = user.id;
+      const actorName = user.name;
+      after(async () => {
+        try {
+          const recipients = (await usersWithPermission("zoho", "fetch")).filter((uid) => uid !== actorId);
+          if (recipients.length === 0) {
+            log.debug("pull started but nobody else holds zoho.fetch", { pullId });
+            return;
+          }
+          await notify("zoho.pull_started", {
+            recipients,
+            title: "Zoho pull started",
+            body: `${actorName} started a bills & invoices pull (bills from Zoho Books, invoices from Zakya POS)`,
+            refId: syncLog.id,
+            link: "/settings/integrations",
+            data: {
+              pullId,
+              books: booksReady ? "connected" : "skipped",
+              pos: posReady ? "connected" : "skipped",
+            },
+          });
+        } catch (err) {
+          log.error("zoho.pull_started notification failed", {
+            pullId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      });
+
       return successResponse({
         pullId, step: "init", message: "Ready",
         sources: {
@@ -69,211 +219,86 @@ export async function POST(req: NextRequest) {
 
     if (!existingPullId) return errorResponse("pullId required", 400);
 
-    // Default last sync — 7 days ago
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const defaultLastSync = sevenDaysAgo.toISOString().slice(0, 10);
-    const todayStr = new Date().toISOString().slice(0, 10);
+    // THE WINDOW, resolved once for bills and invoices alike.
+    //
+    // Replaces `todayStr = new Date().toISOString().slice(0,10)` — the SERVER'S UTC date,
+    // which is yesterday for the first 5.5 hours of every Indian day — and the hardcoded
+    // `fyStart = "2026-04-01"`, which becomes wrong on the next 1 April, silently.
+    //
+    // A search overrides the window entirely: "find bill 12345" should not also be filtered
+    // to the last three days.
+    let window: ResolvedWindow | null = null;
+    if (!searchText && step !== "finalize") {
+      try {
+        window = resolveBillWindow({ days, fromDate, toDate }, getTodayIST());
+      } catch (e) {
+        // The caller's RANGE is wrong — that is a 400, and it is not a pull failure, so the
+        // running row is closed rather than left to wedge the next attempt.
+        const message = e instanceof Error ? e.message : "Invalid date range";
+        log.warn("window rejected", { pullId: existingPullId, days, fromDate, toDate, message });
+        await closeRunningSync(`Invalid date range: ${message}`);
+        return errorResponse(message, 400);
+      }
+    }
 
     // ─── ITEMS: via Zoho Inventory (fallback Books) ───
-    if (step === "items") {
-      let itemsNew = 0;
-      let apiCalls = 0;
-      const errors: string[] = [];
-      let source = "none";
-
-      try {
-        // Try Inventory first
-        const inventory = new ZohoInventoryClient();
-        const inventoryReady = await inventory.init();
-
-        if (inventoryReady) {
-          source = "inventory";
-          const invConfig = await prisma.zohoInventoryConfig.findUnique({ where: { id: "singleton" } });
-          const lastSync = fromDate || invConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
-          const allItems = await inventory.listAllItems("active", fullImport ? undefined : lastSync);
-          apiCalls += Math.ceil(allItems.length / 200) || 1;
-          const items = allItems.filter(item => Number(item.stock_on_hand || 0) > 0);
-
-          for (const item of items) {
-            const zohoBrand = String(item.brand || item.manufacturer || "").trim();
-            let existing: { id: string; brand?: { name: string } | null } | null = null;
-            if (item.sku) {
-              existing = await prisma.product.findFirst({ where: { sku: item.sku }, include: { brand: { select: { name: true } } } });
-            }
-            if (!existing && item.item_id) {
-              existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id }, include: { brand: { select: { name: true } } } });
-            }
-            if (existing) {
-              // Existing items are FROZEN — Zoho never modifies items already in the
-              // app (brand, category, pricing, SKU, name, stock all stay as edited).
-              // Only brand-new items are pulled in for review below.
-              continue;
-            }
-
-            await prisma.zohoPullPreview.create({
-              data: {
-                pullId: existingPullId,
-                entityType: "item",
-                zohoId: item.item_id,
-                data: {
-                  name: item.name,
-                  sku: item.sku || "",
-                  costPrice: Number(item.purchase_rate || 0),
-                  sellingPrice: Number(item.rate || 0),
-                  gstRate: Number(item.tax_percentage || 18),
-                  hsnCode: String(item.hsn_or_sac || ""),
-                  stockOnHand: Number(item.stock_on_hand || 0),
-                  productType: String(item.product_type || item.item_type || ""),
-                  brand: zohoBrand,
-                  categoryName: String(item.category_name || ""),
-                },
-              },
-            });
-            itemsNew++;
-          }
-        } else {
-          // Fallback to Books
-          const zoho = new ZohoClient();
-          const booksReady = await zoho.init();
-          if (booksReady) {
-            source = "books";
-            const booksConfig = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
-            const lastSync = fromDate || booksConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
-            const allItems = await zoho.listAllItems("active", fullImport ? undefined : lastSync);
-            apiCalls += Math.ceil(allItems.length / 200) || 1;
-            const items = allItems.filter(item => Number(item.stock_on_hand || 0) > 0);
-
-            for (const item of items) {
-              const zohoItem = item as Record<string, unknown>;
-              const zohoBrand = String(item.brand || item.manufacturer || "").trim();
-              let existing: { id: string; brand?: { name: string } | null } | null = null;
-              if (item.sku) {
-                existing = await prisma.product.findFirst({ where: { sku: item.sku }, include: { brand: { select: { name: true } } } });
-              }
-              if (!existing && item.item_id) {
-                existing = await prisma.product.findFirst({ where: { zohoItemId: item.item_id }, include: { brand: { select: { name: true } } } });
-              }
-              if (existing) {
-                // Existing items are FROZEN — Zoho never modifies items already in the app.
-                continue;
-              }
-
-              await prisma.zohoPullPreview.create({
-                data: {
-                  pullId: existingPullId,
-                  entityType: "item",
-                  zohoId: item.item_id,
-                  data: {
-                    name: item.name,
-                    sku: item.sku || "",
-                    costPrice: Number(zohoItem.purchase_rate || 0),
-                    sellingPrice: Number(zohoItem.rate || 0),
-                    gstRate: Number(zohoItem.tax_percentage || 18),
-                    hsnCode: String(zohoItem.hsn_or_sac || ""),
-                    stockOnHand: Number(zohoItem.stock_on_hand || 0),
-                    productType: String(zohoItem.product_type || zohoItem.item_type || ""),
-                    brand: zohoBrand,
-                    categoryName: String(item.category_name || ""),
-                  },
-                },
-              });
-              itemsNew++;
-            }
-          } else {
-            errors.push("Items: no source connected");
-          }
-        }
-      } catch (e) {
-        errors.push(`Items: ${e instanceof Error ? e.message : "Unknown"}`);
-      }
-
-      return successResponse({ step: "items", source, itemsNew, apiCalls, errors });
-    }
-
-    // ─── CONTACTS: via Zoho Books ───
-    if (step === "contacts") {
-      let contactsNew = 0;
-      let apiCalls = 0;
-      const errors: string[] = [];
-
-      try {
-        const zoho = new ZohoClient();
-        const booksReady = await zoho.init();
-        if (!booksReady) {
-          return successResponse({ step: "contacts", source: "skipped", contactsNew: 0, apiCalls: 0, errors: ["Books not connected"] });
-        }
-
-        const booksConfig = await prisma.zohoConfig.findUnique({ where: { id: "singleton" } });
-        const lastSync = booksConfig?.lastSyncAt?.toISOString().slice(0, 10) || defaultLastSync;
-        const contacts = await zoho.listAllContacts(lastSync);
-        apiCalls += Math.ceil(contacts.length / 200) || 1;
-        const vendors = contacts.filter((c) => c.contact_type === "vendor");
-
-        for (const contact of vendors) {
-          const existing = await prisma.vendor.findFirst({
-            where: { name: { equals: contact.contact_name, mode: "insensitive" } },
-          });
-          if (existing) continue;
-
-          await prisma.zohoPullPreview.create({
-            data: {
-              pullId: existingPullId,
-              entityType: "contact",
-              zohoId: contact.contact_id,
-              data: {
-                name: contact.contact_name,
-                gstin: contact.gst_no || "",
-                email: contact.email || "",
-                phone: contact.phone || "",
-                city: contact.billing_address?.city || "",
-                state: contact.billing_address?.state || "",
-              },
-            },
-          });
-          contactsNew++;
-        }
-      } catch (e) {
-        errors.push(`Contacts: ${e instanceof Error ? e.message : "Unknown"}`);
-      }
-
-      return successResponse({ step: "contacts", source: "books", contactsNew, apiCalls, errors });
-    }
-
     // ─── BILLS: via Zoho Inventory (fallback Zakya → Books) ───
     if (step === "bills") {
       let billsNew = 0;
       let apiCalls = 0;
       const errors: string[] = [];
+      const skippedItems: SkipItem[] = [];
+      let alreadyImported = 0;
       let source = "none";
+      let fetched = 0;
 
-      try {
-        // Enforce minimum date: April 1 of current FY
-        const fyStart = "2026-04-01";
-        let billsFromDate = fromDate || todayStr;
-        if (billsFromDate < fyStart) billsFromDate = fyStart;
+      {
+        // Books first, Zakya as the fallback. `IntegrationClient` rather than `any`:
+        // listAllBills lives on the base class, so both providers satisfy the type.
+        let client: IntegrationClient | null = await getBooks();
+        if (client) source = "books";
+        else {
+          client = await getZakya();
+          if (client) source = "pos";
+        }
 
-        // Use Zoho Books for bills (Inventory token lacks bills scope)
+        // NO CLIENT IS A 409, NOT A 200.
+        //
+        // This is root cause #1 of "fetch does nothing": the step used to answer HTTP 200
+        // with `billsNew: 0`, which the screen rendered as "No new bills found". A
+        // disconnected Zoho and a genuinely quiet week were indistinguishable.
+        if (!client) {
+          const message = await noSourceMessage();
+          log.warn("bills step has no source", { pullId: existingPullId, message });
+          await closeRunningSync("No Zoho source connected for bills");
+          return errorResponse(message, 409);
+        }
+
+        let bills: IntegrationBill[];
+        try {
+          log.info("bills window resolved", {
+            pullId: existingPullId,
+            mode: searchText ? "search" : "range",
+            from: window?.from,
+            to: window?.to,
+            clampedToFy: window?.clampedToFy,
+          });
+          bills = await client.listAllBills(window?.from, window?.to, searchText);
+        } catch (e) {
+          // A PROVIDER failure is a 502, not a swallowed entry in `errors[]` beside
+          // `success: true` — root cause #4. The client never read `errors`, so a Zoho
+          // outage was reported to the user as "no new bills".
+          const message = e instanceof Error ? e.message : "Unknown error";
+          log.error("bills listing failed", { pullId: existingPullId, source, message });
+          await closeRunningSync(`Zoho ${source}: ${message}`);
+          return errorResponse(`Zoho ${source}: ${message}`, 502);
+        }
+
         {
-          const zoho = new ZohoClient();
-          const booksReady = await zoho.init();
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          let client: any = null;
-          if (booksReady) { client = zoho; source = "books"; }
-          else {
-            // Fallback to Zakya POS
-            const zakya = new ZakyaClient();
-            if (await zakya.init()) { client = zakya; source = "pos"; }
-          }
-
-          if (!client) {
-            return successResponse({ step: "bills", source: "skipped", billsNew: 0, apiCalls: 0, errors: ["No source connected for bills"] });
-          }
-
-          const bills = await client.listAllBills(searchText ? undefined : billsFromDate, searchText ? undefined : todayStr, searchText);
+          fetched = bills.length;
           apiCalls += Math.ceil(bills.length / 200) || 1;
 
-          const billNumbers = bills.map((b: { bill_number: string }) => b.bill_number);
+          const billNumbers = bills.map((b) => b.bill_number);
           const existingBills = await prisma.vendorBill.findMany({
             where: { billNo: { in: billNumbers } },
             select: { billNo: true, id: true, inboundShipment: { select: { id: true, shipmentNo: true, status: true } }, _count: { select: { payments: true } } },
@@ -291,29 +316,36 @@ export async function POST(req: NextRequest) {
               .filter((b) => b.inboundShipment || b._count.payments > 0)
               .map((b) => [b.billNo, b])
           );
-          const newBills = bills.filter((b: { bill_number: string }) => !existingMap.has(b.bill_number));
+          const newBills = bills.filter((b) => !existingMap.has(b.bill_number));
 
-          // Report already-imported bills with location info
-          const skippedBills = bills.filter((b: { bill_number: string }) => existingMap.has(b.bill_number));
+          // ALREADY-IMPORTED IS NOT AN ERROR.
+          //
+          // These used to be pushed into `errors[]`, which made `finalize` report the pull as
+          // "partial" and the notification announce failures — for the entirely normal case
+          // of re-fetching a window whose bills are already in. They belong in `skipped`
+          // (§5.2), which the inbound screen renders as a neutral "Already imported" card.
+          const skippedBills = bills.filter((b) => existingMap.has(b.bill_number));
           for (const sb of skippedBills) {
-            const existing = existingMap.get((sb as { bill_number: string }).bill_number);
+            const ref = sb.bill_number;
+            const existing = existingMap.get(ref);
             const shipment = existing?.inboundShipment;
-            if (shipment) {
-              errors.push(`${(sb as { bill_number: string }).bill_number}: already imported → ${shipment.shipmentNo} (${shipment.status})`);
-            } else {
-              errors.push(`${(sb as { bill_number: string }).bill_number}: already imported (in accounts)`);
-            }
+            alreadyImported++;
+            skippedItems.push(
+              shipment
+                ? { ref, reason: "alreadyImported", where: "inbound", id: shipment.id, no: shipment.shipmentNo, status: shipment.status }
+                : { ref, reason: "alreadyImported", where: "accounts" }
+            );
           }
 
           if (newBills.length > 0) {
             // Clean up old preview records for these bills (from previous pulls) so they aren't blocked
-            const newBillZohoIds = newBills.map((b: { bill_id: string }) => b.bill_id);
+            const newBillZohoIds = newBills.map((b) => b.bill_id);
             await prisma.zohoPullPreview.deleteMany({
               where: { zohoId: { in: newBillZohoIds }, entityType: "bill", status: { in: ["APPROVED", "REJECTED"] } },
             });
 
             await prisma.$transaction(
-              newBills.map((bill: { bill_id: string; bill_number: string; vendor_name: string; date: string; due_date: string; total: number; balance: number; status: string }) =>
+              newBills.map((bill: IntegrationBill) =>
                 prisma.zohoPullPreview.create({
                   data: {
                     pullId: existingPullId,
@@ -322,6 +354,11 @@ export async function POST(req: NextRequest) {
                     data: {
                       billNumber: bill.bill_number,
                       vendorName: bill.vendor_name,
+                      // Zoho's vendor id — approve resolves the Vendor by it (plan 2409). It
+                      // used to arrive here and be dropped. `vendorSource` says which client
+                      // can read that contact back: Books and Zakya ids are not interchangeable.
+                      vendorId: bill.vendor_id || null,
+                      vendorSource: source,
                       date: bill.date,
                       dueDate: bill.due_date,
                       total: bill.total,
@@ -336,100 +373,211 @@ export async function POST(req: NextRequest) {
             billsNew = newBills.length;
           }
         }
-      } catch (e) {
-        errors.push(`Bills: ${e instanceof Error ? e.message : "Unknown"}`);
       }
 
-      return successResponse({ step: "bills", source, billsNew, apiCalls, errors });
+      log.info("bills step finished", {
+        pullId: existingPullId, source, fetched, billsNew, alreadyImported, apiCalls, errors: errors.length,
+      });
+
+      await logActivity(prisma, {
+        module: "zoho", action: "pulled", entityType: "ZohoPull", entityId: existingPullId,
+        entityRef: existingPullId,
+        fromValue: window?.from ?? null, toValue: window?.to ?? null,
+        details: `${billsNew} new bill${billsNew === 1 ? "" : "s"} via ${source}`,
+        userId: user.id, userName: user.name,
+      });
+
+      // §5.2 response shape, shared with invoices.
+      return successResponse({
+        step: "bills", source, window,
+        fetched, billsNew,
+        skipped: { counts: { alreadyImported }, items: skippedItems },
+        apiCalls, errors,
+      });
     }
 
     // ─── INVOICES: via Zakya POS (fallback Books) ───
     if (step === "invoices") {
       let invoicesNew = 0;
       let apiCalls = 0;
-      let detailCalls = 0;
       const errors: string[] = [];
+      const skippedItems: SkipItem[] = [];
+      let alreadyImported = 0;
+      let voidCount = 0;
+      // Per-bucket counts for the fetch summary, keyed by the FLOOR warehouse that matched
+      // (plan 1609-deliveries, R31). `dummyCount` is the invoices whose number matched no
+      // floor prefix — imported with no warehouse and no store (A41b); the UI labels it Dummy.
+      const byWarehouseCount = new Map<string, number>();
+      let dummyCount = 0;
       let source = "none";
+      let fetched = 0;
 
-      try {
-        // Try Zakya POS first
-        const zakya = new ZakyaClient();
-        const posReady = await zakya.init();
-
-        // Determine which client and source to use
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        let client: any = null;
-        if (posReady) {
-          client = zakya;
-          source = "pos";
-        } else {
-          const zoho = new ZohoClient();
-          const booksReady = await zoho.init();
-          if (booksReady) {
-            client = zoho;
-            source = "books";
-          }
-        }
-
-        if (!client) {
-          return successResponse({ step: "invoices", source: "skipped", invoicesNew: 0, apiCalls: 0, errors: ["No source connected"] });
-        }
-
-        const invoicesFromDate = fromDate || todayStr;
-        const invoices = await client.listAllInvoices(searchText ? undefined : invoicesFromDate, searchText ? undefined : todayStr, searchText);
-        apiCalls += Math.ceil(invoices.length / 200) || 1;
-
-        // Batch check existing invoices in one query
-        const invoiceNumbers = invoices
-          .filter((inv: { status: string }) => inv.status !== "void")
-          .map((inv: { invoice_number: string }) => inv.invoice_number);
-        const existingInvoices = await prisma.delivery.findMany({
-          where: { invoiceNo: { in: invoiceNumbers } },
-          select: { invoiceNo: true },
-        });
-        const existingInvSet = new Set(existingInvoices.map((d) => d.invoiceNo));
-        const newInvoices = invoices.filter(
-          (inv: { status: string; invoice_number: string }) =>
-            inv.status !== "void" &&
-            !existingInvSet.has(inv.invoice_number) &&
-            !inv.invoice_number.startsWith("BCC/") // Skip Bharath Cycle Centre invoices
-        );
-
-        // Batch create all previews in one transaction
-        if (newInvoices.length > 0) {
-          await prisma.$transaction(
-            newInvoices.map((invoice: { invoice_id: string; invoice_number: string; customer_name: string; phone?: string; date: string; total: number; balance: number; status: string }) =>
-              prisma.zohoPullPreview.create({
-                data: {
-                  pullId: existingPullId,
-                  entityType: "invoice",
-                  zohoId: invoice.invoice_id,
-                  data: {
-                    invoiceNumber: invoice.invoice_number,
-                    customerName: invoice.customer_name,
-                    phone: invoice.phone || "",
-                    date: invoice.date,
-                    total: invoice.total,
-                    balance: invoice.balance,
-                    status: invoice.status,
-                    salesPerson: "",
-                    lineItems: [],
-                  },
-                },
-              })
-            )
-          );
-          invoicesNew = newInvoices.length;
-        }
-      } catch (e) {
-        errors.push(`Invoices: ${e instanceof Error ? e.message : "Unknown"}`);
+      // Zakya POS first for invoices, Books as the fallback — the reverse of bills above,
+      // which is deliberate and documented at the top of this file.
+      let client: IntegrationClient | null = await getZakya();
+      if (client) source = "pos";
+      else {
+        client = await getBooks();
+        if (client) source = "books";
       }
 
-      return successResponse({ step: "invoices", source, invoicesNew, apiCalls, errors });
+      // Root cause #1 again: a 409 with a sentence, not a 200 that reads as "nothing new".
+      if (!client) {
+        const message = await noSourceMessage();
+        log.warn("invoices step has no source", { pullId: existingPullId, message });
+        await closeRunningSync("No Zoho source connected for invoices");
+        return errorResponse(message, 409);
+      }
+
+      let invoices: IntegrationInvoice[];
+      try {
+        log.info("invoices window resolved", {
+          pullId: existingPullId,
+          mode: searchText ? "search" : "range",
+          from: window?.from, to: window?.to, clampedToFy: window?.clampedToFy,
+        });
+        invoices = await client.listAllInvoices(window?.from, window?.to, searchText);
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "Unknown error";
+        log.error("invoices listing failed", { pullId: existingPullId, source, message });
+        await closeRunningSync(`Zoho ${source}: ${message}`);
+        return errorResponse(`Zoho ${source}: ${message}`, 502);
+      }
+
+      fetched = invoices.length;
+      apiCalls += Math.ceil(invoices.length / 200) || 1;
+
+      // Every active FLOOR warehouse carrying a prefix, for attribution. A handful of rows;
+      // loaded once, not per invoice. The prefix moved here from Store on 16 Sep (T1).
+      const floors = await listFloorWarehousesWithPrefix(prisma);
+
+      const liveInvoices = invoices.filter((inv) => inv.status !== "void");
+      for (const inv of invoices) {
+        if (inv.status === "void") {
+          voidCount++;
+          skippedItems.push({ ref: inv.invoice_number, reason: "void" });
+        }
+      }
+
+      const existingInvoices = await prisma.delivery.findMany({
+        where: { invoiceNo: { in: liveInvoices.map((i) => i.invoice_number) } },
+        select: { invoiceNo: true, id: true, status: true },
+      });
+      const existingInvMap = new Map(existingInvoices.map((d) => [d.invoiceNo, d]));
+
+      const newInvoices: IntegrationInvoice[] = [];
+      for (const inv of liveInvoices) {
+        const ref = inv.invoice_number;
+        const already = existingInvMap.get(ref);
+        if (already) {
+          alreadyImported++;
+          skippedItems.push({
+            ref, reason: "alreadyImported", where: "deliveries", id: already.id, status: already.status,
+          });
+          continue;
+        }
+        newInvoices.push(inv);
+      }
+
+      // THE `BCC/` SKIP IS GONE (O8, owner 4 Sep).
+      //
+      // It was `!inv.invoice_number.startsWith("BCC/")` — a store NAME hardcoded in three
+      // routes, hiding a real store with its own GSTIN and its own stock. Bharath Cycle
+      // Centre's invoices were silently never imported, so its deliveries never existed and
+      // its stock never moved. They are imported now and TAGGED with the FLOOR warehouse that
+      // sold them, resolved from Warehouse.invoicePrefix (plan 1609-deliveries, T1). An invoice
+      // matching no floor prefix still imports as a Dummy — warehouseId AND storeId null, no
+      // fallback to any store (A41b) — and is counted so the summary can say so.
+      //
+      // The ids written below are for the review screen only. Approve RE-RESOLVES the prefix,
+      // because it may have been typed or changed on /stores between fetch and import.
+      if (newInvoices.length > 0) {
+        await prisma.$transaction(
+          newInvoices.map((invoice) => {
+            const invoiceNo = invoice.invoice_number;
+            const match = floorWarehouseForInvoice(invoiceNo, floors);
+            if (match) {
+              byWarehouseCount.set(match.warehouseId, (byWarehouseCount.get(match.warehouseId) ?? 0) + 1);
+            } else {
+              dummyCount++;
+            }
+            return prisma.zohoPullPreview.create({
+              data: {
+                pullId: existingPullId,
+                entityType: "invoice",
+                zohoId: invoice.invoice_id,
+                data: {
+                  invoiceNumber: invoiceNo,
+                  customerName: invoice.customer_name,
+                  // +91-XXXXXXXXXX, as every phone in the deliveries flow is written (B3b).
+                  phone: toPlus91(invoice.phone) ?? "",
+                  date: invoice.date,
+                  total: invoice.total,
+                  balance: invoice.balance,
+                  status: invoice.status,
+                  salesPerson: "",
+                  lineItems: [],
+                  // Which client fetched this, so approve can ask the SAME provider for the
+                  // detail. Named `provider`, NOT `source`: pull-review/approve already
+                  // destructures a body field called `source` meaning "accounting-only
+                  // import", and reusing the name would mislead every reader of that file.
+                  provider: source,
+                  warehouseId: match?.warehouseId ?? null,
+                  storeId: match?.storeId ?? null,
+                },
+              },
+            });
+          })
+        );
+        invoicesNew = newInvoices.length;
+      }
+
+      // Names for the matched buckets, so the summary reads "12 BCH Floor", not an id. One
+      // query, and only when something matched.
+      const byWarehouse: Array<{ warehouseId: string; name: string; prefix: string | null; count: number }> = [];
+      if (byWarehouseCount.size > 0) {
+        const named = await prisma.warehouse.findMany({
+          where: { id: { in: Array.from(byWarehouseCount.keys()) } },
+          select: { id: true, name: true, invoicePrefix: true },
+        });
+        const byId = new Map(named.map((w) => [w.id, w]));
+        for (const [warehouseId, count] of byWarehouseCount) {
+          const w = byId.get(warehouseId);
+          byWarehouse.push({ warehouseId, name: w?.name ?? warehouseId, prefix: w?.invoicePrefix ?? null, count });
+        }
+      }
+
+      log.info("invoices step finished", {
+        pullId: existingPullId, source, fetched, invoicesNew,
+        alreadyImported, voidCount, floors: floors.length,
+        byWarehouse: byWarehouse.map((b) => ({ warehouseId: b.warehouseId, count: b.count })),
+        dummy: dummyCount, apiCalls, errors: errors.length,
+      });
+
+      await logActivity(prisma, {
+        module: "zoho", action: "pulled", entityType: "ZohoPull", entityId: existingPullId,
+        entityRef: existingPullId,
+        fromValue: window?.from ?? null, toValue: window?.to ?? null,
+        details: `${invoicesNew} new invoice${invoicesNew === 1 ? "" : "s"} via ${source}`,
+        userId: user.id, userName: user.name,
+      });
+
+      return successResponse({
+        step: "invoices", source, window,
+        fetched, invoicesNew,
+        skipped: {
+          counts: { alreadyImported, void: voidCount, byWarehouse, dummy: dummyCount },
+          items: skippedItems,
+        },
+        apiCalls, errors,
+      });
     }
 
     // ─── FINALIZE ───
     if (step === "finalize") {
+      // itemsNew and contactsNew are always 0 now — no step produces them. The two columns
+      // stay on ZohoPullLog because the schema is deliberately untouched on this branch, and
+      // a zero is honest: that pull genuinely imported no items and no contacts.
       const { itemsNew = 0, contactsNew = 0, billsNew = 0, invoicesNew = 0, apiCalls = 0, allErrors = [] } = body as {
         itemsNew?: number; contactsNew?: number; billsNew?: number; invoicesNew?: number;
         apiCalls?: number; allErrors?: string[];
@@ -453,11 +601,13 @@ export async function POST(req: NextRequest) {
         where: { status: "running", syncType: "cron-pull" },
         orderBy: { startedAt: "desc" },
       });
+      // Hoisted so the SyncLog row and the notification below cannot disagree about the outcome.
+      const pullStatus = allErrors.length > 0 ? "partial" : "success";
       if (syncLog) {
         await prisma.syncLog.update({
           where: { id: syncLog.id },
           data: {
-            status: allErrors.length > 0 ? "partial" : "success",
+            status: pullStatus,
             totalItems: totalNew,
             synced: totalNew,
             failed: allErrors.length,
@@ -467,11 +617,72 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // Update lastSyncAt for all connected sources
-      await prisma.zohoConfig.update({ where: { id: "singleton" }, data: { lastSyncAt: new Date() } }).catch(() => {});
-      await prisma.zakyaConfig.update({ where: { id: "singleton" }, data: { lastSyncAt: new Date() } }).catch(() => {});
-      await prisma.zohoInventoryConfig.update({ where: { id: "singleton" }, data: { lastSyncAt: new Date() } }).catch(() => {});
+      // zoho.pull_finished (§F.4): the outcome, clean or partial, to everyone else who can pull.
+      // Email defaults ON for this event — it is the one most likely to report something broken
+      // while nobody is watching. §F.0: the SyncLog update above has committed; after() sends
+      // once the response has gone out.
+      {
+        const actorId = user.id;
+        const finishedPullId: string = existingPullId;
+        const syncLogId = syncLog?.id;
+        const errorCount = allErrors.length;
+        const firstError = allErrors[0];
+        after(async () => {
+          try {
+            // The OUTCOME event, unlike pull_started, falls back to including the actor.
+            // zoho.fetch is a narrow grant — quite possibly ADMIN alone — so excluding the
+            // person who pressed Pull could leave nobody at all, and this is the one event
+            // that defaults email ON precisely because it reports something already broken.
+            // Firing for nobody would also write no outbox row, so there would be no trace
+            // that it tried. pull_started keeps the exclusion: that one is pure courtesy.
+            const holders = await usersWithPermission("zoho", "fetch");
+            const others = holders.filter((uid) => uid !== actorId);
+            const recipients = others.length > 0 ? others : holders;
+            if (recipients.length === 0) {
+              log.warn("pull finished but nobody holds zoho.fetch", { pullId: finishedPullId });
+              return;
+            }
+            const counts = `${billsNew} new bill${billsNew === 1 ? "" : "s"}, ${invoicesNew} new invoice${invoicesNew === 1 ? "" : "s"}`;
+            const text =
+              pullStatus === "partial"
+                ? `${counts}. ${errorCount} error${errorCount === 1 ? "" : "s"} — first: ${firstError}`
+                : `${counts}. No errors.`;
+            await notify("zoho.pull_finished", {
+              recipients,
+              title: `Zoho pull ${pullStatus}`,
+              body: text,
+              refId: syncLogId ?? finishedPullId,
+              link: "/settings/integrations",
+              data: {
+                pullId: finishedPullId,
+                status: pullStatus,
+                billsNew: String(billsNew),
+                invoicesNew: String(invoicesNew),
+                errors: String(errorCount),
+              },
+            });
+          } catch (err) {
+            log.error("zoho.pull_finished notification failed", {
+              pullId: finishedPullId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        });
+      }
 
+      // Update lastSyncAt for all connected sources
+      await prisma.integrationConfig.update({ where: { provider: "ZOHO_BOOKS" }, data: { lastSyncAt: new Date() } }).catch(() => {});
+      await prisma.integrationConfig.update({ where: { provider: "ZAKYA_POS" }, data: { lastSyncAt: new Date() } }).catch(() => {});
+      await prisma.integrationConfig.update({ where: { provider: "ZOHO_INVENTORY" }, data: { lastSyncAt: new Date() } }).catch(() => {});
+
+      log.info("pull finalized", {
+        pullId: existingPullId,
+        status: totalNew > 0 ? "PENDING_REVIEW" : "NO_NEW_DATA",
+        billsNew,
+        invoicesNew,
+        apiCallsUsed: apiCalls,
+        errors: allErrors.length,
+      });
       return successResponse({
         pullId: existingPullId,
         status: totalNew > 0 ? "PENDING_REVIEW" : "NO_NEW_DATA",
@@ -487,6 +698,8 @@ export async function POST(req: NextRequest) {
     return errorResponse("Invalid step", 400);
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
-    return errorResponse(error instanceof Error ? error.message : "Pull failed", 500);
+    // failure() writes the message AND the stack to the server log before answering the
+    // client. Without it a 500 here left nothing behind to identify which call failed.
+    return failure(error, { scope: "zoho:trigger-pull", ...ctx });
   }
 }

@@ -3,30 +3,52 @@ export const dynamic = "force-dynamic";
 import { NextRequest } from "next/server";
 import { prisma } from "@/lib/db";
 import { successResponse, errorResponse, parseSearchParams } from "@/lib/api-utils";
-import { requireAuth, AuthError } from "@/lib/auth-helpers";
+import { requireFeature, AuthError } from "@/lib/auth-helpers";
+import { nextSequence } from "@/lib/sequence";
+import { ibSeedSql } from "@/lib/inbound/sequence";
 import { inboundShipmentSchema } from "@/lib/validations";
+import { recordApprovalEvent } from "@/lib/approvals/events";
+import { notifyInboundApprovalRequested } from "@/lib/approvals/actions/inbound";
+import {
+  INBOUND_QUICK_FILTERS,
+  inboundQuickFilterWhere,
+  inboundWeekEnd,
+  isInboundQuickFilter,
+  type InboundQuickFilter,
+} from "@/lib/inbound/filters";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("inbound");
 
 // GET: List shipments
 export async function GET(req: NextRequest) {
   try {
-    await requireAuth();
+    await requireFeature("inbound", "view");
     const { limit, skip, searchParams } = parseSearchParams(req.url);
     const status = searchParams.get("status") || undefined;
     const search = searchParams.get("search") || undefined;
     const dateFrom = searchParams.get("dateFrom") || undefined;
     const dateTo = searchParams.get("dateTo") || undefined;
+    // The quick-filter chips (plan 2109-inbound-bins-navigation-fixes, R30). When present it
+    // wins over `status`; `status=` keeps working on its own so existing links do not break.
+    const rawFilter = searchParams.get("filter");
+    const filter = isInboundQuickFilter(rawFilter) ? rawFilter : null;
+    if (rawFilter && !filter && rawFilter !== "all") {
+      log.warn("unknown inbound filter ignored", { filter: rawFilter });
+    }
 
     // "arriving_this_week" is a special filter
     const isArrivingThisWeek = status === "arriving_this_week";
 
     const now = new Date();
-    const weekEnd = new Date(now);
-    weekEnd.setDate(weekEnd.getDate() + (7 - weekEnd.getDay()));
+    const weekEnd = inboundWeekEnd(now);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const where: any = {};
 
-    if (isArrivingThisWeek) {
+    if (filter) {
+      Object.assign(where, inboundQuickFilterWhere(filter, now));
+    } else if (isArrivingThisWeek) {
       where.status = "IN_TRANSIT";
       where.expectedDeliveryDate = { lte: weekEnd };
     } else if (status && status !== "ALL") {
@@ -49,7 +71,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Legacy mode: show old INWARD InventoryTransactions not linked to InboundShipments
-    if (status === "LEGACY") {
+    if (status === "LEGACY" && !filter) {
       const legacyWhere: Record<string, unknown> = {
         type: "INWARD",
         NOT: { referenceNo: { startsWith: "IB-" } },
@@ -109,7 +131,14 @@ export async function GET(req: NextRequest) {
       return successResponse({ shipments: Array.from(grouped.values()), total: legacyTotal, isLegacy: true });
     }
 
-    const [shipments, total] = await Promise.all([
+    // ── ONE COUNT PER CHIP, ONE BATCH (R30, Q23a) ──
+    //
+    // Counted over ALL shipments, deliberately not narrowed by the search box or the date
+    // range: a chip reading "Not approved · 4" is the approver's to-do number, and it must not
+    // drop to 0 because someone typed a bill number. Seven `count`s in the same Promise.all as
+    // the list — never one request per chip.
+    const countFilters = INBOUND_QUICK_FILTERS;
+    const [shipments, total, allCount, ...chipCounts] = await Promise.all([
       prisma.inboundShipment.findMany({
         where,
         include: {
@@ -123,11 +152,20 @@ export async function GET(req: NextRequest) {
         take: limit,
       }),
       prisma.inboundShipment.count({ where }),
+      prisma.inboundShipment.count(),
+      ...countFilters.map((f) => prisma.inboundShipment.count({ where: inboundQuickFilterWhere(f, now) })),
     ]);
 
-    return successResponse({ shipments, total });
+    const counts = Object.fromEntries([
+      ["all", allCount],
+      ...countFilters.map((f, i) => [f, chipCounts[i]] as const),
+    ]) as Record<InboundQuickFilter | "all", number>;
+
+    log.debug("inbound list", { filter, status: status ?? null, total, returned: shipments.length });
+    return successResponse({ shipments, total, counts });
   } catch (error) {
     if (error instanceof AuthError) return errorResponse(error.message, error.status);
+    log.error("inbound list failed", { message: error instanceof Error ? error.message : String(error) });
     return errorResponse(error instanceof Error ? error.message : "Failed", 500);
   }
 }
@@ -135,32 +173,37 @@ export async function GET(req: NextRequest) {
 // POST: Create shipment from verified bill data
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireAuth(["ADMIN", "PURCHASE_MANAGER"]);
+    const user = await requireFeature("inbound", "create");
     const body = await req.json();
     const data = inboundShipmentSchema.parse(body);
 
     // Get brand lead time
-    const leadTime = await prisma.brandLeadTime.findUnique({
-      where: { brandId: data.brandId },
+    const brand = await prisma.brand.findUnique({
+      where: { id: data.brandId },
+      select: { leadDays: true },
     });
-    const leadDays = leadTime?.leadDays ?? 7;
+    // Still defaults to 7 for a brand that does not resolve — same behaviour as the old
+    // `?? 7`, which fired when no BrandLeadTime row existed.
+    const leadDays = brand?.leadDays ?? 7;
 
     const billDate = new Date(data.billDate);
     const expectedDeliveryDate = new Date(billDate);
     expectedDeliveryDate.setDate(expectedDeliveryDate.getDate() + leadDays);
 
-    // Auto-generate shipment number: IB-YYYYMM-0001
+    // Shipment number: IB-YYYYMM-0001, allocated atomically (§4 Counter).
+    //
+    // Was a read-then-write — findFirst ordered by shipmentNo desc, parse the tail, add one —
+    // with two defects. Two people creating a shipment in the same month at the same moment
+    // both read the same last number and both wrote it; `shipmentNo` is unique, so one of
+    // them lost their work to a constraint error. And the ordering was a STRING sort, so
+    // "IB-202609-0002" ranks above "IB-202609-00010" once the count passes four digits and
+    // the allocator starts handing out numbers that already exist.
+    //
+    // `IB-` has two allocators — this one and the import loop in zoho/pull-review/approve —
+    // and a unique series with two allocators is the real hazard, so both switch together.
     const now = new Date();
     const prefix = `IB-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
-    const lastShipment = await prisma.inboundShipment.findFirst({
-      where: { shipmentNo: { startsWith: prefix } },
-      orderBy: { shipmentNo: "desc" },
-      select: { shipmentNo: true },
-    });
-    const seq = lastShipment
-      ? parseInt(lastShipment.shipmentNo.split("-").pop() || "0") + 1
-      : 1;
-    const shipmentNo = `${prefix}-${String(seq).padStart(4, "0")}`;
+    const shipmentNo = `${prefix}-${await nextSequence(prisma, prefix, 4, ibSeedSql(prefix))}`;
 
     const totalAmount = data.lineItems.reduce((s, li) => s + li.amount, 0);
 
@@ -194,49 +237,79 @@ export async function POST(req: NextRequest) {
       where: { status: "WAITING" },
     });
 
-    const shipment = await prisma.inboundShipment.create({
-      data: {
-        shipmentNo,
-        brandId: data.brandId,
-        billNo: data.billNo,
-        billImageUrl: data.billImageUrl || "",
-        billPdfUrl: data.billPdfUrl || null,
-        billDate,
-        expectedDeliveryDate,
-        totalAmount,
-        totalItems: data.lineItems.length,
-        notes: data.notes,
-        createdById: user.id,
-        lineItems: {
-          create: matchedItems.map((li) => {
-            // Check for pre-booking match
-            const preBookMatch = waitingPreBookings.find((pb) =>
-              li.productName.toLowerCase().includes(pb.productName.toLowerCase().substring(0, 15))
-              || pb.productName.toLowerCase().includes(li.productName.toLowerCase().substring(0, 15))
-            );
+    // The shipment and its REQUESTED approval event commit together (plan 1709, R22, R26). The
+    // event is what its approval age is measured from and what the approver-error rate reads.
+    // (It used to also put the shipment on the Requests page, `/approvals`; plan 2109, R8 took
+    // inbound off that screen — approvers find it under "Not approved" on `/inbound`.) Everything after this — pre-bookings, the Zoho draft — is best effort and stays
+    // outside.
+    const shipment = await prisma.$transaction(async (tx) => {
+      const created = await tx.inboundShipment.create({
+        data: {
+          shipmentNo,
+          brandId: data.brandId,
+          billNo: data.billNo,
+          billImageUrl: data.billImageUrl || "",
+          billPdfUrl: data.billPdfUrl || null,
+          billDate,
+          expectedDeliveryDate,
+          totalAmount,
+          totalItems: data.lineItems.length,
+          notes: data.notes,
+          createdById: user.id,
+          lineItems: {
+            create: matchedItems.map((li) => {
+              // Check for pre-booking match
+              const preBookMatch = waitingPreBookings.find((pb) =>
+                li.productName.toLowerCase().includes(pb.productName.toLowerCase().substring(0, 15))
+                || pb.productName.toLowerCase().includes(li.productName.toLowerCase().substring(0, 15))
+              );
 
-            return {
-              productName: li.productName,
-              productId: li.productId || null,
-              sku: li.sku || null,
-              quantity: li.quantity,
-              rate: li.rate,
-              gstPercent: li.gstPercent || 0,
-              gstAmount: li.gstAmount || 0,
-              amount: li.amount,
-              hsn: li.hsn || null,
-              preBookedCustomerName: preBookMatch?.customerName || null,
-              preBookedCustomerPhone: preBookMatch?.customerPhone || null,
-              preBookedInvoiceNo: preBookMatch?.zohoInvoiceNo || null,
-            };
-          }),
+              return {
+                productName: li.productName,
+                productId: li.productId || null,
+                sku: li.sku || null,
+                quantity: li.quantity,
+                rate: li.rate,
+                gstPercent: li.gstPercent || 0,
+                gstAmount: li.gstAmount || 0,
+                amount: li.amount,
+                hsn: li.hsn || null,
+                preBookedCustomerName: preBookMatch?.customerName || null,
+                preBookedCustomerPhone: preBookMatch?.customerPhone || null,
+                preBookedInvoiceNo: preBookMatch?.zohoInvoiceNo || null,
+              };
+            }),
+          },
         },
-      },
-      include: {
-        brand: { select: { name: true } },
-        lineItems: true,
-        createdBy: { select: { name: true } },
-      },
+        include: {
+          brand: { select: { name: true } },
+          lineItems: true,
+          createdBy: { select: { name: true } },
+        },
+      });
+
+      await recordApprovalEvent(tx, {
+        activity: "INBOUND",
+        event: "REQUESTED",
+        recordId: created.id,
+        recordRef: created.shipmentNo,
+        actorId: user.id,
+        // Nobody has approved anything yet.
+        approverId: null,
+      });
+
+      return created;
+    });
+
+    // Whoever holds `inbound.approve`, minus the person who raised it (R24). After the commit,
+    // never inside it — notify() does FCM network I/O (notify/index.ts §F.0).
+    notifyInboundApprovalRequested({
+      shipmentId: shipment.id,
+      shipmentNo: shipment.shipmentNo,
+      actorId: user.id,
+      actorName: user.name,
+      summary: `${shipment.brand.name} — bill ${shipment.billNo}, ${shipment.totalItems} item(s)`,
+      resubmitted: false,
     });
 
     // Update matched pre-bookings
@@ -259,8 +332,17 @@ export async function POST(req: NextRequest) {
 
     // Push draft bill to Zoho (best effort)
     try {
-      const { ZohoInventoryClient } = await import("@/lib/zoho-inventory");
-      const zohoInv = new ZohoInventoryClient();
+      // getInventory(), which initialises. This used to be `new InventoryClient()` with NO
+      // init() call at all, so apiCall threw "Zoho Inventory client not initialized" on
+      // every attempt and the catch below logged it as a non-critical warning. The draft
+      // push has therefore never once succeeded — a silent failure that looked like a
+      // working feature because the shipment itself was created fine.
+      const { getInventory } = await import("@/lib/integrations");
+      const zohoInv = await getInventory();
+      if (!zohoInv) {
+        log.info("Zoho Inventory not connected; skipping the draft push", { shipmentNo });
+        return successResponse(shipment, 201);
+      }
 
       const brand = await prisma.brand.findUnique({ where: { id: data.brandId }, select: { name: true } });
       await zohoInv.createItem({
@@ -271,7 +353,9 @@ export async function POST(req: NextRequest) {
         product_type: "goods",
       });
     } catch (zohoErr) {
-      console.warn("Zoho draft push failed (non-critical):", zohoErr);
+      log.warn("Zoho draft push failed (non-critical)", {
+        error: zohoErr instanceof Error ? zohoErr.message : String(zohoErr),
+      });
     }
 
     return successResponse(shipment, 201);

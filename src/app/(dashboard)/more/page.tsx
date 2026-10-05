@@ -7,47 +7,45 @@ import Link from "next/link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { usePermissions } from "@/lib/use-permissions";
-import { MENU_GROUPS } from "@/lib/menu-config";
-import type { Role } from "@/types";
+import { moduleIcon } from "@/lib/module-icons";
+import { buildNavTree, showDividerBefore, type NavGroup } from "@/lib/nav-tree";
+import { apiFetch } from "@/lib/api-client";
+import { createLogger } from "@/lib/logger";
 
-const ROLE_LABELS: Record<Role, string> = {
-  CEO: "CEO",
-  ADMIN: "Owner / Director",
-  SUPERVISOR: "Ops Manager",
-  PURCHASE_MANAGER: "Purchase Manager",
-  ACCOUNTS_MANAGER: "Finance Head",
-  INWARDS_EXECUTIVE: "Inwards Executive",
-  OUTWARDS_EXECUTIVE: "Outwards Executive",
-  STORE_MANAGER: "Store Manager",
-  SALES_MANAGER: "Sales Manager",
-  SERVICE_MANAGER: "Service Manager",
-  CUSTOM: "Custom Role",
-};
+const log = createLogger("more:page");
 
+/** Links reachable in a group: routed roots plus every (routed) child. */
+function linkCount(group: NavGroup): number {
+  return group.items.reduce((n, item) => n + (item.route ? 1 : 0) + item.children.length, 0);
+}
 
 export default function MorePage() {
   const { data: session } = useSession();
-  const user = session?.user as { name?: string; role?: string; userId?: string } | undefined;
-  const role = (user?.role || "INWARDS_EXECUTIVE") as Role;
-  const { canView } = usePermissions(role);
+  const user = session?.user as { name?: string; userId?: string } | undefined;
+  // Menu contents come from the granted module list, not a hardcoded per-role catalog. The tree
+  // is the one every menu renderer shares (src/lib/nav-tree.ts): a routeless parent such as
+  // Stock management only toggles (R28), and a `dividerBefore` child gets a line above it (P5).
+  const { modules, role, canView } = usePermissions();
   const [syncClearing, setSyncClearing] = useState(false);
   const [syncResult, setSyncResult] = useState("");
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
 
   const handleClearSync = async () => {
     setSyncClearing(true);
     setSyncResult("");
     try {
-      const res = await fetch("/api/sync/clear", { method: "POST" }).then(r => r.json());
-      if (res.success) {
-        const { clearedSyncs, clearedPulls } = res.data;
-        setSyncResult(clearedSyncs + clearedPulls > 0
-          ? `Cleared ${clearedSyncs} sync(s), ${clearedPulls} pull(s)`
-          : "No stuck syncs found");
-      } else {
-        setSyncResult(res.error || "Failed");
-      }
-    } catch { setSyncResult("Network error"); }
+      const { clearedSyncs, clearedPulls } = await apiFetch<{ clearedSyncs: number; clearedPulls: number }>(
+        "/api/sync/clear",
+        { method: "POST" }
+      );
+      setSyncResult(clearedSyncs + clearedPulls > 0
+        ? `Cleared ${clearedSyncs} sync(s), ${clearedPulls} pull(s)`
+        : "No stuck syncs found");
+    } catch (e) {
+      log.error("clear stuck syncs failed", { error: e instanceof Error ? e.message : String(e) });
+      setSyncResult(e instanceof Error ? e.message : "Network error");
+    }
     finally { setSyncClearing(false); }
   };
 
@@ -59,34 +57,42 @@ export default function MorePage() {
     });
   };
 
+  const toggleParent = (key: string) => {
+    setExpandedParents((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const rowClass = "flex items-center gap-3 px-4 py-2.5 min-h-[44px] hover:bg-slate-50 transition-colors";
+
   return (
     <div>
-      {/* User Card */}
-      <Card className="mb-4">
-        <CardContent className="p-4 flex items-center gap-3">
-          <div className="h-12 w-12 rounded-full bg-slate-200 flex items-center justify-center">
-            <User className="h-6 w-6 text-slate-500" />
-          </div>
-          <div className="flex-1">
-            <p className="text-base font-semibold text-slate-900">
-              {user?.name || "User"}
-            </p>
-            <Badge variant="info">{ROLE_LABELS[role]}</Badge>
-          </div>
-        </CardContent>
-      </Card>
+      {/* User Card — opens /profile: push on this device, my devices, my notification mutes
+          (plan 2809; the mutes moved there from here) */}
+      <Link href="/profile" className="block mb-4 focus-ring rounded-xl">
+        <Card>
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="h-12 w-12 rounded-full bg-slate-200 flex items-center justify-center">
+              <User className="h-6 w-6 text-slate-500" />
+            </div>
+            <div className="flex-1">
+              <p className="text-base font-semibold text-slate-900">
+                {user?.name || "User"}
+              </p>
+              <Badge variant="info">{role?.name || "No role"}</Badge>
+              <p className="text-[11px] text-slate-500 mt-1">Profile, push notifications and devices</p>
+            </div>
+            <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />
+          </CardContent>
+        </Card>
+      </Link>
 
-      {/* Grouped Menu */}
+      {/* Grouped Menu — built from the modules this user can view */}
       <div className="space-y-2">
-        {MENU_GROUPS.map((group) => {
-          const visibleItems = group.items.filter((item) => {
-            // CEO inherits all ADMIN menu access
-            const effectiveRole = role === "CEO" ? "ADMIN" : role;
-            if (!item.roles.includes(effectiveRole)) return false;
-            if (effectiveRole !== "ADMIN" && item.featureKey && !canView(item.featureKey)) return false;
-            return true;
-          });
-          if (visibleItems.length === 0) return null;
+        {buildNavTree(modules).map((group) => {
           const isExpanded = expandedGroups.has(group.title);
 
           return (
@@ -97,7 +103,7 @@ export default function MorePage() {
               >
                 <span className="text-[13px] font-bold uppercase tracking-wide text-slate-500">{group.title}</span>
                 <div className="flex items-center gap-2">
-                  <span className="text-[11px] font-medium text-slate-400 tabular-nums">{visibleItems.length}</span>
+                  <span className="text-[11px] font-medium text-slate-400 tabular-nums">{linkCount(group)}</span>
                   {isExpanded ? (
                     <ChevronDown className="h-4 w-4 text-slate-400" />
                   ) : (
@@ -107,25 +113,61 @@ export default function MorePage() {
               </button>
               {isExpanded && (
                 <div className="border-t border-slate-100">
-                  {visibleItems.map((item) => {
-                    const Icon = item.icon;
-                    if (item.comingSoon) {
-                      return (
-                        <div key={item.label} className="flex items-center gap-3 px-4 py-2.5 min-h-[44px] opacity-50 cursor-not-allowed">
-                          <Icon className="h-4 w-4 text-slate-400 shrink-0" />
-                          <span className="flex-1 text-sm text-slate-500">{item.label}</span>
-                          <Badge variant="default">Soon</Badge>
-                        </div>
-                      );
-                    }
+                  {group.items.map((item) => {
+                    const Icon = moduleIcon(item.icon);
+                    // A routeless parent has nowhere to go — it only toggles its children.
+                    // A routed parent links and keeps its children listed beneath it.
+                    const expander = !item.route;
+                    const showChildren = !expander || expandedParents.has(item.key);
                     return (
-                      <Link key={item.href} href={item.href} className="block focus-ring rounded-lg">
-                        <div className="flex items-center gap-3 px-4 py-2.5 min-h-[44px] hover:bg-slate-50 transition-colors">
-                          <Icon className="h-4 w-4 text-slate-500 shrink-0" />
-                          <span className="flex-1 text-sm text-slate-700">{item.label}</span>
-                          <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />
-                        </div>
-                      </Link>
+                      <div key={item.key}>
+                        {expander ? (
+                          <button
+                            type="button"
+                            onClick={() => toggleParent(item.key)}
+                            aria-expanded={showChildren}
+                            className={`${rowClass} w-full text-left focus-ring rounded-lg`}
+                          >
+                            <Icon className="h-4 w-4 text-slate-500 shrink-0" />
+                            <span className="flex-1 text-sm text-slate-700">{item.label}</span>
+                            {showChildren ? (
+                              <ChevronDown className="h-4 w-4 text-slate-400 shrink-0" />
+                            ) : (
+                              <ChevronRight className="h-4 w-4 text-slate-400 shrink-0" />
+                            )}
+                          </button>
+                        ) : (
+                          <Link href={item.route!} className="block focus-ring rounded-lg">
+                            <div className={rowClass}>
+                              <Icon className="h-4 w-4 text-slate-500 shrink-0" />
+                              <span className="flex-1 text-sm text-slate-700">{item.label}</span>
+                              <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />
+                            </div>
+                          </Link>
+                        )}
+
+                        {showChildren && item.children.length > 0 && (
+                          <div role="group" className="ml-6 border-l border-slate-100">
+                            {item.children.map((child, i) => {
+                              const ChildIcon = moduleIcon(child.icon);
+                              return (
+                                <div key={child.key}>
+                                  {showDividerBefore(item.children, i) && (
+                                    <div role="separator" className="my-1 mx-4 border-t border-slate-200" />
+                                  )}
+                                  <Link href={child.route!} className="block focus-ring rounded-lg">
+                                    <div className={rowClass}>
+                                      <ChildIcon className="h-4 w-4 text-slate-500 shrink-0" />
+                                      <span className="flex-1 text-sm text-slate-700">{child.label}</span>
+                                      <ChevronRight className="h-4 w-4 text-slate-300 shrink-0" />
+                                    </div>
+                                  </Link>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -135,8 +177,8 @@ export default function MorePage() {
         })}
       </div>
 
-      {/* Admin: Clear Stuck Syncs — admin-only, hidden for non-admins */}
-      {(role === "ADMIN" || role === "CEO") && (
+      {/* Clear Stuck Syncs — shown only to those who may run a Zoho sync */}
+      {canView("zoho") && (
         <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
           <p className="text-[11px] font-bold uppercase tracking-wide text-amber-700 mb-2">Admin</p>
           <div className="flex items-center justify-between gap-3">
