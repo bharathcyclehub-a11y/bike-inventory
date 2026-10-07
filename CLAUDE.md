@@ -1,3 +1,4 @@
+@BCH_DEV_RULES.md
 @AGENTS.md
 
 # IMPORTANT: Read this every session
