@@ -13,6 +13,7 @@ import { ErrorBanner } from "@/components/ui/error-banner";
 import { ActionConfirmation } from "@/components/ui/action-confirmation";
 import { exportToExcel, type ExportColumn } from "@/lib/export";
 import { apiTry } from "@/lib/api-client";
+import { formatDateTime } from "@/lib/utils";
 import { createLogger } from "@/lib/logger";
 
 const log = createLogger("stock-audit:review");
@@ -122,7 +123,7 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
   const [data, setData] = useState<StockCountData | null>(null);
   const [items, setItems] = useState<StockCountItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"all" | "counted" | "variance">("counted");
+  const [tab, setTab] = useState<"all" | "counted" | "zero" | "variance">("counted");
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [selectedChip, setSelectedChip] = useState<string | null>(null);
@@ -209,7 +210,9 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
   const writtenOff = zeroLines.reduce((sum, i) => sum + liveOf(i), 0);
 
   const filtered = tab === "counted"
-    ? items.filter((i) => i.countedQty !== null && (i.systemQty > 0 || (i.countedQty ?? 0) > 0))
+    ? items.filter((i) => i.countedQty !== null && (i.countedQty ?? 0) > 0)
+    : tab === "zero"
+    ? items.filter((i) => i.countedQty === 0)
     : tab === "variance"
     ? items.filter((i) => i.variance !== null && i.variance !== 0)
     : items.filter((i) => i.systemQty > 0 || (i.countedQty ?? 0) > 0);
@@ -294,12 +297,17 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
       <div className="flex items-center gap-3 mb-3">
         <Link href={`/stock-audit/${id}`} className="p-1"><ArrowLeft className="h-5 w-5 text-slate-600" /></Link>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold text-slate-900 truncate">{data.title}</h1>
-          <p className="text-xs text-slate-500">
-            {data.assignedTo.name} | {data.scopeLabel}
-            {data.bin ? ` | Bin ${data.bin.code} (${data.bin.name})${data.bin.floor ? ` Fl ${data.bin.floor}` : ""}${data.bin.zone ? ` Zone ${data.bin.zone}` : ""}` : ""}
-            {data.completedAt && ` | Completed: ${new Date(data.completedAt).toLocaleDateString("en-IN")}`}
-          </p>
+          <h1 className="text-lg font-bold text-slate-900 leading-snug">{data.title}</h1>
+          <div className="text-xs text-slate-500 tabular-nums flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5">
+            <span className="font-medium text-slate-700">{data.assignedTo.name}</span>
+            <span>· {data.scopeLabel}</span>
+            {data.bin && (
+              <span>· Bin {data.bin.code} ({data.bin.name}){data.bin.floor ? ` Fl ${data.bin.floor}` : ""}{data.bin.zone ? ` Zone ${data.bin.zone}` : ""}</span>
+            )}
+            {data.completedAt && (
+              <span className="text-emerald-700 font-medium">· Done: {formatDateTime(data.completedAt)}</span>
+            )}
+          </div>
           {data.bin?.directions && (
             <p className="text-[11px] text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-0.5 mt-1 inline-block">
               📍 Directions: {data.bin.directions}
@@ -362,10 +370,11 @@ export default function StockCountReviewPage({ params }: { params: Promise<{ id:
       {/* Tabs + Export */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex gap-1.5">
-          {(["counted", "variance", "all"] as const).map((t) => (
+          {(["counted", "zero", "variance", "all"] as const).map((t) => (
             <button key={t} onClick={() => setTab(t)}
               className={`px-2.5 py-1 rounded-full text-xs font-medium ${tab === t ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}>
-              {t === "counted" ? `Counted (${items.filter((i) => i.countedQty !== null && (i.systemQty > 0 || (i.countedQty ?? 0) > 0)).length})`
+              {t === "counted" ? `Stock > 0 (${items.filter((i) => (i.countedQty ?? 0) > 0).length})`
+                : t === "zero" ? `Zero Stock (${items.filter((i) => i.countedQty === 0).length})`
                 : t === "variance" ? `Variance (${items.filter((i) => i.variance && i.variance !== 0).length})`
                 : `All (${items.filter((i) => i.systemQty > 0 || (i.countedQty ?? 0) > 0).length})`}
             </button>

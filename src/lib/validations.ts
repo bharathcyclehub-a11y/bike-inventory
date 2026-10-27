@@ -18,6 +18,7 @@ import {
   LMS_QUIZ_TYPES,
   LMS_SCENARIO_TYPES,
 } from "@/lib/staff-lms/constants";
+import { ZOHO_INVOICE_LOOKUP_MODULES, ZOHO_PULL_MODULES } from "@/lib/zoho/pull-modules";
 
 export const productSchema = z.object({
   sku: z.string().min(1, "SKU is required").max(50),
@@ -632,44 +633,44 @@ export const EXPENSE_CATEGORIES = [
 export const EXPENSE_PAYMENT_MODES = ["CASH", "CHEQUE", "NEFT", "RTGS", "UPI", "CREDIT_ADJUSTMENT"] as const;
 
 /**
- * One expense as the stepped entry flow sends it (0909-expense-multi-entry-flow-plan, Part B).
- *
- * `paidBy` is deliberately absent. The batch route stamps it from the session (decision D2), so
- * a client cannot record an expense under someone else's name — the server derives it, the
- * client never supplies it. `date` is absent too: it is shared by the whole batch (D6).
+ * Who paid an expense (plan 1210-expense-store-department-and-payer, D6/E3): the signed-in
+ * person, another staff member, or a typed name for someone not on staff (a Porter driver).
+ * The server turns it into `paidById` + `paidBy` (src/lib/expenses/assignment.ts) — the client
+ * never sends `paidBy` text directly.
  */
-export const expenseRowSchema = z.object({
-  amount: z.number().min(0.01, "Amount must be positive"),
-  category: z.enum(EXPENSE_CATEGORIES),
-  description: z.string().max(500).optional().default(""),
-  paymentMode: z.enum(EXPENSE_PAYMENT_MODES),
-  /** One receipt photo, already uploaded through /api/media/presign. Null when none. */
-  receiptUrl: z.string().url().optional().nullable(),
-  referenceNo: z.string().optional(),
-  notes: z.string().optional(),
-});
+export const expensePayerSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("self") }),
+  z.object({ kind: z.literal("user"), userId: z.string().min(1, "Pick the staff member") }),
+  z.object({ kind: z.literal("name"), name: z.string().trim().min(2, "Type the payer's name").max(80) }),
+]);
+export type ExpensePayerInput = z.infer<typeof expensePayerSchema>;
 
-/** The body of POST /api/expenses/batch: one date and one payer, many rows (D6). */
-export const expenseBatchSchema = z.object({
-  date: z.string().min(1, "Date is required"),
-  expenses: z
-    .array(expenseRowSchema)
-    .min(1, "Add at least one expense")
-    .max(50, "A batch can hold at most 50 expenses"),
-});
-
-// Single-row shape, kept for PUT /api/expenses/[id]. `paidBy` is optional here only because
-// PUT still edits historical rows that carry a typed name; POST /api/expenses no longer reads
-// it from the body and stamps the session user instead (D2).
+// The body of POST /api/expenses. Every new expense names its store and who paid (D1, D6).
+// The batch shape (expenseRowSchema / expenseBatchSchema) was removed with its route on
+// 12 Oct 2026 (decision E7): nothing had called it since the 18 Sep single-expense form.
 export const expenseSchema = z.object({
   date: z.string().min(1, "Date is required"),
   amount: z.number().min(0.01, "Amount must be positive"),
   category: z.enum(EXPENSE_CATEGORIES),
   description: z.string().optional().default(""),
-  paidBy: z.string().min(1, "Paid by is required").optional(),
   paymentMode: z.enum(EXPENSE_PAYMENT_MODES),
   referenceNo: z.string().optional(),
   receiptUrl: z.string().url().optional().nullable(),
+  notes: z.string().optional(),
+  storeId: z.string().min(1, "Pick the store this expense belongs to"),
+  payer: expensePayerSchema,
+});
+
+// PUT /api/expenses/[id]. Deliberately has no payer and no store: a free-text `paidBy` here
+// would desynchronise `paidById`, and a wrong store or payer is fixed by deleting and
+// re-entering the expense (decision E8). No screen calls PUT today.
+export const expenseUpdateSchema = z.object({
+  date: z.string().min(1, "Date is required").optional(),
+  amount: z.number().min(0.01, "Amount must be positive").optional(),
+  category: z.enum(EXPENSE_CATEGORIES).optional(),
+  description: z.string().optional(),
+  paymentMode: z.enum(EXPENSE_PAYMENT_MODES).optional(),
+  referenceNo: z.string().optional(),
   notes: z.string().optional(),
 });
 
@@ -787,7 +788,6 @@ export const deliveryUpdateSchema = z.object({
   courierCost: z.number().optional(),
   vehicleNo: z.string().optional(),
   invoiceType: z.enum(["SALES", "SERVICE", "CENTRE"]).nullable().optional(),
-  freeAccessories: z.string().optional(),
   reversePickup: z.boolean().optional(),
   whatsAppScheduledSent: z.boolean().optional(),
   whatsAppDispatchedSent: z.boolean().optional(),
@@ -1280,6 +1280,14 @@ export const warehouseUpdateSchema = warehouseSchema.partial().extend({
  * decision rather than an invisible drop.
  */
 export const zohoPullSchema = z.object({
+  /**
+   * The screen running the pull, by RBAC module key (plan 1410-per-module-fetch-permissions,
+   * D1). Every step needs `<module>.fetch`, and `bills`/`invoices` must be the screen's own
+   * kind (`ZOHO_PULL_ENTITY`). Required: a stale tab that sends none is told to reload.
+   */
+  module: z.enum(ZOHO_PULL_MODULES, {
+    error: "This screen is out of date — reload the page and fetch again",
+  }),
   step: z.enum(["init", "bills", "invoices", "finalize"]),
   pullId: z.string().optional(),
   /** Rolling window INCLUDING today. Ignored when fromDate is given. */
@@ -1296,6 +1304,33 @@ export const zohoPullSchema = z.object({
   invoicesNew: z.number().int().min(0).optional(),
   apiCalls: z.number().int().min(0).optional(),
   allErrors: z.array(z.string()).optional(),
+});
+
+/**
+ * The body of POST /api/zoho/pull-review/approve (plan 1410-per-module-fetch-permissions).
+ *
+ * It was a bare cast too, and it trusted the body for two things it must not: `source`
+ * (whether a bill becomes a shipment or a vendor bill) and `entityType` (which was applied
+ * only when no `previewIds` were sent). Both now follow from `module`, so a role holding one
+ * screen's Fetch can import only that screen's kind of record.
+ */
+export const zohoPullApproveSchema = z.object({
+  module: z.enum(ZOHO_PULL_MODULES, {
+    error: "This screen is out of date — reload the page and import again",
+  }),
+  pullId: z.string().min(1, "pullId is required"),
+  action: z.enum(["approve", "reject"]),
+  /** Omitted = every pending preview of the module's kind in this pull. */
+  previewIds: z.array(z.string().min(1)).max(1000).optional(),
+});
+
+/** The body of POST /api/deliveries/search-zoho — the one-invoice lookup (plan 1410). */
+export const zohoInvoiceLookupSchema = z.object({
+  /** The screen asking — `deliveries` (Deliveries, Pre-bookings) or `second_hand`. */
+  module: z.enum(ZOHO_INVOICE_LOOKUP_MODULES, {
+    error: "This screen is out of date — reload the page and search again",
+  }),
+  query: z.string().trim().min(3, "Search query must be at least 3 characters").max(100),
 });
 
 // ─── Assembly & Cycle Complaints ─────────────────────────────────────────────
@@ -1345,3 +1380,23 @@ export const assemblyTaskCreateSchema = z.object({
   notes: z.string().max(1000).optional(),
 });
 
+
+// ─── Quick add to stock from /stock (plan 1410-stock-quick-add) ───────────────
+
+/**
+ * POST /api/products/[id]/add-stock. The quantity is assembled + unassembled (Q3: split by
+ * number). For a product with no unit codes yet, or a non-assemblable bin, the screen sends
+ * the whole quantity as `unassembled` and the route refuses an `assembled` figure.
+ */
+export const quickAddStockSchema = z
+  .object({
+    binId: z.string().min(1, "Pick the bin these go into"),
+    assembled: z.number().int().min(0).max(5000).default(0),
+    unassembled: z.number().int().min(0).max(5000).default(0),
+    reason: z.string().trim().min(3, "Say why stock is being added (at least 3 characters)").max(300),
+    /** One id per submission, so a double tap adds once. */
+    requestId: z.string().uuid("Reload the page and try again"),
+  })
+  .refine((v) => v.assembled + v.unassembled >= 1, { message: "Add at least 1", path: ["unassembled"] })
+  .refine((v) => v.assembled + v.unassembled <= 5000, { message: "At most 5,000 at a time", path: ["unassembled"] });
+export type QuickAddStockInput = z.infer<typeof quickAddStockSchema>;
